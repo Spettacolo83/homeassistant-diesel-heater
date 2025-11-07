@@ -2,19 +2,33 @@
   "config": {
     "step": {
       "confirm": {
-        "description": "Do you want to set up {name}?"
+        "description": "Do you want to set up {name}?",
+        "data": {
+          "temperature_offset": "Temperature Offset (°C)"
+        },
+        "data_description": {
+          "temperature_offset": "Calibration offset for interior temperature sensor. Use negative value if readings are too high, positive if too low. Range: -20 to +20°C."
+        }
       },
       "user": {
         "data": {
-          "address": "Device"
+          "address": "Device",
+          "temperature_offset": "Temperature Offset (°C)"
         },
-        "description": "Select your Vevor Diesel Heater from the list."
+        "description": "Select your Vevor Diesel Heater from the list.",
+        "data_description": {
+          "temperature_offset": "Calibration offset for interior temperature sensor. Use negative value if readings are too high, positive if too low. Range: -20 to +20°C."
+        }
       },
       "manual": {
         "data": {
-          "address": "Bluetooth MAC Address"
+          "address": "Bluetooth MAC Address",
+          "temperature_offset": "Temperature Offset (°C)"
         },
-        "description": "Enter the Bluetooth MAC address of your Vevor heater (e.g., A4:C1:37:24:B8:64). You can find this in the Bluetooth logs or using a BLE scanner app."
+        "description": "Enter the Bluetooth MAC address of your Vevor heater (e.g., A4:C1:37:24:B8:64). You can find this in the Bluetooth logs or using a BLE scanner app.",
+        "data_description": {
+          "temperature_offset": "Calibration offset for interior temperature sensor. Use negative value if readings are too high, positive if too low. Range: -20 to +20°C."
+        }
       }
     },
     "abort": {
@@ -22,6 +36,18 @@
     },
     "error": {
       "invalid_mac": "Invalid MAC address format. Please use format AA:BB:CC:DD:EE:FF"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "data": {
+          "temperature_offset": "Temperature Offset (°C)"
+        },
+        "data_description": {
+          "temperature_offset": "Adjust temperature calibration. Changes take effect within 30 seconds. Range: -20 to +20°C."
+        }
+      }
     }
   },
   "entity": {

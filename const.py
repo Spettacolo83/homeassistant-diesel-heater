@@ -84,5 +84,13 @@ MAX_LEVEL: Final = 10
 MIN_TEMP_CELSIUS: Final = 8
 MAX_TEMP_CELSIUS: Final = 36
 
+# Temperature calibration
+CONF_TEMPERATURE_OFFSET: Final = "temperature_offset"
+DEFAULT_TEMPERATURE_OFFSET: Final = 0.0
+MIN_TEMPERATURE_OFFSET: Final = -20.0
+MAX_TEMPERATURE_OFFSET: Final = 20.0
+SENSOR_TEMP_MIN: Final = -128
+SENSOR_TEMP_MAX: Final = 127
+
 # Update interval
 UPDATE_INTERVAL: Final = 30  # seconds
