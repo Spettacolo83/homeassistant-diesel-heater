@@ -43,7 +43,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
     
     # Create coordinator
-    coordinator = VevorHeaterCoordinator(hass, ble_device)
+    coordinator = VevorHeaterCoordinator(hass, ble_device, entry)
     
     # Initial data fetch
     try:
