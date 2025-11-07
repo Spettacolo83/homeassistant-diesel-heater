@@ -18,12 +18,16 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .const import (
     CHARACTERISTIC_UUID,
+    CONF_TEMPERATURE_OFFSET,
+    DEFAULT_TEMPERATURE_OFFSET,
     DOMAIN,
     ENCRYPTION_KEY,
     NOTIFY_UUID,
     RUNNING_MODE_LEVEL,
     RUNNING_MODE_MANUAL,
     RUNNING_MODE_TEMPERATURE,
+    SENSOR_TEMP_MAX,
+    SENSOR_TEMP_MIN,
     SERVICE_UUID,
     UPDATE_INTERVAL,
 )
@@ -64,6 +68,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self,
         hass: HomeAssistant,
         ble_device: bluetooth.BleakDevice,
+        config_entry: Any,
     ) -> None:
         """Initialize the coordinator."""
         super().__init__(
@@ -75,6 +80,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         self.address = ble_device.address
         self._ble_device = ble_device
+        self.config_entry = config_entry
         self._client: BleakClient | None = None
         self._characteristic = None
         self._notification_data: bytearray | None = None
@@ -256,7 +262,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         )
         self.data["case_temperature"] = _unsign_to_sign(256 * data[14] + data[13])
         self.data["cab_temperature"] = _unsign_to_sign(256 * data[16] + data[15])
-        
+
+        # Apply temperature calibration
+        self._apply_temperature_calibration()
+
         _LOGGER.debug("Parsed AA55: %s", self.data)
 
     def _parse_protocol_aa66(self, data: bytearray) -> None:
@@ -299,6 +308,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         # 0x1a = 26 → 26°C
         self.data["cab_temperature"] = _u8_to_number(data[15])
 
+        # Apply temperature calibration
+        self._apply_temperature_calibration()
+
         _LOGGER.debug("Parsed AA66: %s", self.data)
         self._notification_data = data
 
@@ -317,7 +329,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self.data["supply_voltage"] = (256 * data[11] + data[12]) / 10
         self.data["case_temperature"] = _unsign_to_sign(256 * data[13] + data[14])
         self.data["cab_temperature"] = _unsign_to_sign(256 * data[32] + data[33]) / 10
-        
+
+        # Apply temperature calibration
+        self._apply_temperature_calibration()
+
         _LOGGER.debug("Parsed AA55 encrypted: %s", self.data)
 
     def _parse_protocol_aa66_encrypted(self, data: bytearray) -> None:
@@ -335,8 +350,40 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self.data["supply_voltage"] = (256 * data[11] + data[12]) / 10
         self.data["case_temperature"] = _unsign_to_sign(256 * data[13] + data[14])
         self.data["cab_temperature"] = _unsign_to_sign(256 * data[32] + data[33]) / 10
-        
+
+        # Apply temperature calibration
+        self._apply_temperature_calibration()
+
         _LOGGER.debug("Parsed AA66 encrypted: %s", self.data)
+
+    def _apply_temperature_calibration(self) -> None:
+        """Apply temperature offset calibration to cab_temperature."""
+        # Get configured offset (default to 0.0 if not set)
+        offset = self.config_entry.data.get(CONF_TEMPERATURE_OFFSET, DEFAULT_TEMPERATURE_OFFSET)
+
+        # Get raw temperature
+        raw_temp = self.data.get("cab_temperature")
+        if raw_temp is None:
+            return
+
+        # Apply offset
+        calibrated_temp = raw_temp + offset
+
+        # Clamp to sensor range
+        calibrated_temp = max(SENSOR_TEMP_MIN, min(SENSOR_TEMP_MAX, calibrated_temp))
+
+        # Round to 1 decimal place
+        calibrated_temp = round(calibrated_temp, 1)
+
+        # Update data with calibrated value
+        self.data["cab_temperature"] = calibrated_temp
+
+        # Log calibration if offset is non-zero
+        if offset != 0.0:
+            _LOGGER.debug(
+                "Applied temperature calibration: raw=%s°C, offset=%s°C, calibrated=%s°C",
+                raw_temp, offset, calibrated_temp
+            )
 
     async def _send_command(self, command: int, argument: int, n: int) -> bool:
         """Send command to heater."""

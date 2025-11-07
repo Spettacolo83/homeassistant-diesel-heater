@@ -13,7 +13,14 @@ from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
 from homeassistant.const import CONF_ADDRESS
 from homeassistant.data_entry_flow import FlowResult
 
-from .const import DOMAIN, SERVICE_UUID
+from .const import (
+    CONF_TEMPERATURE_OFFSET,
+    DEFAULT_TEMPERATURE_OFFSET,
+    DOMAIN,
+    MAX_TEMPERATURE_OFFSET,
+    MIN_TEMPERATURE_OFFSET,
+    SERVICE_UUID,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -50,13 +57,27 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             return self.async_create_entry(
                 title=f"Vevor Heater {self._discovery_info.address[-5:].replace(':', '')}",
-                data={CONF_ADDRESS: self._discovery_info.address},
+                data={
+                    CONF_ADDRESS: self._discovery_info.address,
+                    CONF_TEMPERATURE_OFFSET: user_input.get(
+                        CONF_TEMPERATURE_OFFSET, DEFAULT_TEMPERATURE_OFFSET
+                    ),
+                },
             )
 
         self._set_confirm_only()
 
         return self.async_show_form(
             step_id="confirm",
+            data_schema=vol.Schema({
+                vol.Optional(
+                    CONF_TEMPERATURE_OFFSET,
+                    default=DEFAULT_TEMPERATURE_OFFSET
+                ): vol.All(
+                    vol.Coerce(float),
+                    vol.Range(min=MIN_TEMPERATURE_OFFSET, max=MAX_TEMPERATURE_OFFSET),
+                ),
+            }),
             description_placeholders={
                 "name": f"Vevor Heater {self._discovery_info.address[-5:].replace(':', '')}"
             },
@@ -73,7 +94,12 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             return self.async_create_entry(
                 title=f"Vevor Heater {address[-5:].replace(':', '')}",
-                data={CONF_ADDRESS: address},
+                data={
+                    CONF_ADDRESS: address,
+                    CONF_TEMPERATURE_OFFSET: user_input.get(
+                        CONF_TEMPERATURE_OFFSET, DEFAULT_TEMPERATURE_OFFSET
+                    ),
+                },
             )
 
         # Get current bluetooth devices
@@ -133,7 +159,14 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="user",
             data_schema=vol.Schema({
-                vol.Required(CONF_ADDRESS): vol.In(devices)
+                vol.Required(CONF_ADDRESS): vol.In(devices),
+                vol.Optional(
+                    CONF_TEMPERATURE_OFFSET,
+                    default=DEFAULT_TEMPERATURE_OFFSET
+                ): vol.All(
+                    vol.Coerce(float),
+                    vol.Range(min=MIN_TEMPERATURE_OFFSET, max=MAX_TEMPERATURE_OFFSET),
+                ),
             }),
         )
 
@@ -155,13 +188,25 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
                 return self.async_create_entry(
                     title=f"Vevor Heater {address[-5:].replace(':', '')}",
-                    data={CONF_ADDRESS: address},
+                    data={
+                        CONF_ADDRESS: address,
+                        CONF_TEMPERATURE_OFFSET: user_input.get(
+                            CONF_TEMPERATURE_OFFSET, DEFAULT_TEMPERATURE_OFFSET
+                        ),
+                    },
                 )
 
         return self.async_show_form(
             step_id="manual",
             data_schema=vol.Schema({
-                vol.Required(CONF_ADDRESS, description="Bluetooth MAC Address (e.g., A4:C1:37:24:B8:64)"): str
+                vol.Required(CONF_ADDRESS, description="Bluetooth MAC Address (e.g., A4:C1:37:24:B8:64)"): str,
+                vol.Optional(
+                    CONF_TEMPERATURE_OFFSET,
+                    default=DEFAULT_TEMPERATURE_OFFSET
+                ): vol.All(
+                    vol.Coerce(float),
+                    vol.Range(min=MIN_TEMPERATURE_OFFSET, max=MAX_TEMPERATURE_OFFSET),
+                ),
             }),
             errors=errors,
             description_placeholders={
@@ -175,16 +220,41 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         config_entry: config_entries.ConfigEntry,
     ) -> config_entries.OptionsFlow:
         """Get the options flow for this handler."""
-        return VevorHeaterOptionsFlowHandler()
+        return VevorHeaterOptionsFlowHandler(config_entry)
 
 
 class VevorHeaterOptionsFlowHandler(config_entries.OptionsFlow):
     """Handle options flow for Vevor Heater."""
 
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        """Initialize options flow."""
+        self.config_entry = config_entry
+
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Manage the options."""
-        # Currently no options to configure
-        # Future: Could add polling interval, reconnection settings, etc.
-        return self.async_show_form(step_id="init")
+        if user_input is not None:
+            # Update config entry with new offset
+            self.hass.config_entries.async_update_entry(
+                self.config_entry,
+                data={**self.config_entry.data, **user_input},
+            )
+            return self.async_create_entry(title="", data={})
+
+        # Show current offset value in options form
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema({
+                vol.Optional(
+                    CONF_TEMPERATURE_OFFSET,
+                    default=self.config_entry.data.get(
+                        CONF_TEMPERATURE_OFFSET,
+                        DEFAULT_TEMPERATURE_OFFSET
+                    )
+                ): vol.All(
+                    vol.Coerce(float),
+                    vol.Range(min=MIN_TEMPERATURE_OFFSET, max=MAX_TEMPERATURE_OFFSET),
+                ),
+            }),
+        )
