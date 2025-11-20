@@ -377,6 +377,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._apply_temperature_calibration()
 
         _LOGGER.debug("Parsed AA55: %s", self.data)
+        self._notification_data = data
 
     def _parse_protocol_aa66(self, data: bytearray) -> None:
         """Parse protocol AA66 (20 bytes, unencrypted) - BYD/Vevor variant."""
@@ -444,6 +445,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._apply_temperature_calibration()
 
         _LOGGER.debug("Parsed AA55 encrypted: %s", self.data)
+        self._notification_data = data
 
     def _parse_protocol_aa66_encrypted(self, data: bytearray) -> None:
         """Parse encrypted protocol AA66 (48 bytes)."""
@@ -465,6 +467,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._apply_temperature_calibration()
 
         _LOGGER.debug("Parsed AA66 encrypted: %s", self.data)
+        self._notification_data = data
 
     def _apply_temperature_calibration(self) -> None:
         """Apply temperature offset calibration to cab_temperature."""
