@@ -59,11 +59,6 @@ class VevorHeaterClimate(CoordinatorEntity[VevorHeaterCoordinator], ClimateEntit
         self._attr_unique_id = f"{coordinator.address}_climate"
 
     @property
-    def available(self) -> bool:
-        """Return if entity is available."""
-        return self.coordinator.data.get("connected", False)
-
-    @property
     def current_temperature(self) -> float | None:
         """Return the current temperature (interior/cabin temperature)."""
         return self.coordinator.data.get("cab_temperature")
