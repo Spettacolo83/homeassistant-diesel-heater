@@ -108,6 +108,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             "case_temperature": 0,
             "cab_temperature": 0,
             "connected": False,
+            # Fuel consumption tracking
+            "hourly_fuel_consumption": 0.0,
+            "daily_fuel_consumed": 0.0,
+            "total_fuel_consumed": 0.0,
         }
 
         # Fuel consumption tracking (minimal)
@@ -124,7 +128,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             if data:
                 self._total_fuel_consumed = data.get(STORAGE_KEY_TOTAL_FUEL, 0.0)
                 self._daily_fuel_consumed = data.get(STORAGE_KEY_DAILY_FUEL, 0.0)
-                
+
                 # Check if we need to reset daily counter
                 saved_date = data.get(STORAGE_KEY_DAILY_DATE)
                 if saved_date:
@@ -132,7 +136,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     if saved_date != today:
                         _LOGGER.info("New day detected, resetting daily fuel counter")
                         self._daily_fuel_consumed = 0.0
-                        
+
+                # Update data dictionary with loaded values
+                self.data["total_fuel_consumed"] = round(self._total_fuel_consumed, 2)
+                self.data["daily_fuel_consumed"] = round(self._daily_fuel_consumed, 2)
+
                 _LOGGER.debug(
                     "Loaded fuel data: total=%.2fL, daily=%.2fL",
                     self._total_fuel_consumed,
