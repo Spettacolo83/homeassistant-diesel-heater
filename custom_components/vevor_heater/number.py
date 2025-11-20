@@ -39,8 +39,8 @@ async def async_setup_entry(
     
     async_add_entities(
         [
-            VevorHeaterLevelNumber(coordinator),
-            VevorHeaterTemperatureNumber(coordinator),
+            # VevorHeaterLevelNumber(coordinator),  # Removed: duplicate of fan.vevor_heater_heater_level
+            # VevorHeaterTemperatureNumber(coordinator),  # Removed: duplicate of climate.vevor_heater
             VevorTankCapacityNumber(coordinator),
             VevorFuelCalibrationNumber(coordinator),
             VevorLowFuelThresholdNumber(coordinator),

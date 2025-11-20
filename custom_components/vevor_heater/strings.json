@@ -42,10 +42,12 @@
     "step": {
       "init": {
         "data": {
-          "temperature_offset": "Temperature Offset (°C)"
+          "temperature_offset": "Temperature Offset (°C)",
+          "external_temperature_sensor": "External Temperature Sensor"
         },
         "data_description": {
-          "temperature_offset": "Adjust temperature calibration. Changes take effect within 30 seconds. Range: -20 to +20°C."
+          "temperature_offset": "Adjust temperature calibration. Changes take effect within 30 seconds. Range: -20 to +20°C.",
+          "external_temperature_sensor": "Optional: Select an external temperature sensor to use for climate control instead of the heater's built-in sensor. Leave empty to use internal sensor."
         }
       }
     }
