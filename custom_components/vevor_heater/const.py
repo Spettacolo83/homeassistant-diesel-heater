@@ -117,8 +117,11 @@ DEFAULT_TANK_CAPACITY: Final = 10.0  # Liters
 MIN_TANK_CAPACITY: Final = 1.0
 MAX_TANK_CAPACITY: Final = 100.0
 
-# Low fuel warning threshold
-LOW_FUEL_THRESHOLD: Final = 0.20  # 20%
+# Low fuel warning threshold (configurable)
+CONF_LOW_FUEL_THRESHOLD: Final = "low_fuel_threshold"
+DEFAULT_LOW_FUEL_THRESHOLD: Final = 20.0  # Percentage
+MIN_LOW_FUEL_THRESHOLD: Final = 5.0
+MAX_LOW_FUEL_THRESHOLD: Final = 50.0
 
 # Fuel calibration factor (user adjustable)
 CONF_FUEL_CALIBRATION: Final = "fuel_calibration"

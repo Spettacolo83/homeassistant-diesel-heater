@@ -9,16 +9,20 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     CONF_FUEL_CALIBRATION,
+    CONF_LOW_FUEL_THRESHOLD,
     CONF_TANK_CAPACITY,
     DEFAULT_FUEL_CALIBRATION,
+    DEFAULT_LOW_FUEL_THRESHOLD,
     DEFAULT_TANK_CAPACITY,
     DOMAIN,
     MAX_FUEL_CALIBRATION,
     MAX_LEVEL,
+    MAX_LOW_FUEL_THRESHOLD,
     MAX_TANK_CAPACITY,
     MAX_TEMP_CELSIUS,
     MIN_FUEL_CALIBRATION,
     MIN_LEVEL,
+    MIN_LOW_FUEL_THRESHOLD,
     MIN_TANK_CAPACITY,
     MIN_TEMP_CELSIUS,
 )
@@ -39,6 +43,7 @@ async def async_setup_entry(
             VevorHeaterTemperatureNumber(coordinator),
             VevorTankCapacityNumber(coordinator),
             VevorFuelCalibrationNumber(coordinator),
+            VevorLowFuelThresholdNumber(coordinator),
         ]
     )
 
@@ -205,6 +210,55 @@ class VevorFuelCalibrationNumber(
         # Update config entry options
         new_options = {**self.coordinator.config_entry.options}
         new_options[CONF_FUEL_CALIBRATION] = value
+        self.hass.config_entries.async_update_entry(
+            self.coordinator.config_entry,
+            options=new_options
+        )
+        await self.coordinator.async_request_refresh()
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+class VevorLowFuelThresholdNumber(
+    CoordinatorEntity[VevorHeaterCoordinator], NumberEntity
+):
+    """Vevor Heater low fuel threshold number entity."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Low Fuel Threshold"
+    _attr_icon = "mdi:fuel-alert"
+    _attr_native_unit_of_measurement = "%"
+    _attr_native_min_value = MIN_LOW_FUEL_THRESHOLD
+    _attr_native_max_value = MAX_LOW_FUEL_THRESHOLD
+    _attr_native_step = 1.0
+    _attr_entity_category = "config"
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the number entity."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_low_fuel_threshold"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, coordinator.address)},
+            "name": "Vevor Diesel Heater",
+            "manufacturer": "Vevor",
+            "model": "Diesel Heater",
+        }
+
+    @property
+    def native_value(self) -> float:
+        """Return the current value."""
+        return self.coordinator.config_entry.options.get(
+            CONF_LOW_FUEL_THRESHOLD,
+            DEFAULT_LOW_FUEL_THRESHOLD
+        )
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Set new value."""
+        # Update config entry options
+        new_options = {**self.coordinator.config_entry.options}
+        new_options[CONF_LOW_FUEL_THRESHOLD] = value
         self.hass.config_entries.async_update_entry(
             self.coordinator.config_entry,
             options=new_options

@@ -10,7 +10,13 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, ERROR_NONE, LOW_FUEL_THRESHOLD, RUNNING_STATE_ON
+from .const import (
+    CONF_LOW_FUEL_THRESHOLD,
+    DEFAULT_LOW_FUEL_THRESHOLD,
+    DOMAIN,
+    ERROR_NONE,
+    RUNNING_STATE_ON,
+)
 from .coordinator import VevorHeaterCoordinator
 
 
@@ -149,9 +155,13 @@ class VevorLowFuelSensor(
 
     @property
     def is_on(self) -> bool:
-        """Return true if fuel level is low (<20%)."""
+        """Return true if fuel level is low (below configured threshold)."""
         fuel_level = self.coordinator.data.get("fuel_level_percent", 100)
-        return fuel_level < (LOW_FUEL_THRESHOLD * 100)
+        threshold = self.coordinator.config_entry.options.get(
+            CONF_LOW_FUEL_THRESHOLD,
+            DEFAULT_LOW_FUEL_THRESHOLD
+        )
+        return fuel_level < threshold
 
     @callback
     def _handle_coordinator_update(self) -> None:

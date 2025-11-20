@@ -12,8 +12,10 @@ from homeassistant.components import bluetooth
 from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
 from homeassistant.const import CONF_ADDRESS
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers import selector
 
 from .const import (
+    CONF_EXTERNAL_TEMP_SENSOR,
     CONF_TEMPERATURE_OFFSET,
     DEFAULT_TEMPERATURE_OFFSET,
     DOMAIN,
@@ -235,26 +237,38 @@ class VevorHeaterOptionsFlowHandler(config_entries.OptionsFlow):
     ) -> FlowResult:
         """Manage the options."""
         if user_input is not None:
-            # Update config entry with new offset
-            self.hass.config_entries.async_update_entry(
-                self.config_entry,
-                data={**self.config_entry.data, **user_input},
-            )
-            return self.async_create_entry(title="", data={})
+            # Update config entry options (not data) with new settings
+            return self.async_create_entry(title="", data=user_input)
 
-        # Show current offset value in options form
+        # Get current values from options (with fallback to data for temperature_offset)
+        current_temp_offset = self.config_entry.options.get(
+            CONF_TEMPERATURE_OFFSET,
+            self.config_entry.data.get(CONF_TEMPERATURE_OFFSET, DEFAULT_TEMPERATURE_OFFSET)
+        )
+        current_external_sensor = self.config_entry.options.get(CONF_EXTERNAL_TEMP_SENSOR)
+
+        # Build options form schema
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema({
                 vol.Optional(
                     CONF_TEMPERATURE_OFFSET,
-                    default=self.config_entry.data.get(
-                        CONF_TEMPERATURE_OFFSET,
-                        DEFAULT_TEMPERATURE_OFFSET
-                    )
+                    default=current_temp_offset
                 ): vol.All(
                     vol.Coerce(float),
                     vol.Range(min=MIN_TEMPERATURE_OFFSET, max=MAX_TEMPERATURE_OFFSET),
+                ),
+                vol.Optional(
+                    CONF_EXTERNAL_TEMP_SENSOR,
+                    default=current_external_sensor,
+                    description={
+                        "suggested_value": current_external_sensor
+                    }
+                ): selector.EntitySelector(
+                    selector.EntitySelectorConfig(
+                        domain=["sensor", "climate"],
+                        device_class="temperature",
+                    )
                 ),
             }),
         )

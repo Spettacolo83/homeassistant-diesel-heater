@@ -140,6 +140,40 @@ After setup, you'll have these entities:
 - `number.vevor_heater_target_temperature` - Set target temperature
 - `number.vevor_heater_tank_capacity` - Configure tank capacity (1-100L, default 10L)
 - `number.vevor_heater_fuel_calibration_factor` - Calibrate fuel consumption (0.5-2.0, default 1.0)
+- `number.vevor_heater_low_fuel_threshold` - Configure low fuel warning threshold (5-50%, default 20%)
+
+## Advanced Configuration
+
+### External Temperature Sensor
+
+You can configure the climate entity to use an external temperature sensor instead of the heater's built-in sensor. This is useful for:
+- More accurate room temperature readings
+- Controlling the heater based on a specific room or zone temperature
+- Using a more precise or better-positioned temperature sensor
+
+**To configure:**
+
+1. Go to **Settings** → **Devices & Services**
+2. Find your **Vevor Diesel Heater** integration
+3. Click **"Configure"**
+4. Select your preferred temperature sensor from the **External Temperature Sensor** dropdown
+5. Click **"Submit"**
+
+The climate entity will now use the external sensor for `current_temperature`. If the external sensor becomes unavailable, it will automatically fall back to the heater's internal sensor.
+
+**Supported sensors:**
+- Any Home Assistant temperature sensor entity
+- Any climate entity with temperature reporting
+
+### Fuel Tracking Configuration
+
+Configure fuel tracking parameters using the number entities:
+
+- **Tank Capacity**: Set your actual fuel tank size (1-100L)
+- **Fuel Calibration Factor**: Fine-tune consumption estimates (0.5-2.0x multiplier)
+  - Set to >1.0 if actual consumption is higher than estimated
+  - Set to <1.0 if actual consumption is lower than estimated
+- **Low Fuel Threshold**: Customize when the low fuel warning triggers (5-50%)
 
 ## Dashboard Cards
 
@@ -227,6 +261,16 @@ This integration communicates via Bluetooth LE using the Vevor/BYD diesel heater
 - Command 4: Set level or temperature
 
 ## Changelog
+
+### Version 1.0.4 (Fork)
+- **External Temperature Sensor Support**: Use any Home Assistant temperature sensor for climate control
+  - Configure via integration options in UI
+  - Automatic fallback to internal sensor if external becomes unavailable
+  - Useful for more accurate room temperature control
+- **Configurable Low Fuel Threshold**: Customize when low fuel warning triggers
+  - Adjustable from 5% to 50% (default 20%)
+  - New number entity: `number.vevor_heater_low_fuel_threshold`
+- Improved options flow with entity selector for temperature sensors
 
 ### Version 1.0.3 (Fork)
 - **Fuel Consumption Tracking**: Real-time monitoring based on power level and runtime

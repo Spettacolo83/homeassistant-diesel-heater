@@ -14,7 +14,7 @@ from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
+from .const import CONF_EXTERNAL_TEMP_SENSOR, DOMAIN
 from .coordinator import VevorHeaterCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -49,6 +49,7 @@ class VevorHeaterClimate(ClimateEntity):
     def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
         """Initialize the climate entity."""
         self.coordinator = coordinator
+        self.hass = coordinator.hass
         self._attr_device_info = {
             "identifiers": {(DOMAIN, coordinator.address)},
             "name": "Vevor Heater",
@@ -64,7 +65,29 @@ class VevorHeaterClimate(ClimateEntity):
 
     @property
     def current_temperature(self) -> float | None:
-        """Return the current temperature (interior/cabin temperature)."""
+        """Return the current temperature.
+
+        Uses external temperature sensor if configured, otherwise falls back
+        to the heater's internal cabin temperature sensor.
+        """
+        # Check if external temperature sensor is configured
+        external_sensor_id = self.coordinator.config_entry.options.get(
+            CONF_EXTERNAL_TEMP_SENSOR
+        )
+
+        if external_sensor_id:
+            # Try to get external sensor state
+            external_state = self.hass.states.get(external_sensor_id)
+            if external_state and external_state.state not in ("unknown", "unavailable"):
+                try:
+                    return float(external_state.state)
+                except (ValueError, TypeError):
+                    _LOGGER.warning(
+                        "Could not parse external temperature sensor value: %s",
+                        external_state.state
+                    )
+
+        # Fall back to internal cabin temperature
         return self.coordinator.data.get("cab_temperature")
 
     @property
