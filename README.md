@@ -22,6 +22,7 @@ Control your Vevor/BYD Diesel Heater from Home Assistant via Bluetooth.
 - 📊 **Sensors** - Monitor temperature, voltage, altitude, and heater status
 - 🔌 **Bluetooth LE** - Direct local connection, no cloud required
 - ⚡ **Real-time Updates** - 30-second polling interval
+- ⛽ **Fuel Consumption Tracking** - Monitor fuel usage based on power level estimation (0.16-0.52 L/h)
 
 ## Supported Devices
 
@@ -116,6 +117,9 @@ After setup, you'll have these entities:
 - `sensor.vevor_heater_error` - Error status
 - `sensor.vevor_heater_running_mode` - Current running mode
 - `sensor.vevor_heater_set_level` - Current set level
+- `sensor.vevor_heater_hourly_fuel_consumption` - Instantaneous fuel consumption rate (L/h)
+- `sensor.vevor_heater_daily_fuel_consumed` - Daily fuel consumption (L, resets at midnight)
+- `sensor.vevor_heater_total_fuel_consumed` - Total fuel consumed since installation (L)
 
 #### Binary Sensors
 - `binary_sensor.vevor_heater_active` - Heater active status
@@ -212,6 +216,19 @@ This integration communicates via Bluetooth LE using the Vevor/BYD diesel heater
 - Command 4: Set level or temperature
 
 ## Changelog
+
+### Version 1.0.3 (Fork)
+- **Fuel Consumption Tracking** - Monitor fuel usage based on power level estimation
+  - Hourly consumption rate sensor (L/h) - real-time instantaneous rate
+  - Daily fuel consumed sensor (L) - automatically resets at midnight
+  - Total fuel consumed sensor (L) - lifetime consumption tracking
+  - Data persisted across Home Assistant restarts
+- Consumption calculated using VEVOR specifications (0.16-0.52 L/h range)
+- Only tracks consumption when heater is actively running
+- Minimal, stable implementation without UI changes
+
+### Version 1.0.2 (Fork)
+- Fixed HACS icon display by adding logo URL to hacs.json
 
 ### Version 1.0.1 (Fork)
 - Fixed HACS 2.0+ compatibility by restructuring repository

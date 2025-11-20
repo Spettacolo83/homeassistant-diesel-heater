@@ -5,7 +5,7 @@ import asyncio
 import logging
 import random
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from bleak import BleakClient
@@ -14,6 +14,7 @@ from bleak_retry_connector import establish_connection
 
 from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import (
@@ -22,13 +23,18 @@ from .const import (
     DEFAULT_TEMPERATURE_OFFSET,
     DOMAIN,
     ENCRYPTION_KEY,
+    FUEL_CONSUMPTION_TABLE,
     NOTIFY_UUID,
     RUNNING_MODE_LEVEL,
     RUNNING_MODE_MANUAL,
     RUNNING_MODE_TEMPERATURE,
+    RUNNING_STEP_RUNNING,
     SENSOR_TEMP_MAX,
     SENSOR_TEMP_MIN,
     SERVICE_UUID,
+    STORAGE_KEY_DAILY_DATE,
+    STORAGE_KEY_DAILY_FUEL,
+    STORAGE_KEY_TOTAL_FUEL,
     UPDATE_INTERVAL,
 )
 
@@ -104,6 +110,89 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             "connected": False,
         }
 
+        # Fuel consumption tracking (minimal)
+        self._store = Store(hass, 1, f"{DOMAIN}_{ble_device.address}")
+        self._last_update_time: float = time.time()
+        self._total_fuel_consumed: float = 0.0
+        self._daily_fuel_consumed: float = 0.0
+        self._last_save_time: float = time.time()
+
+    async def async_load_data(self) -> None:
+        """Load persistent fuel consumption data."""
+        try:
+            data = await self._store.async_load()
+            if data:
+                self._total_fuel_consumed = data.get(STORAGE_KEY_TOTAL_FUEL, 0.0)
+                self._daily_fuel_consumed = data.get(STORAGE_KEY_DAILY_FUEL, 0.0)
+                
+                # Check if we need to reset daily counter
+                saved_date = data.get(STORAGE_KEY_DAILY_DATE)
+                if saved_date:
+                    today = datetime.now().date().isoformat()
+                    if saved_date != today:
+                        _LOGGER.info("New day detected, resetting daily fuel counter")
+                        self._daily_fuel_consumed = 0.0
+                        
+                _LOGGER.debug(
+                    "Loaded fuel data: total=%.2fL, daily=%.2fL",
+                    self._total_fuel_consumed,
+                    self._daily_fuel_consumed
+                )
+        except Exception as err:
+            _LOGGER.warning("Could not load fuel data: %s", err)
+
+    async def async_save_data(self) -> None:
+        """Save persistent fuel consumption data."""
+        try:
+            data = {
+                STORAGE_KEY_TOTAL_FUEL: self._total_fuel_consumed,
+                STORAGE_KEY_DAILY_FUEL: self._daily_fuel_consumed,
+                STORAGE_KEY_DAILY_DATE: datetime.now().date().isoformat(),
+            }
+            await self._store.async_save(data)
+            _LOGGER.debug("Saved fuel data: %s", data)
+        except Exception as err:
+            _LOGGER.warning("Could not save fuel data: %s", err)
+
+    def _calculate_fuel_consumption(self, elapsed_seconds: float) -> float:
+        """Calculate fuel consumed based on power level and elapsed time.
+        
+        Returns fuel consumed in liters.
+        """
+        # Only consume fuel when actually running
+        if self.data.get("running_step") != RUNNING_STEP_RUNNING:
+            return 0.0
+            
+        power_level = self.data.get("set_level", 1)
+        consumption_rate = FUEL_CONSUMPTION_TABLE.get(power_level, 0.16)  # L/h
+        
+        # Calculate fuel consumed in this interval
+        hours_elapsed = elapsed_seconds / 3600.0
+        fuel_consumed = consumption_rate * hours_elapsed
+        
+        return fuel_consumed
+
+    def _update_fuel_tracking(self, elapsed_seconds: float) -> None:
+        """Update fuel consumption tracking."""
+        fuel_consumed = self._calculate_fuel_consumption(elapsed_seconds)
+        
+        if fuel_consumed > 0:
+            self._total_fuel_consumed += fuel_consumed
+            self._daily_fuel_consumed += fuel_consumed
+            
+        # Calculate instantaneous consumption rate
+        power_level = self.data.get("set_level", 1)
+        if self.data.get("running_step") == RUNNING_STEP_RUNNING:
+            hourly_consumption = FUEL_CONSUMPTION_TABLE.get(power_level, 0.16)
+        else:
+            hourly_consumption = 0.0
+            
+        # Update data dictionary
+        self.data["hourly_fuel_consumption"] = round(hourly_consumption, 2)
+        self.data["daily_fuel_consumed"] = round(self._daily_fuel_consumed, 2)
+        self.data["total_fuel_consumed"] = round(self._total_fuel_consumed, 2)
+
+
     async def _async_update_data(self) -> dict[str, Any]:
         """Update data from the heater."""
         if not self._client or not self._client.is_connected:
@@ -122,18 +211,31 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         try:
             # Request status
             status = await self._send_command(1, 0, 85)
-            
+
             if status:
                 self.data["connected"] = True
+
+                # Update fuel consumption tracking
+                current_time = time.time()
+                elapsed_seconds = current_time - self._last_update_time
+                self._last_update_time = current_time
+
+                self._update_fuel_tracking(elapsed_seconds)
+
+                # Save fuel data periodically (every 5 minutes)
+                if current_time - self._last_save_time >= 300:
+                    await self.async_save_data()
+                    self._last_save_time = current_time
+
                 return self.data
             else:
                 _LOGGER.warning("No status received from heater")
                 self.data["connected"] = False
-                
+
         except Exception as err:
             _LOGGER.error("Error updating data: %s", err)
             self.data["connected"] = False
-            
+
         return self.data
 
     async def _ensure_connected(self) -> None:

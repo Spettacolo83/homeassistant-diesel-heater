@@ -11,6 +11,7 @@ from homeassistant.const import (
     PERCENTAGE,
     UnitOfElectricPotential,
     UnitOfTemperature,
+    UnitOfVolume,
 )
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -43,6 +44,10 @@ async def async_setup_entry(
             VevorSetLevelSensor(coordinator),
             VevorAltitudeSensor(coordinator),
             VevorErrorCodeSensor(coordinator),
+            # Fuel consumption sensors
+            VevorHourlyFuelConsumptionSensor(coordinator),
+            VevorDailyFuelConsumedSensor(coordinator),
+            VevorTotalFuelConsumedSensor(coordinator),
         ]
     )
 
@@ -205,3 +210,59 @@ class VevorErrorCodeSensor(VevorSensorBase):
         """Return the state."""
         error = self.coordinator.data.get("error_code", 0)
         return ERROR_NAMES.get(error, f"Unknown error ({error})")
+
+
+# Fuel consumption sensors
+
+class VevorHourlyFuelConsumptionSensor(VevorSensorBase):
+    """Hourly fuel consumption sensor (instantaneous rate)."""
+
+    _attr_device_class = SensorDeviceClass.VOLUME_FLOW_RATE
+    _attr_native_unit_of_measurement = f"{UnitOfVolume.LITERS}/h"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:gauge"
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, "hourly_fuel_consumption", "Hourly Fuel Consumption")
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the state."""
+        return self.coordinator.data.get("hourly_fuel_consumption")
+
+
+class VevorDailyFuelConsumedSensor(VevorSensorBase):
+    """Daily fuel consumed sensor."""
+
+    _attr_device_class = SensorDeviceClass.VOLUME
+    _attr_native_unit_of_measurement = UnitOfVolume.LITERS
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_icon = "mdi:gas-station"
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, "daily_fuel_consumed", "Daily Fuel Consumed")
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the state."""
+        return self.coordinator.data.get("daily_fuel_consumed")
+
+
+class VevorTotalFuelConsumedSensor(VevorSensorBase):
+    """Total fuel consumed sensor."""
+
+    _attr_device_class = SensorDeviceClass.VOLUME
+    _attr_native_unit_of_measurement = UnitOfVolume.LITERS
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_icon = "mdi:gas-station"
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, "total_fuel_consumed", "Total Fuel Consumed")
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the state."""
+        return self.coordinator.data.get("total_fuel_consumed")

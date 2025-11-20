@@ -94,3 +94,23 @@ SENSOR_TEMP_MAX: Final = 127
 
 # Update interval
 UPDATE_INTERVAL: Final = 30  # seconds
+
+# Fuel consumption tracking (minimal - consumption only)
+# Consumption rates in L/h based on VEVOR specs (0.16-0.52 L/h range)
+FUEL_CONSUMPTION_TABLE: Final = {
+    1: 0.16,  # Minimum consumption
+    2: 0.20,
+    3: 0.24,
+    4: 0.28,
+    5: 0.32,
+    6: 0.36,
+    7: 0.40,
+    8: 0.44,
+    9: 0.48,
+    10: 0.52,  # Maximum consumption
+}
+
+# Data persistence keys
+STORAGE_KEY_TOTAL_FUEL: Final = "total_fuel_consumed"
+STORAGE_KEY_DAILY_FUEL: Final = "daily_fuel_consumed"
+STORAGE_KEY_DAILY_DATE: Final = "daily_fuel_date"
