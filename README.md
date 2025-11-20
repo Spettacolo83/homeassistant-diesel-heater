@@ -17,12 +17,16 @@ Control your Vevor/BYD Diesel Heater from Home Assistant via Bluetooth.
 ## Features
 
 - 🌡️ **Climate Entity** - Full thermostat control with target temperature
-- 🔥 **Heater Level Control** - Adjust heating power (1-10) via fan entity
-- ⚙️ **Running Mode Selection** - Switch between Manual, Level, and Temperature modes
-- 📊 **Sensors** - Monitor temperature, voltage, altitude, and heater status
+- 🔥 **Heater Level Control** - Adjust heating power (1-10) via number entity
+- ⚙️ **Running Mode Selection** - Switch between Level and Temperature modes
+- 📊 **Comprehensive Sensors** - Monitor temperature, voltage, altitude, and heater status
+- ⛽ **Fuel Consumption Tracking** - Monitor fuel usage with 3 dedicated sensors
+  - Hourly consumption rate (L/h) - real-time instantaneous rate
+  - Daily consumption (L) - automatically resets at midnight
+  - Total consumption (L) - lifetime tracking
 - 🔌 **Bluetooth LE** - Direct local connection, no cloud required
 - ⚡ **Real-time Updates** - 30-second polling interval
-- ⛽ **Fuel Consumption Tracking** - Monitor fuel usage based on power level estimation (0.16-0.52 L/h)
+- 💾 **Data Persistence** - Fuel consumption data saved across restarts
 
 ## Supported Devices
 
@@ -32,6 +36,18 @@ This integration has been tested with:
 - Bluetooth Service UUID: `0000ffe0-0000-1000-8000-00805f9b34fb`
 
 Other Vevor diesel heaters using similar protocols (AA55 encrypted/unencrypted) may also work.
+
+## Screenshots
+
+### Fuel Consumption Sensors
+Monitor your heater's fuel consumption with real-time tracking:
+
+![Fuel Consumption Sensors](docs/images/fuel-consumption-sensors.png)
+
+### Heater Controls
+Full control over your heater including temperature, level, and mode selection:
+
+![Heater Controls](docs/images/heater-controls.png)
 
 ## Installation
 
@@ -97,16 +113,15 @@ After setup, you'll have these entities:
   - Turn heater ON/OFF
   - Works in Temperature Mode
 
-#### Fan
-- `fan.vevor_heater_heater_level` - Heater power level (1-10)
-  - Only available in Manual or Level mode
-  - Percentage control (10%-100%)
-
 #### Select
 - `select.vevor_heater_running_mode` - Mode selector
-  - Manual - Full manual control
-  - Level Mode - Set heating level (1-10)
+  - Level Mode - Set heating level (1-10) for fixed power operation
   - Temperature Mode - Automatic temperature control
+  - Note: Manual mode only accessible via physical heater buttons
+
+#### Number
+- `number.vevor_heater_level` - Set heater power level (1-10)
+- `number.vevor_heater_target_temperature` - Set target temperature (8-36°C)
 
 #### Sensors
 - `sensor.vevor_heater_case_temperature` - Heater case temperature (°C)
@@ -126,9 +141,6 @@ After setup, you'll have these entities:
 
 #### Switches
 - `switch.vevor_heater_power` - Simple ON/OFF control
-
-#### Number
-- `number.vevor_heater_target_temperature` - Set target temperature
 
 ## Dashboard Cards
 
@@ -217,15 +229,23 @@ This integration communicates via Bluetooth LE using the Vevor/BYD diesel heater
 
 ## Changelog
 
-### Version 1.0.3 (Fork)
+### Version 1.0.3 (Latest)
 - **Fuel Consumption Tracking** - Monitor fuel usage based on power level estimation
-  - Hourly consumption rate sensor (L/h) - real-time instantaneous rate
+  - Hourly consumption rate sensor (L/h) - instantaneous rate with decimal precision
   - Daily fuel consumed sensor (L) - automatically resets at midnight
   - Total fuel consumed sensor (L) - lifetime consumption tracking
   - Data persisted across Home Assistant restarts
+- **Bug Fixes**
+  - Fixed climate entity showing as unavailable in newer HA versions
+  - Fixed fuel sensors showing "Unknown" values
+  - Fixed fuel tracking not updating due to protocol parser bug
+  - Fixed hourly fuel consumption displaying integers instead of decimals
+- **Improvements**
+  - Removed non-functional "Manual" mode from running mode selector
+  - Running mode can now be switched between "Level Mode" and "Temperature Mode"
+  - Manual mode only accessible via physical heater buttons
 - Consumption calculated using VEVOR specifications (0.16-0.52 L/h range)
-- Only tracks consumption when heater is actively running
-- Minimal, stable implementation without UI changes
+- Compatible with all protocol variants (AA55/AA66, encrypted/unencrypted)
 
 ### Version 1.0.2 (Fork)
 - Fixed HACS icon display by adding logo URL to hacs.json
