@@ -3,5 +3,6 @@
   "content_in_root": false,
   "filename": "vevor_heater",
   "render_readme": true,
-  "homeassistant": "2024.1.0"
+  "homeassistant": "2024.1.0",
+  "logo": "https://raw.githubusercontent.com/Spettacolo83/homeassistant-vevor-heater/main/custom_components/vevor_heater/icon.png"
 }
