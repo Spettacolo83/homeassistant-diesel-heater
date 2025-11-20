@@ -10,7 +10,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, ERROR_NONE, RUNNING_STATE_ON
+from .const import DOMAIN, ERROR_NONE, LOW_FUEL_THRESHOLD, RUNNING_STATE_ON
 from .coordinator import VevorHeaterCoordinator
 
 
@@ -27,6 +27,7 @@ async def async_setup_entry(
             VevorHeaterActiveSensor(coordinator),
             VevorHeaterProblemSensor(coordinator),
             VevorHeaterConnectedSensor(coordinator),
+            VevorLowFuelSensor(coordinator),
         ]
     )
 
@@ -118,6 +119,39 @@ class VevorHeaterConnectedSensor(
     def is_on(self) -> bool:
         """Return true if connected."""
         return self.coordinator.data.get("connected", False)
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+
+class VevorLowFuelSensor(
+    CoordinatorEntity[VevorHeaterCoordinator], BinarySensorEntity
+):
+    """Vevor Heater low fuel warning binary sensor."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Low Fuel"
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    _attr_icon = "mdi:fuel-alert"
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the binary sensor."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_low_fuel"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, coordinator.address)},
+            "name": "Vevor Diesel Heater",
+            "manufacturer": "Vevor",
+            "model": "Diesel Heater",
+        }
+
+    @property
+    def is_on(self) -> bool:
+        """Return true if fuel level is low (<20%)."""
+        fuel_level = self.coordinator.data.get("fuel_level_percent", 100)
+        return fuel_level < (LOW_FUEL_THRESHOLD * 100)
 
     @callback
     def _handle_coordinator_update(self) -> None:

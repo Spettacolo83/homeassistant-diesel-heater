@@ -94,3 +94,45 @@ SENSOR_TEMP_MAX: Final = 127
 
 # Update interval
 UPDATE_INTERVAL: Final = 30  # seconds
+
+# Fuel consumption tracking
+# Consumption rates in L/h based on VEVOR specs (0.16-0.52 L/h range)
+# Linear interpolation from level 1 (min) to level 10 (max)
+FUEL_CONSUMPTION_TABLE: Final = {
+    1: 0.16,  # Minimum consumption
+    2: 0.20,
+    3: 0.24,
+    4: 0.28,
+    5: 0.32,
+    6: 0.36,
+    7: 0.40,
+    8: 0.44,
+    9: 0.48,
+    10: 0.52,  # Maximum consumption
+}
+
+# Tank capacity
+CONF_TANK_CAPACITY: Final = "tank_capacity"
+DEFAULT_TANK_CAPACITY: Final = 10.0  # Liters
+MIN_TANK_CAPACITY: Final = 1.0
+MAX_TANK_CAPACITY: Final = 100.0
+
+# Low fuel warning threshold
+LOW_FUEL_THRESHOLD: Final = 0.20  # 20%
+
+# Fuel calibration factor (user adjustable)
+CONF_FUEL_CALIBRATION: Final = "fuel_calibration"
+DEFAULT_FUEL_CALIBRATION: Final = 1.0  # Multiplier for consumption table
+MIN_FUEL_CALIBRATION: Final = 0.5
+MAX_FUEL_CALIBRATION: Final = 2.0
+
+# Data persistence keys
+STORAGE_KEY_TOTAL_FUEL: Final = "total_fuel_consumed"
+STORAGE_KEY_DAILY_FUEL: Final = "daily_fuel_consumed"
+STORAGE_KEY_DAILY_DATE: Final = "daily_fuel_date"
+STORAGE_KEY_TOTAL_RUNTIME: Final = "total_runtime_seconds"
+STORAGE_KEY_DAILY_RUNTIME: Final = "daily_runtime_seconds"
+STORAGE_KEY_DAILY_RUNTIME_DATE: Final = "daily_runtime_date"
+
+# External temperature sensor
+CONF_EXTERNAL_TEMP_SENSOR: Final = "external_temperature_sensor"

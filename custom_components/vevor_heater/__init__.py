@@ -44,7 +44,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     
     # Create coordinator
     coordinator = VevorHeaterCoordinator(hass, ble_device, entry)
-    
+
+    # Load persistent data
+    await coordinator.async_load_data()
+
     # Initial data fetch
     try:
         await coordinator.async_config_entry_first_refresh()
@@ -67,6 +70,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         coordinator: VevorHeaterCoordinator = hass.data[DOMAIN].pop(entry.entry_id)
-        await coordinator.async_shutdown()
-    
+        # Save persistent data before shutdown
+        await coordinator.async_save_data()
+        if hasattr(coordinator, "async_shutdown"):
+            await coordinator.async_shutdown()
+
     return unload_ok

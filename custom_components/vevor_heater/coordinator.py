@@ -5,7 +5,7 @@ import asyncio
 import logging
 import random
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from bleak import BleakClient
@@ -15,20 +15,33 @@ from bleak_retry_connector import establish_connection
 from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.helpers.storage import Store
 
 from .const import (
     CHARACTERISTIC_UUID,
+    CONF_FUEL_CALIBRATION,
+    CONF_TANK_CAPACITY,
     CONF_TEMPERATURE_OFFSET,
+    DEFAULT_FUEL_CALIBRATION,
+    DEFAULT_TANK_CAPACITY,
     DEFAULT_TEMPERATURE_OFFSET,
     DOMAIN,
     ENCRYPTION_KEY,
+    FUEL_CONSUMPTION_TABLE,
     NOTIFY_UUID,
     RUNNING_MODE_LEVEL,
     RUNNING_MODE_MANUAL,
     RUNNING_MODE_TEMPERATURE,
+    RUNNING_STEP_RUNNING,
     SENSOR_TEMP_MAX,
     SENSOR_TEMP_MIN,
     SERVICE_UUID,
+    STORAGE_KEY_DAILY_FUEL,
+    STORAGE_KEY_DAILY_DATE,
+    STORAGE_KEY_DAILY_RUNTIME,
+    STORAGE_KEY_DAILY_RUNTIME_DATE,
+    STORAGE_KEY_TOTAL_FUEL,
+    STORAGE_KEY_TOTAL_RUNTIME,
     UPDATE_INTERVAL,
 )
 
@@ -88,7 +101,20 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._protocol_mode = 0  # Will be detected from response
         self._connection_attempts = 0
         self._last_connection_attempt = 0.0
-        
+
+        # Storage for persistent data
+        self._store = Store(hass, 1, f"{DOMAIN}_{ble_device.address}")
+        self._storage_data: dict[str, Any] = {}
+
+        # Fuel and runtime tracking
+        self._last_update_time: float = time.time()
+        self._total_fuel_consumed: float = 0.0  # Liters
+        self._daily_fuel_consumed: float = 0.0  # Liters
+        self._total_runtime: int = 0  # Seconds
+        self._daily_runtime: int = 0  # Seconds
+        self._last_fuel_date: str = datetime.now().date().isoformat()
+        self._last_runtime_date: str = datetime.now().date().isoformat()
+
         # Current state
         self.data: dict[str, Any] = {
             "running_state": 0,
@@ -102,10 +128,168 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             "case_temperature": 0,
             "cab_temperature": 0,
             "connected": False,
+            # Fuel tracking
+            "hourly_fuel_consumption": 0.0,  # L/h (instantaneous)
+            "daily_fuel_consumed": 0.0,  # L (today)
+            "total_fuel_consumed": 0.0,  # L (all time)
+            # Runtime tracking
+            "daily_runtime": 0,  # seconds (today)
+            "total_runtime": 0,  # seconds (all time)
+            # Tank
+            "tank_capacity": DEFAULT_TANK_CAPACITY,  # L
+            "fuel_remaining": DEFAULT_TANK_CAPACITY,  # L
+            "fuel_level_percent": 100.0,  # %
         }
+
+    async def async_load_data(self) -> None:
+        """Load persistent data from storage."""
+        try:
+            self._storage_data = await self._store.async_load() or {}
+
+            # Load fuel data
+            self._total_fuel_consumed = self._storage_data.get(STORAGE_KEY_TOTAL_FUEL, 0.0)
+            self._daily_fuel_consumed = self._storage_data.get(STORAGE_KEY_DAILY_FUEL, 0.0)
+            self._last_fuel_date = self._storage_data.get(
+                STORAGE_KEY_DAILY_DATE,
+                datetime.now().date().isoformat()
+            )
+
+            # Load runtime data
+            self._total_runtime = self._storage_data.get(STORAGE_KEY_TOTAL_RUNTIME, 0)
+            self._daily_runtime = self._storage_data.get(STORAGE_KEY_DAILY_RUNTIME, 0)
+            self._last_runtime_date = self._storage_data.get(
+                STORAGE_KEY_DAILY_RUNTIME_DATE,
+                datetime.now().date().isoformat()
+            )
+
+            # Update data dict
+            self.data["total_fuel_consumed"] = self._total_fuel_consumed
+            self.data["daily_fuel_consumed"] = self._daily_fuel_consumed
+            self.data["total_runtime"] = self._total_runtime
+            self.data["daily_runtime"] = self._daily_runtime
+
+            # Load tank capacity from config
+            self.data["tank_capacity"] = self.config_entry.options.get(
+                CONF_TANK_CAPACITY,
+                DEFAULT_TANK_CAPACITY
+            )
+
+            # Check if we need to reset daily counters
+            await self._check_daily_reset()
+
+            _LOGGER.debug(
+                "Loaded persistent data: fuel=%.2fL, runtime=%ds",
+                self._total_fuel_consumed,
+                self._total_runtime
+            )
+        except Exception as err:
+            _LOGGER.error("Error loading persistent data: %s", err)
+
+    async def async_save_data(self) -> None:
+        """Save persistent data to storage."""
+        try:
+            self._storage_data[STORAGE_KEY_TOTAL_FUEL] = self._total_fuel_consumed
+            self._storage_data[STORAGE_KEY_DAILY_FUEL] = self._daily_fuel_consumed
+            self._storage_data[STORAGE_KEY_DAILY_DATE] = self._last_fuel_date
+            self._storage_data[STORAGE_KEY_TOTAL_RUNTIME] = self._total_runtime
+            self._storage_data[STORAGE_KEY_DAILY_RUNTIME] = self._daily_runtime
+            self._storage_data[STORAGE_KEY_DAILY_RUNTIME_DATE] = self._last_runtime_date
+
+            await self._store.async_save(self._storage_data)
+        except Exception as err:
+            _LOGGER.error("Error saving persistent data: %s", err)
+
+    async def _check_daily_reset(self) -> None:
+        """Check if we need to reset daily counters."""
+        current_date = datetime.now().date().isoformat()
+
+        # Reset daily fuel if date changed
+        if current_date != self._last_fuel_date:
+            _LOGGER.info("Resetting daily fuel counter (was %.2fL)", self._daily_fuel_consumed)
+            self._daily_fuel_consumed = 0.0
+            self._last_fuel_date = current_date
+            self.data["daily_fuel_consumed"] = 0.0
+
+        # Reset daily runtime if date changed
+        if current_date != self._last_runtime_date:
+            _LOGGER.info("Resetting daily runtime counter (was %ds)", self._daily_runtime)
+            self._daily_runtime = 0
+            self._last_runtime_date = current_date
+            self.data["daily_runtime"] = 0
+
+        # Save if anything was reset
+        if (current_date != self._last_fuel_date or
+            current_date != self._last_runtime_date):
+            await self.async_save_data()
+
+    def _calculate_fuel_consumption(self, elapsed_seconds: float) -> float:
+        """Calculate fuel consumed based on power level and elapsed time."""
+        # Only consume fuel when heater is actively running
+        if self.data.get("running_step") != RUNNING_STEP_RUNNING:
+            return 0.0
+
+        # Get current power level
+        power_level = self.data.get("set_level", 1)
+        if power_level < 1 or power_level > 10:
+            power_level = 1
+
+        # Get consumption rate from table (L/h)
+        base_consumption_rate = FUEL_CONSUMPTION_TABLE.get(power_level, 0.16)
+
+        # Apply calibration factor from config
+        calibration = self.config_entry.options.get(
+            CONF_FUEL_CALIBRATION,
+            DEFAULT_FUEL_CALIBRATION
+        )
+        consumption_rate = base_consumption_rate * calibration
+
+        # Calculate fuel consumed in this period (L)
+        fuel_consumed = (consumption_rate / 3600.0) * elapsed_seconds
+
+        # Update hourly rate for display
+        self.data["hourly_fuel_consumption"] = consumption_rate
+
+        return fuel_consumed
+
+    def _update_fuel_tracking(self, elapsed_seconds: float) -> None:
+        """Update fuel consumption tracking."""
+        fuel_consumed = self._calculate_fuel_consumption(elapsed_seconds)
+
+        if fuel_consumed > 0:
+            self._total_fuel_consumed += fuel_consumed
+            self._daily_fuel_consumed += fuel_consumed
+
+            self.data["total_fuel_consumed"] = round(self._total_fuel_consumed, 3)
+            self.data["daily_fuel_consumed"] = round(self._daily_fuel_consumed, 3)
+
+            # Update tank level
+            tank_capacity = self.data["tank_capacity"]
+            fuel_remaining = max(0, tank_capacity - self._total_fuel_consumed)
+            fuel_level_percent = (fuel_remaining / tank_capacity * 100) if tank_capacity > 0 else 0
+
+            self.data["fuel_remaining"] = round(fuel_remaining, 2)
+            self.data["fuel_level_percent"] = round(fuel_level_percent, 1)
+
+    def _update_runtime_tracking(self, elapsed_seconds: float) -> None:
+        """Update runtime tracking."""
+        # Only count runtime when heater is actively running
+        if self.data.get("running_step") == RUNNING_STEP_RUNNING:
+            self._total_runtime += int(elapsed_seconds)
+            self._daily_runtime += int(elapsed_seconds)
+
+            self.data["total_runtime"] = self._total_runtime
+            self.data["daily_runtime"] = self._daily_runtime
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Update data from the heater."""
+        # Calculate elapsed time since last update
+        current_time = time.time()
+        elapsed_seconds = current_time - self._last_update_time
+        self._last_update_time = current_time
+
+        # Check for daily reset
+        await self._check_daily_reset()
+
         if not self._client or not self._client.is_connected:
             try:
                 await self._ensure_connected()
@@ -118,22 +302,31 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 )
                 self.data["connected"] = False
                 return self.data
-        
+
         try:
             # Request status
             status = await self._send_command(1, 0, 85)
-            
+
             if status:
                 self.data["connected"] = True
+
+                # Update fuel and runtime tracking
+                self._update_fuel_tracking(elapsed_seconds)
+                self._update_runtime_tracking(elapsed_seconds)
+
+                # Save data periodically (every 5 minutes to reduce wear)
+                if int(current_time) % 300 < UPDATE_INTERVAL:
+                    await self.async_save_data()
+
                 return self.data
             else:
                 _LOGGER.warning("No status received from heater")
                 self.data["connected"] = False
-                
+
         except Exception as err:
             _LOGGER.error("Error updating data: %s", err)
             self.data["connected"] = False
-            
+
         return self.data
 
     async def _ensure_connected(self) -> None:

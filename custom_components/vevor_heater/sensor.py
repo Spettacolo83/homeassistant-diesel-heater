@@ -11,6 +11,8 @@ from homeassistant.const import (
     PERCENTAGE,
     UnitOfElectricPotential,
     UnitOfTemperature,
+    UnitOfTime,
+    UnitOfVolume,
 )
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -43,6 +45,15 @@ async def async_setup_entry(
             VevorSetLevelSensor(coordinator),
             VevorAltitudeSensor(coordinator),
             VevorErrorCodeSensor(coordinator),
+            # Fuel tracking sensors
+            VevorHourlyFuelConsumptionSensor(coordinator),
+            VevorDailyFuelConsumedSensor(coordinator),
+            VevorTotalFuelConsumedSensor(coordinator),
+            VevorFuelRemainingSensor(coordinator),
+            VevorFuelLevelPercentSensor(coordinator),
+            # Runtime tracking sensors
+            VevorDailyRuntimeSensor(coordinator),
+            VevorTotalRuntimeSensor(coordinator),
         ]
     )
 
@@ -205,3 +216,137 @@ class VevorErrorCodeSensor(VevorSensorBase):
         """Return the state."""
         error = self.coordinator.data.get("error_code", 0)
         return ERROR_NAMES.get(error, f"Unknown error ({error})")
+
+
+# Fuel tracking sensors
+
+
+class VevorHourlyFuelConsumptionSensor(VevorSensorBase):
+    """Hourly fuel consumption sensor (instantaneous rate)."""
+
+    _attr_device_class = SensorDeviceClass.VOLUME_FLOW_RATE
+    _attr_native_unit_of_measurement = f"{UnitOfVolume.LITERS}/h"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:gauge"
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, "hourly_fuel_consumption", "Hourly Fuel Consumption")
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the state."""
+        return self.coordinator.data.get("hourly_fuel_consumption")
+
+
+class VevorDailyFuelConsumedSensor(VevorSensorBase):
+    """Daily fuel consumed sensor."""
+
+    _attr_device_class = SensorDeviceClass.VOLUME
+    _attr_native_unit_of_measurement = UnitOfVolume.LITERS
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_icon = "mdi:gas-station"
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, "daily_fuel_consumed", "Daily Fuel Consumed")
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the state."""
+        return self.coordinator.data.get("daily_fuel_consumed")
+
+
+class VevorTotalFuelConsumedSensor(VevorSensorBase):
+    """Total fuel consumed sensor."""
+
+    _attr_device_class = SensorDeviceClass.VOLUME
+    _attr_native_unit_of_measurement = UnitOfVolume.LITERS
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_icon = "mdi:gas-station"
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, "total_fuel_consumed", "Total Fuel Consumed")
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the state."""
+        return self.coordinator.data.get("total_fuel_consumed")
+
+
+class VevorFuelRemainingSensor(VevorSensorBase):
+    """Fuel remaining sensor."""
+
+    _attr_device_class = SensorDeviceClass.VOLUME
+    _attr_native_unit_of_measurement = UnitOfVolume.LITERS
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:fuel"
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, "fuel_remaining", "Fuel Remaining")
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the state."""
+        return self.coordinator.data.get("fuel_remaining")
+
+
+class VevorFuelLevelPercentSensor(VevorSensorBase):
+    """Fuel level percent sensor."""
+
+    _attr_device_class = SensorDeviceClass.BATTERY
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:fuel"
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, "fuel_level_percent", "Fuel Level")
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the state."""
+        return self.coordinator.data.get("fuel_level_percent")
+
+
+# Runtime tracking sensors
+
+
+class VevorDailyRuntimeSensor(VevorSensorBase):
+    """Daily runtime sensor."""
+
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_native_unit_of_measurement = UnitOfTime.HOURS
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_icon = "mdi:clock-outline"
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, "daily_runtime", "Daily Runtime")
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the state in hours."""
+        seconds = self.coordinator.data.get("daily_runtime", 0)
+        return round(seconds / 3600.0, 2)
+
+
+class VevorTotalRuntimeSensor(VevorSensorBase):
+    """Total runtime sensor."""
+
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_native_unit_of_measurement = UnitOfTime.HOURS
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_icon = "mdi:clock-outline"
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, "total_runtime", "Total Runtime")
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the state in hours."""
+        seconds = self.coordinator.data.get("total_runtime", 0)
+        return round(seconds / 3600.0, 2)

@@ -8,10 +8,18 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
+    CONF_FUEL_CALIBRATION,
+    CONF_TANK_CAPACITY,
+    DEFAULT_FUEL_CALIBRATION,
+    DEFAULT_TANK_CAPACITY,
     DOMAIN,
+    MAX_FUEL_CALIBRATION,
     MAX_LEVEL,
+    MAX_TANK_CAPACITY,
     MAX_TEMP_CELSIUS,
+    MIN_FUEL_CALIBRATION,
     MIN_LEVEL,
+    MIN_TANK_CAPACITY,
     MIN_TEMP_CELSIUS,
 )
 from .coordinator import VevorHeaterCoordinator
@@ -29,6 +37,8 @@ async def async_setup_entry(
         [
             VevorHeaterLevelNumber(coordinator),
             VevorHeaterTemperatureNumber(coordinator),
+            VevorTankCapacityNumber(coordinator),
+            VevorFuelCalibrationNumber(coordinator),
         ]
     )
 
@@ -102,6 +112,104 @@ class VevorHeaterTemperatureNumber(
     async def async_set_native_value(self, value: float) -> None:
         """Set new value."""
         await self.coordinator.async_set_temperature(int(value))
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+class VevorTankCapacityNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberEntity):
+    """Vevor Heater tank capacity number entity."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Tank Capacity"
+    _attr_icon = "mdi:fuel"
+    _attr_native_unit_of_measurement = "L"
+    _attr_native_min_value = MIN_TANK_CAPACITY
+    _attr_native_max_value = MAX_TANK_CAPACITY
+    _attr_native_step = 0.5
+    _attr_entity_category = "config"
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the number entity."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_tank_capacity"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, coordinator.address)},
+            "name": "Vevor Diesel Heater",
+            "manufacturer": "Vevor",
+            "model": "Diesel Heater",
+        }
+
+    @property
+    def native_value(self) -> float:
+        """Return the current value."""
+        return self.coordinator.config_entry.options.get(
+            CONF_TANK_CAPACITY,
+            DEFAULT_TANK_CAPACITY
+        )
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Set new value."""
+        # Update config entry options
+        new_options = {**self.coordinator.config_entry.options}
+        new_options[CONF_TANK_CAPACITY] = value
+        self.hass.config_entries.async_update_entry(
+            self.coordinator.config_entry,
+            options=new_options
+        )
+        # Update coordinator data
+        self.coordinator.data["tank_capacity"] = value
+        await self.coordinator.async_request_refresh()
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+
+class VevorFuelCalibrationNumber(
+    CoordinatorEntity[VevorHeaterCoordinator], NumberEntity
+):
+    """Vevor Heater fuel calibration number entity."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Fuel Calibration Factor"
+    _attr_icon = "mdi:tune"
+    _attr_native_min_value = MIN_FUEL_CALIBRATION
+    _attr_native_max_value = MAX_FUEL_CALIBRATION
+    _attr_native_step = 0.05
+    _attr_entity_category = "config"
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the number entity."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_fuel_calibration"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, coordinator.address)},
+            "name": "Vevor Diesel Heater",
+            "manufacturer": "Vevor",
+            "model": "Diesel Heater",
+        }
+
+    @property
+    def native_value(self) -> float:
+        """Return the current value."""
+        return self.coordinator.config_entry.options.get(
+            CONF_FUEL_CALIBRATION,
+            DEFAULT_FUEL_CALIBRATION
+        )
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Set new value."""
+        # Update config entry options
+        new_options = {**self.coordinator.config_entry.options}
+        new_options[CONF_FUEL_CALIBRATION] = value
+        self.hass.config_entries.async_update_entry(
+            self.coordinator.config_entry,
+            options=new_options
+        )
+        await self.coordinator.async_request_refresh()
 
     @callback
     def _handle_coordinator_update(self) -> None:

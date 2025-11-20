@@ -22,6 +22,11 @@ Control your Vevor/BYD Diesel Heater from Home Assistant via Bluetooth.
 - 📊 **Sensors** - Monitor temperature, voltage, altitude, and heater status
 - 🔌 **Bluetooth LE** - Direct local connection, no cloud required
 - ⚡ **Real-time Updates** - 30-second polling interval
+- ⛽ **Fuel Consumption Tracking** - Monitor hourly, daily, and total fuel consumption
+- 🪣 **Tank Management** - Configurable tank capacity with fuel level monitoring
+- ⏱️ **Runtime Tracking** - Track daily and total heater runtime
+- ⚠️ **Low Fuel Warning** - Automatic alert when fuel level drops below 20%
+- 🎯 **Calibration** - Adjustable fuel consumption calibration factor
 
 ## Supported Devices
 
@@ -116,15 +121,25 @@ After setup, you'll have these entities:
 - `sensor.vevor_heater_error` - Error status
 - `sensor.vevor_heater_running_mode` - Current running mode
 - `sensor.vevor_heater_set_level` - Current set level
+- `sensor.vevor_heater_hourly_fuel_consumption` - Instantaneous fuel consumption (L/h)
+- `sensor.vevor_heater_daily_fuel_consumed` - Daily fuel consumption (L, resets at midnight)
+- `sensor.vevor_heater_total_fuel_consumed` - Total fuel consumed since installation (L)
+- `sensor.vevor_heater_fuel_remaining` - Estimated fuel remaining in tank (L)
+- `sensor.vevor_heater_fuel_level` - Fuel level percentage (%)
+- `sensor.vevor_heater_daily_runtime` - Daily runtime (hours, resets at midnight)
+- `sensor.vevor_heater_total_runtime` - Total runtime since installation (hours)
 
 #### Binary Sensors
 - `binary_sensor.vevor_heater_active` - Heater active status
+- `binary_sensor.vevor_heater_low_fuel` - Low fuel warning (<20%)
 
 #### Switches
 - `switch.vevor_heater_power` - Simple ON/OFF control
 
 #### Number
 - `number.vevor_heater_target_temperature` - Set target temperature
+- `number.vevor_heater_tank_capacity` - Configure tank capacity (1-100L, default 10L)
+- `number.vevor_heater_fuel_calibration_factor` - Calibrate fuel consumption (0.5-2.0, default 1.0)
 
 ## Dashboard Cards
 
@@ -212,6 +227,27 @@ This integration communicates via Bluetooth LE using the Vevor/BYD diesel heater
 - Command 4: Set level or temperature
 
 ## Changelog
+
+### Version 1.0.3 (Fork)
+- **Fuel Consumption Tracking**: Real-time monitoring based on power level and runtime
+  - Hourly consumption rate (L/h)
+  - Daily consumption with automatic midnight reset
+  - Total lifetime consumption
+  - Persistent storage across restarts
+- **Tank Management System**:
+  - Configurable tank capacity (1-100L)
+  - Real-time fuel remaining calculation
+  - Fuel level percentage display
+  - Low fuel warning (<20%)
+- **Runtime Tracking**:
+  - Daily runtime hours with automatic reset
+  - Total lifetime runtime hours
+  - Data persistence across reboots
+- **Calibration**: Adjustable fuel consumption calibration factor (0.5-2.0x)
+- Accurate consumption estimation based on VEVOR specifications (0.16-0.52 L/h range)
+
+### Version 1.0.2 (Fork)
+- Fixed HACS icon display by adding logo URL to hacs.json
 
 ### Version 1.0.1 (Fork)
 - Fixed HACS 2.0+ compatibility by restructuring repository
