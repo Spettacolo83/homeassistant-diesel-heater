@@ -11,8 +11,9 @@ from homeassistant.components.climate import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import VevorHeaterCoordinator
@@ -30,7 +31,7 @@ async def async_setup_entry(
     async_add_entities([VevorHeaterClimate(coordinator)])
 
 
-class VevorHeaterClimate(ClimateEntity):
+class VevorHeaterClimate(CoordinatorEntity[VevorHeaterCoordinator], ClimateEntity):
     """Climate entity for Vevor Heater."""
 
     _attr_has_entity_name = True
@@ -48,7 +49,7 @@ class VevorHeaterClimate(ClimateEntity):
 
     def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
         """Initialize the climate entity."""
-        self.coordinator = coordinator
+        super().__init__(coordinator)
         self._attr_device_info = {
             "identifiers": {(DOMAIN, coordinator.address)},
             "name": "Vevor Heater",
@@ -106,12 +107,7 @@ class VevorHeaterClimate(ClimateEntity):
         """Turn off the heater."""
         await self.async_set_hvac_mode(HVACMode.OFF)
 
-    async def async_added_to_hass(self) -> None:
-        """When entity is added to hass."""
-        self.async_on_remove(
-            self.coordinator.async_add_listener(self._handle_coordinator_update)
-        )
-
+    @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
