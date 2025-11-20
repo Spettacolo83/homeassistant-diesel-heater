@@ -1,0 +1,7 @@
+{
+  "name": "Vevor Diesel Heater",
+  "content_in_root": false,
+  "filename": "vevor_heater",
+  "render_readme": true,
+  "homeassistant": "2024.1.0"
+}
