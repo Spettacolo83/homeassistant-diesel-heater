@@ -221,6 +221,7 @@ class VevorHourlyFuelConsumptionSensor(VevorSensorBase):
     _attr_native_unit_of_measurement = f"{UnitOfVolume.LITERS}/h"
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:gauge"
+    _attr_suggested_display_precision = 2
 
     def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
         """Initialize the sensor."""

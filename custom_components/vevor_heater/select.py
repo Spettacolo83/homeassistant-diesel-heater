@@ -37,7 +37,6 @@ class VevorHeaterModeSelect(SelectEntity):
     _attr_name = "Running Mode"
     _attr_icon = "mdi:cog"
     _attr_options = [
-        RUNNING_MODE_NAMES[RUNNING_MODE_MANUAL],
         RUNNING_MODE_NAMES[RUNNING_MODE_LEVEL],
         RUNNING_MODE_NAMES[RUNNING_MODE_TEMPERATURE],
     ]
@@ -63,6 +62,10 @@ class VevorHeaterModeSelect(SelectEntity):
         """Return the current running mode."""
         mode = self.coordinator.data.get("running_mode")
         if mode is not None:
+            # Manual mode is not selectable (only via physical buttons)
+            # so we return None if the heater is in manual mode
+            if mode == RUNNING_MODE_MANUAL:
+                return None
             return RUNNING_MODE_NAMES.get(mode)
         return None
 
