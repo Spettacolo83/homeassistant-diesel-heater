@@ -1,8 +1,16 @@
-# Vevor Diesel Heater - Home Assistant Integration
+<p align="center">
+  <img src="custom_components/vevor_heater/icon.png" alt="VEVOR Logo" width="100"/>
+</p>
 
-[![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
-[![GitHub release](https://img.shields.io/github/release/MSDATDE/homeassistant-vevor-heater.svg)](https://github.com/MSDATDE/homeassistant-vevor-heater/releases)
-[![License](https://img.shields.io/github/license/MSDATDE/homeassistant-vevor-heater.svg)](LICENSE)
+<h1 align="center">Vevor Diesel Heater - Home Assistant Integration</h1>
+
+<p align="center">
+  <a href="https://github.com/hacs/integration"><img src="https://img.shields.io/badge/HACS-Custom-41BDF5.svg" alt="HACS"></a>
+  <a href="https://github.com/Spettacolo83/homeassistant-vevor-heater/releases"><img src="https://img.shields.io/github/release/Spettacolo83/homeassistant-vevor-heater.svg" alt="GitHub release"></a>
+  <a href="https://github.com/Spettacolo83/homeassistant-vevor-heater/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Spettacolo83/homeassistant-vevor-heater.svg" alt="License"></a>
+</p>
+
+> This is a maintained fork of the original [homeassistant-vevor-heater](https://github.com/MSDATDE/homeassistant-vevor-heater) by [@MSDATDE](https://github.com/MSDATDE), enhanced with HACS 2.0+ compatibility and additional improvements.
 
 Control your Vevor/BYD Diesel Heater from Home Assistant via Bluetooth.
 
@@ -31,7 +39,7 @@ Other Vevor diesel heaters using similar protocols (AA55 encrypted/unencrypted) 
 1. Open HACS in Home Assistant
 2. Go to "Integrations"
 3. Click the three dots menu → "Custom repositories"
-4. Add this repository: `https://github.com/MSDATDE/homeassistant-vevor-heater`
+4. Add this repository: `https://github.com/Spettacolo83/homeassistant-vevor-heater`
 5. Category: "Integration"
 6. Click "Add"
 7. Search for "Vevor Diesel Heater" and install
@@ -39,7 +47,7 @@ Other Vevor diesel heaters using similar protocols (AA55 encrypted/unencrypted) 
 
 ### Manual Installation
 
-1. Download the latest release from [GitHub](https://github.com/MSDATDE/homeassistant-vevor-heater/releases)
+1. Download the latest release from [GitHub](https://github.com/Spettacolo83/homeassistant-vevor-heater/releases)
 2. Copy the `custom_components/vevor_heater` folder to your Home Assistant's `custom_components` directory
 3. Restart Home Assistant
 
@@ -203,6 +211,25 @@ This integration communicates via Bluetooth LE using the Vevor/BYD diesel heater
 - Command 3: Turn ON (arg=1) / OFF (arg=0)
 - Command 4: Set level or temperature
 
+## Changelog
+
+### Version 1.0.1 (Fork)
+- Fixed HACS 2.0+ compatibility by restructuring repository
+- Moved integration files to `custom_components/vevor_heater/`
+- Added `hacs.json` configuration file
+- Added VEVOR brand icon for better visual identification
+- Updated repository URLs and metadata
+- Maintained full compatibility with original integration
+
+### Version 1.0.0 (Original)
+- Initial release by [@MSDATDE](https://github.com/MSDATDE)
+- Full climate entity support with thermostat control
+- Heater level control via fan entity
+- Multiple running modes (Manual, Level, Temperature)
+- Comprehensive sensor suite
+- Bluetooth LE connectivity
+- Temperature calibration feature
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
@@ -213,13 +240,15 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Acknowledgments
 
+- **Original Author**: [@MSDATDE](https://github.com/MSDATDE) - Thank you for creating this excellent integration!
+- **Original Repository**: [MSDATDE/homeassistant-vevor-heater](https://github.com/MSDATDE/homeassistant-vevor-heater)
 - Based on the [vevor-ble-bridge](https://github.com/andyrak/vevor-ble-bridge) protocol documentation
 - Thanks to the Home Assistant community for support
 
 ## Support
 
 If you encounter issues, please:
-1. Check the [Issues](https://github.com/MSDATDE/homeassistant-vevor-heater/issues) page
+1. Check the [Issues](https://github.com/Spettacolo83/homeassistant-vevor-heater/issues) page
 2. Enable debug logging and include logs in your report
 3. Provide your heater model and protocol type (AA55/AA66)
 
