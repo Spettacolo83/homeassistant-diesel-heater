@@ -229,7 +229,14 @@ This integration communicates via Bluetooth LE using the Vevor/BYD diesel heater
 
 ## Changelog
 
-### Version 1.0.3 (Latest)
+### Version 1.0.4 (Latest)
+- **Bug Fix**: Fixed Daily Fuel Consumed sensor not resetting at midnight
+  - Added runtime check for date change (previously only checked at startup)
+  - Daily counter now properly resets to 0.0L when midnight passes
+  - Separate tracking for daily vs total fuel consumption
+  - Data automatically saved after midnight reset
+
+### Version 1.0.3
 - **Fuel Consumption Tracking** - Monitor fuel usage based on power level estimation
   - Hourly consumption rate sensor (L/h) - instantaneous rate with decimal precision
   - Daily fuel consumed sensor (L) - automatically resets at midnight

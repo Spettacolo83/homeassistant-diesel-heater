@@ -120,6 +120,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._total_fuel_consumed: float = 0.0
         self._daily_fuel_consumed: float = 0.0
         self._last_save_time: float = time.time()
+        self._last_reset_date: str = datetime.now().date().isoformat()
 
     async def async_load_data(self) -> None:
         """Load persistent fuel consumption data."""
@@ -134,8 +135,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 if saved_date:
                     today = datetime.now().date().isoformat()
                     if saved_date != today:
-                        _LOGGER.info("New day detected, resetting daily fuel counter")
+                        _LOGGER.info("New day detected at startup, resetting daily fuel counter")
                         self._daily_fuel_consumed = 0.0
+                        self._last_reset_date = today
+                    else:
+                        self._last_reset_date = saved_date
+                else:
+                    # No saved date, use today
+                    self._last_reset_date = datetime.now().date().isoformat()
 
                 # Update data dictionary with loaded values
                 self.data["total_fuel_consumed"] = round(self._total_fuel_consumed, 2)
@@ -182,19 +189,33 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
     def _update_fuel_tracking(self, elapsed_seconds: float) -> None:
         """Update fuel consumption tracking."""
+        # Check if we need to reset daily counter (midnight passed)
+        current_date = datetime.now().date().isoformat()
+        if current_date != self._last_reset_date:
+            _LOGGER.info(
+                "New day detected during runtime (was %s, now %s), resetting daily fuel counter from %.2fL to 0.0L",
+                self._last_reset_date,
+                current_date,
+                self._daily_fuel_consumed
+            )
+            self._daily_fuel_consumed = 0.0
+            self._last_reset_date = current_date
+            # Save immediately after reset to persist the new day
+            asyncio.create_task(self.async_save_data())
+
         fuel_consumed = self._calculate_fuel_consumption(elapsed_seconds)
-        
+
         if fuel_consumed > 0:
             self._total_fuel_consumed += fuel_consumed
             self._daily_fuel_consumed += fuel_consumed
-            
+
         # Calculate instantaneous consumption rate
         power_level = self.data.get("set_level", 1)
         if self.data.get("running_step") == RUNNING_STEP_RUNNING:
             hourly_consumption = FUEL_CONSUMPTION_TABLE.get(power_level, 0.16)
         else:
             hourly_consumption = 0.0
-            
+
         # Update data dictionary
         self.data["hourly_fuel_consumption"] = round(hourly_consumption, 2)
         self.data["daily_fuel_consumed"] = round(self._daily_fuel_consumed, 2)
