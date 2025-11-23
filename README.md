@@ -229,7 +229,16 @@ This integration communicates via Bluetooth LE using the Vevor/BYD diesel heater
 
 ## Changelog
 
-### Version 1.0.4 (Latest)
+### Version 1.0.5 (Latest)
+- **Critical Fix**: Prevent Home Assistant crashes during integration startup
+  - Added 30-second timeout on initial connection attempt
+  - Setup now completes even if heater is offline/unreachable
+  - Integration retries connection in background every 30 seconds
+  - Entities show as "unavailable" until connection succeeds
+  - **Home Assistant now starts normally** even if heater is off/out of range
+  - Improved logging with helpful troubleshooting messages
+
+### Version 1.0.4
 - **Bug Fix**: Fixed Daily Fuel Consumed sensor not resetting at midnight
   - Added runtime check for date change (previously only checked at startup)
   - Daily counter now properly resets to 0.0L when midnight passes
