@@ -189,20 +189,6 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
     def _update_fuel_tracking(self, elapsed_seconds: float) -> None:
         """Update fuel consumption tracking."""
-        # Check if we need to reset daily counter (midnight passed)
-        current_date = datetime.now().date().isoformat()
-        if current_date != self._last_reset_date:
-            _LOGGER.info(
-                "New day detected during runtime (was %s, now %s), resetting daily fuel counter from %.2fL to 0.0L",
-                self._last_reset_date,
-                current_date,
-                self._daily_fuel_consumed
-            )
-            self._daily_fuel_consumed = 0.0
-            self._last_reset_date = current_date
-            # Save immediately after reset to persist the new day
-            asyncio.create_task(self.async_save_data())
-
         fuel_consumed = self._calculate_fuel_consumption(elapsed_seconds)
 
         if fuel_consumed > 0:
@@ -222,8 +208,28 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self.data["total_fuel_consumed"] = round(self._total_fuel_consumed, 2)
 
 
+    def _check_daily_reset(self) -> None:
+        """Check if we need to reset daily fuel counter (runs every update, even if offline)."""
+        current_date = datetime.now().date().isoformat()
+        if current_date != self._last_reset_date:
+            _LOGGER.info(
+                "New day detected (was %s, now %s), resetting daily fuel counter from %.2fL to 0.0L",
+                self._last_reset_date,
+                current_date,
+                self._daily_fuel_consumed
+            )
+            self._daily_fuel_consumed = 0.0
+            self._last_reset_date = current_date
+            self.data["daily_fuel_consumed"] = 0.0
+            # Save immediately after reset to persist the new day
+            asyncio.create_task(self.async_save_data())
+
     async def _async_update_data(self) -> dict[str, Any]:
         """Update data from the heater."""
+        # Check for daily reset FIRST, even if heater is offline
+        # This ensures the daily counter resets at midnight regardless of connection status
+        self._check_daily_reset()
+
         if not self._client or not self._client.is_connected:
             try:
                 await self._ensure_connected()
@@ -572,36 +578,41 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     async def async_turn_on(self) -> None:
         """Turn heater on."""
         # Command 3, arg=1 for ON (verified with BYD heater)
-        await self._send_command(3, 1, 85)
-        await self.async_request_refresh()
+        success = await self._send_command(3, 1, 85)
+        if success:
+            await self.async_request_refresh()
 
     async def async_turn_off(self) -> None:
         """Turn heater off."""
         # Command 3, arg=0 for OFF (verified with BYD heater)
-        await self._send_command(3, 0, 85)
-        await self.async_request_refresh()
+        success = await self._send_command(3, 0, 85)
+        if success:
+            await self.async_request_refresh()
 
     async def async_set_level(self, level: int) -> None:
         """Set heater level (1-10)."""
         # Command 4 for level (verified with BYD heater)
         level = max(1, min(10, level))
-        await self._send_command(4, level, 85)
-        await self.async_request_refresh()
+        success = await self._send_command(4, level, 85)
+        if success:
+            await self.async_request_refresh()
 
     async def async_set_temperature(self, temperature: int) -> None:
         """Set target temperature."""
         # Command 4 for temperature (1-36°C)
         temperature = max(1, min(36, temperature))
-        await self._send_command(4, temperature, 85)
-        await self.async_request_refresh()
+        success = await self._send_command(4, temperature, 85)
+        if success:
+            await self.async_request_refresh()
 
     async def async_set_mode(self, mode: int) -> None:
         """Set running mode (0=Manual, 1=Level, 2=Temperature)."""
         # Command 2 for mode (needs verification)
         mode = max(0, min(2, mode))
         _LOGGER.info("Setting running mode to %d", mode)
-        await self._send_command(2, mode, 85)
-        await self.async_request_refresh()
+        success = await self._send_command(2, mode, 85)
+        if success:
+            await self.async_request_refresh()
 
     async def async_shutdown(self) -> None:
         """Shutdown coordinator."""
