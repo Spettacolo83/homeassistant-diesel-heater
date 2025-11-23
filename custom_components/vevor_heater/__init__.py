@@ -1,6 +1,7 @@
 """The Vevor Diesel Heater integration."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -48,21 +49,40 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Load persistent fuel data
     await coordinator.async_load_data()
 
-    # Initial data fetch
+    # Initial data fetch with timeout
+    # Allow setup to complete even if connection fails - entities will show as unavailable
+    # and the coordinator will keep retrying in background every 30 seconds
     try:
-        await coordinator.async_config_entry_first_refresh()
+        await asyncio.wait_for(
+            coordinator.async_config_entry_first_refresh(),
+            timeout=30.0
+        )
+        _LOGGER.info("Successfully connected to Vevor Heater at %s", address)
+    except asyncio.TimeoutError:
+        _LOGGER.warning(
+            "Initial connection to Vevor Heater at %s timed out after 30 seconds. "
+            "Setup will complete anyway and retry in background. "
+            "Entities will show as unavailable until connection succeeds. "
+            "Make sure the heater is powered on, in Bluetooth range, and the Vevor app is disconnected.",
+            address
+        )
     except Exception as err:
-        raise ConfigEntryNotReady(
-            f"Unable to connect to Vevor Heater: {err}"
-        ) from err
-    
-    # Store coordinator
+        _LOGGER.warning(
+            "Initial connection to Vevor Heater at %s failed: %s. "
+            "Setup will complete anyway and retry in background. "
+            "Entities will show as unavailable until connection succeeds. "
+            "Make sure the heater is powered on, in Bluetooth range, and the Vevor app is disconnected.",
+            address,
+            err
+        )
+
+    # Store coordinator (even if connection failed - will retry in background)
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
-    
+
     # Forward entry setup to platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    
+
     return True
 
 
