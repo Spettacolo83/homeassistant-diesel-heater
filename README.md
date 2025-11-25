@@ -135,6 +135,7 @@ After setup, you'll have these entities:
 - `sensor.vevor_heater_hourly_fuel_consumption` - Instantaneous fuel consumption rate (L/h)
 - `sensor.vevor_heater_daily_fuel_consumed` - Daily fuel consumption (L, resets at midnight)
 - `sensor.vevor_heater_total_fuel_consumed` - Total fuel consumed since installation (L)
+- `sensor.vevor_heater_daily_fuel_history` - Historical daily consumption data (stores last 30 days)
 
 #### Binary Sensors
 - `binary_sensor.vevor_heater_active` - Heater active status
@@ -178,6 +179,134 @@ Create a nice dashboard with these cards:
      - entity: sensor.vevor_heater_supply_voltage
      - entity: binary_sensor.vevor_heater_active
    ```
+
+### Fuel Consumption History Graph
+
+The integration includes a historical tracking sensor (`sensor.vevor_heater_daily_fuel_history`) that stores the last 30 days of daily fuel consumption.
+
+#### Using ApexCharts Card (Recommended)
+
+Install [ApexCharts Card](https://github.com/RomRider/apexcharts-card) via HACS for beautiful historical graphs:
+
+**Bar Chart - Last 7 Days:**
+```yaml
+type: custom:apexcharts-card
+header:
+  title: Daily Fuel Consumption (Last 7 Days)
+  show: true
+  show_states: true
+graph_span: 7d
+span:
+  start: day
+all_series_config:
+  type: column
+  opacity: 0.8
+series:
+  - entity: sensor.vevor_heater_daily_fuel_history
+    data_generator: |
+      return Object.entries(entity.attributes.history || {})
+        .slice(0, 7)
+        .reverse()
+        .map(([date, liters]) => [new Date(date).getTime(), liters]);
+    name: Liters
+    color: '#ff6b6b'
+yaxis:
+  - decimals: 2
+    min: 0
+    apex_config:
+      title:
+        text: Liters (L)
+```
+
+**Line Chart - Last 30 Days:**
+```yaml
+type: custom:apexcharts-card
+header:
+  title: Daily Fuel Consumption (Last 30 Days)
+  show: true
+graph_span: 30d
+span:
+  start: day
+all_series_config:
+  type: line
+  stroke_width: 2
+  curve: smooth
+series:
+  - entity: sensor.vevor_heater_daily_fuel_history
+    data_generator: |
+      return Object.entries(entity.attributes.history || {})
+        .reverse()
+        .map(([date, liters]) => [new Date(date).getTime(), liters]);
+    name: Daily Consumption
+    color: '#4ecdc4'
+yaxis:
+  - decimals: 2
+    min: 0
+    apex_config:
+      title:
+        text: Liters (L)
+```
+
+**Multi-Period Comparison:**
+```yaml
+type: custom:apexcharts-card
+header:
+  title: Fuel Consumption Trends
+  show: true
+series:
+  - entity: sensor.vevor_heater_daily_fuel_history
+    attribute: last_7_days
+    name: Last 7 Days
+    type: column
+  - entity: sensor.vevor_heater_daily_fuel_history
+    attribute: last_30_days
+    name: Last 30 Days
+    type: column
+yaxis:
+  - decimals: 2
+    min: 0
+    apex_config:
+      title:
+        text: Total Liters (L)
+```
+
+#### Using Built-in Cards
+
+**Attributes Card - View History Data:**
+```yaml
+type: entities
+title: Fuel History
+entities:
+  - entity: sensor.vevor_heater_daily_fuel_history
+    type: attribute
+    attribute: last_7_days
+    name: Last 7 Days Total
+  - entity: sensor.vevor_heater_daily_fuel_history
+    type: attribute
+    attribute: last_30_days
+    name: Last 30 Days Total
+  - entity: sensor.vevor_heater_daily_fuel_history
+    type: attribute
+    attribute: days_tracked
+    name: Days Tracked
+```
+
+**Markdown Card - Formatted History:**
+```yaml
+type: markdown
+title: Daily Fuel History
+content: |
+  {% set history = state_attr('sensor.vevor_heater_daily_fuel_history', 'history') %}
+  {% if history %}
+  | Date | Liters |
+  |------|--------|
+  {% for date, liters in history.items() | list | sort(reverse=true) %}
+  | {{ date }} | {{ liters }} L |
+  {% endfor %}
+  {% else %}
+  No history data available yet.
+  {% endif %}
+```
 
 ## Troubleshooting
 
@@ -229,7 +358,25 @@ This integration communicates via Bluetooth LE using the Vevor/BYD diesel heater
 
 ## Changelog
 
-### Version 1.0.6 (Latest)
+### Version 1.0.7 (Latest)
+- **New Feature**: Historical Daily Fuel Consumption Tracking
+  - Added `sensor.vevor_heater_daily_fuel_history` to track daily fuel consumption over time
+  - Stores last 30 days of consumption data with automatic cleanup
+  - History persists across Home Assistant restarts
+  - Daily values automatically saved to history at midnight before reset
+  - New sensor attributes:
+    - `history` - Complete daily consumption history (date -> liters)
+    - `days_tracked` - Number of days in history
+    - `total_in_history` - Total fuel consumed in tracked period
+    - `last_7_days` - Total consumption for last 7 days
+    - `last_30_days` - Total consumption for last 30 days
+- **Dashboard Integration**: Added comprehensive graphing examples
+  - ApexCharts configurations for bar and line charts
+  - Built-in card examples (markdown, attributes)
+  - Support for 7-day, 30-day, and custom time ranges
+- **Data Persistence**: History automatically saved with daily resets
+
+### Version 1.0.6
 - **Critical Fixes**: Prevent crashes and fix daily fuel reset when heater is offline
   - Fixed commands (turn on/off, set level/temperature) causing HA crashes when heater disconnected
   - Commands now check connection status before requesting refresh

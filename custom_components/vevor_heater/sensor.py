@@ -48,6 +48,7 @@ async def async_setup_entry(
             VevorHourlyFuelConsumptionSensor(coordinator),
             VevorDailyFuelConsumedSensor(coordinator),
             VevorTotalFuelConsumedSensor(coordinator),
+            VevorDailyFuelHistorySensor(coordinator),
         ]
     )
 
@@ -267,3 +268,45 @@ class VevorTotalFuelConsumedSensor(VevorSensorBase):
     def native_value(self) -> float | None:
         """Return the state."""
         return self.coordinator.data.get("total_fuel_consumed")
+
+
+class VevorDailyFuelHistorySensor(VevorSensorBase):
+    """Daily fuel consumption history sensor."""
+
+    _attr_icon = "mdi:chart-bar"
+    _attr_native_unit_of_measurement = "days"
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, "daily_fuel_history", "Daily Fuel History")
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the number of days in history."""
+        history = self.coordinator.data.get("daily_fuel_history", {})
+        return len(history)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, any]:
+        """Return the state attributes with daily consumption history."""
+        history = self.coordinator.data.get("daily_fuel_history", {})
+
+        if not history:
+            return {
+                "history": {},
+                "days_tracked": 0,
+                "total_in_history": 0.0,
+            }
+
+        # Sort history by date (newest first)
+        sorted_history = dict(sorted(history.items(), reverse=True))
+
+        return {
+            "history": sorted_history,
+            "days_tracked": len(sorted_history),
+            "total_in_history": round(sum(sorted_history.values()), 2),
+            "last_7_days": round(
+                sum(v for k, v in list(sorted_history.items())[:7]), 2
+            ),
+            "last_30_days": round(sum(sorted_history.values()), 2),
+        }

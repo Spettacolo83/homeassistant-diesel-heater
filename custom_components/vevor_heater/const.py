@@ -114,3 +114,7 @@ FUEL_CONSUMPTION_TABLE: Final = {
 STORAGE_KEY_TOTAL_FUEL: Final = "total_fuel_consumed"
 STORAGE_KEY_DAILY_FUEL: Final = "daily_fuel_consumed"
 STORAGE_KEY_DAILY_DATE: Final = "daily_fuel_date"
+STORAGE_KEY_DAILY_HISTORY: Final = "daily_fuel_history"
+
+# History settings
+MAX_HISTORY_DAYS: Final = 30  # Keep last 30 days of daily consumption
