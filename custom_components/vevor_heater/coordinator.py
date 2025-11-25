@@ -24,6 +24,7 @@ from .const import (
     DOMAIN,
     ENCRYPTION_KEY,
     FUEL_CONSUMPTION_TABLE,
+    MAX_HISTORY_DAYS,
     NOTIFY_UUID,
     RUNNING_MODE_LEVEL,
     RUNNING_MODE_MANUAL,
@@ -34,6 +35,7 @@ from .const import (
     SERVICE_UUID,
     STORAGE_KEY_DAILY_DATE,
     STORAGE_KEY_DAILY_FUEL,
+    STORAGE_KEY_DAILY_HISTORY,
     STORAGE_KEY_TOTAL_FUEL,
     UPDATE_INTERVAL,
 )
@@ -119,6 +121,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._last_update_time: float = time.time()
         self._total_fuel_consumed: float = 0.0
         self._daily_fuel_consumed: float = 0.0
+        self._daily_fuel_history: dict[str, float] = {}  # date -> liters consumed
         self._last_save_time: float = time.time()
         self._last_reset_date: str = datetime.now().date().isoformat()
 
@@ -129,6 +132,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             if data:
                 self._total_fuel_consumed = data.get(STORAGE_KEY_TOTAL_FUEL, 0.0)
                 self._daily_fuel_consumed = data.get(STORAGE_KEY_DAILY_FUEL, 0.0)
+                self._daily_fuel_history = data.get(STORAGE_KEY_DAILY_HISTORY, {})
+
+                # Clean old history entries (keep only last MAX_HISTORY_DAYS)
+                self._clean_old_history()
 
                 # Check if we need to reset daily counter
                 saved_date = data.get(STORAGE_KEY_DAILY_DATE)
@@ -136,6 +143,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     today = datetime.now().date().isoformat()
                     if saved_date != today:
                         _LOGGER.info("New day detected at startup, resetting daily fuel counter")
+                        # Save yesterday's consumption to history before resetting
+                        if self._daily_fuel_consumed > 0:
+                            self._daily_fuel_history[saved_date] = round(self._daily_fuel_consumed, 2)
+                            _LOGGER.info("Saved %s: %.2fL to history", saved_date, self._daily_fuel_consumed)
                         self._daily_fuel_consumed = 0.0
                         self._last_reset_date = today
                     else:
@@ -147,11 +158,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 # Update data dictionary with loaded values
                 self.data["total_fuel_consumed"] = round(self._total_fuel_consumed, 2)
                 self.data["daily_fuel_consumed"] = round(self._daily_fuel_consumed, 2)
+                self.data["daily_fuel_history"] = self._daily_fuel_history
 
                 _LOGGER.debug(
-                    "Loaded fuel data: total=%.2fL, daily=%.2fL",
+                    "Loaded fuel data: total=%.2fL, daily=%.2fL, history entries=%d",
                     self._total_fuel_consumed,
-                    self._daily_fuel_consumed
+                    self._daily_fuel_consumed,
+                    len(self._daily_fuel_history)
                 )
         except Exception as err:
             _LOGGER.warning("Could not load fuel data: %s", err)
@@ -163,11 +176,26 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 STORAGE_KEY_TOTAL_FUEL: self._total_fuel_consumed,
                 STORAGE_KEY_DAILY_FUEL: self._daily_fuel_consumed,
                 STORAGE_KEY_DAILY_DATE: datetime.now().date().isoformat(),
+                STORAGE_KEY_DAILY_HISTORY: self._daily_fuel_history,
             }
             await self._store.async_save(data)
-            _LOGGER.debug("Saved fuel data: %s", data)
+            _LOGGER.debug("Saved fuel data with %d history entries", len(self._daily_fuel_history))
         except Exception as err:
             _LOGGER.warning("Could not save fuel data: %s", err)
+
+    def _clean_old_history(self) -> None:
+        """Remove history entries older than MAX_HISTORY_DAYS."""
+        if not self._daily_fuel_history:
+            return
+
+        cutoff_date = (datetime.now().date() - timedelta(days=MAX_HISTORY_DAYS)).isoformat()
+        old_keys = [date for date in self._daily_fuel_history if date < cutoff_date]
+
+        for date in old_keys:
+            del self._daily_fuel_history[date]
+
+        if old_keys:
+            _LOGGER.debug("Removed %d old history entries (before %s)", len(old_keys), cutoff_date)
 
     def _calculate_fuel_consumption(self, elapsed_seconds: float) -> float:
         """Calculate fuel consumed based on power level and elapsed time.
@@ -212,16 +240,31 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """Check if we need to reset daily fuel counter (runs every update, even if offline)."""
         current_date = datetime.now().date().isoformat()
         if current_date != self._last_reset_date:
+            # Save yesterday's consumption to history before resetting
+            if self._daily_fuel_consumed > 0:
+                self._daily_fuel_history[self._last_reset_date] = round(self._daily_fuel_consumed, 2)
+                _LOGGER.info(
+                    "New day detected: saved %s consumption (%.2fL) to history",
+                    self._last_reset_date,
+                    self._daily_fuel_consumed
+                )
+
             _LOGGER.info(
-                "New day detected (was %s, now %s), resetting daily fuel counter from %.2fL to 0.0L",
+                "Resetting daily fuel counter from %.2fL to 0.0L (was %s, now %s)",
+                self._daily_fuel_consumed,
                 self._last_reset_date,
-                current_date,
-                self._daily_fuel_consumed
+                current_date
             )
+
             self._daily_fuel_consumed = 0.0
             self._last_reset_date = current_date
             self.data["daily_fuel_consumed"] = 0.0
-            # Save immediately after reset to persist the new day
+
+            # Clean old history and update data
+            self._clean_old_history()
+            self.data["daily_fuel_history"] = self._daily_fuel_history
+
+            # Save immediately after reset to persist the new day and history
             asyncio.create_task(self.async_save_data())
 
     async def _async_update_data(self) -> dict[str, Any]:
