@@ -13,9 +13,17 @@ from bleak.exc import BleakError
 from bleak_retry_connector import establish_connection
 
 from homeassistant.components import bluetooth
+from homeassistant.components.recorder import get_instance
+from homeassistant.components.recorder.statistics import (
+    async_import_statistics,
+    StatisticData,
+    StatisticMetaData,
+)
+from homeassistant.const import UnitOfVolume
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .const import (
     CHARACTERISTIC_UUID,
@@ -99,19 +107,19 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         
         # Current state
         self.data: dict[str, Any] = {
-            "running_state": 0,
-            "error_code": 0,
-            "running_step": 0,
-            "altitude": 0,
-            "running_mode": 0,
-            "set_level": 1,
+            "running_state": None,
+            "error_code": None,
+            "running_step": None,
+            "altitude": None,
+            "running_mode": None,
+            "set_level": None,
             "set_temp": None,
-            "supply_voltage": 0.0,
-            "case_temperature": 0,
-            "cab_temperature": 0,
+            "supply_voltage": None,
+            "case_temperature": None,
+            "cab_temperature": None,
             "connected": False,
             # Fuel consumption tracking
-            "hourly_fuel_consumption": 0.0,
+            "hourly_fuel_consumption": None,
             "daily_fuel_consumed": 0.0,
             "total_fuel_consumed": 0.0,
         }
@@ -166,6 +174,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     self._daily_fuel_consumed,
                     len(self._daily_fuel_history)
                 )
+
+                # Import existing history into statistics for native graphing
+                await self._import_all_history_statistics()
         except Exception as err:
             _LOGGER.warning("Could not load fuel data: %s", err)
 
@@ -196,6 +207,62 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         if old_keys:
             _LOGGER.debug("Removed %d old history entries (before %s)", len(old_keys), cutoff_date)
+
+    async def _import_statistics(self, date_str: str, liters: float) -> None:
+        """Import daily fuel consumption into Home Assistant statistics for graphing."""
+        # Skip if recorder is not available
+        if not (recorder := get_instance(self.hass)):
+            _LOGGER.debug("Recorder not available, skipping statistics import")
+            return
+
+        # Define statistic metadata
+        statistic_id = f"{DOMAIN}:daily_fuel_consumed"
+        metadata = StatisticMetaData(
+            has_mean=False,
+            has_sum=True,
+            name="Daily Fuel Consumption History",
+            source=DOMAIN,
+            statistic_id=statistic_id,
+            unit_of_measurement=UnitOfVolume.LITERS,
+        )
+
+        # Parse date and create timestamp for end of day (23:59:59)
+        try:
+            date_obj = datetime.fromisoformat(date_str)
+            # Set time to 23:59:59 to represent the day's end
+            end_of_day = datetime.combine(date_obj.date(), datetime.max.time())
+            # Make it timezone-aware
+            timestamp = dt_util.as_utc(end_of_day)
+        except (ValueError, TypeError) as err:
+            _LOGGER.error("Failed to parse date %s: %s", date_str, err)
+            return
+
+        # Create statistic data point
+        statistic = StatisticData(
+            start=timestamp,
+            state=liters,
+            sum=liters,  # Sum for this day
+        )
+
+        # Import the statistic (wrapped in try-except to prevent crashes)
+        try:
+            async_import_statistics(self.hass, metadata, [statistic])
+            _LOGGER.debug("Imported statistic for %s: %.2fL", date_str, liters)
+        except Exception as err:
+            _LOGGER.warning("Could not import statistic for %s: %s - Statistics graph may not work", date_str, err)
+
+    async def _import_all_history_statistics(self) -> None:
+        """Import all existing history data into statistics (called at startup)."""
+        if not self._daily_fuel_history:
+            _LOGGER.debug("No history to import into statistics")
+            return
+
+        _LOGGER.info("Importing %d days of fuel history into statistics", len(self._daily_fuel_history))
+
+        for date_str, liters in sorted(self._daily_fuel_history.items()):
+            await self._import_statistics(date_str, liters)
+
+        _LOGGER.info("Completed import of fuel history into statistics")
 
     def _calculate_fuel_consumption(self, elapsed_seconds: float) -> float:
         """Calculate fuel consumed based on power level and elapsed time.
@@ -236,18 +303,22 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self.data["total_fuel_consumed"] = round(self._total_fuel_consumed, 2)
 
 
-    def _check_daily_reset(self) -> None:
+    async def _check_daily_reset(self) -> None:
         """Check if we need to reset daily fuel counter (runs every update, even if offline)."""
         current_date = datetime.now().date().isoformat()
         if current_date != self._last_reset_date:
             # Save yesterday's consumption to history before resetting
             if self._daily_fuel_consumed > 0:
-                self._daily_fuel_history[self._last_reset_date] = round(self._daily_fuel_consumed, 2)
+                liters_consumed = round(self._daily_fuel_consumed, 2)
+                self._daily_fuel_history[self._last_reset_date] = liters_consumed
                 _LOGGER.info(
                     "New day detected: saved %s consumption (%.2fL) to history",
                     self._last_reset_date,
-                    self._daily_fuel_consumed
+                    liters_consumed
                 )
+
+                # Import into statistics for native graphing
+                await self._import_statistics(self._last_reset_date, liters_consumed)
 
             _LOGGER.info(
                 "Resetting daily fuel counter from %.2fL to 0.0L (was %s, now %s)",
@@ -265,13 +336,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self.data["daily_fuel_history"] = self._daily_fuel_history
 
             # Save immediately after reset to persist the new day and history
-            asyncio.create_task(self.async_save_data())
+            await self.async_save_data()
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Update data from the heater."""
         # Check for daily reset FIRST, even if heater is offline
         # This ensures the daily counter resets at midnight regardless of connection status
-        self._check_daily_reset()
+        await self._check_daily_reset()
 
         if not self._client or not self._client.is_connected:
             try:
@@ -284,7 +355,17 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     err
                 )
                 self.data["connected"] = False
-                return self.data
+                # Clear sensor values when offline so they show as unavailable
+                self.data["case_temperature"] = None
+                self.data["cab_temperature"] = None
+                self.data["supply_voltage"] = None
+                self.data["running_step"] = None
+                self.data["running_mode"] = None
+                self.data["set_level"] = None
+                self.data["altitude"] = None
+                self.data["error_code"] = None
+                self.data["hourly_fuel_consumption"] = None
+                raise UpdateFailed(f"Failed to connect: {err}")
         
         try:
             # Request status
@@ -309,12 +390,34 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             else:
                 _LOGGER.warning("No status received from heater")
                 self.data["connected"] = False
+                # Clear sensor values when offline
+                self.data["case_temperature"] = None
+                self.data["cab_temperature"] = None
+                self.data["supply_voltage"] = None
+                self.data["running_step"] = None
+                self.data["running_mode"] = None
+                self.data["set_level"] = None
+                self.data["altitude"] = None
+                self.data["error_code"] = None
+                self.data["hourly_fuel_consumption"] = None
+                raise UpdateFailed("No status received from heater")
 
+        except UpdateFailed:
+            raise
         except Exception as err:
             _LOGGER.error("Error updating data: %s", err)
             self.data["connected"] = False
-
-        return self.data
+            # Clear sensor values when offline
+            self.data["case_temperature"] = None
+            self.data["cab_temperature"] = None
+            self.data["supply_voltage"] = None
+            self.data["running_step"] = None
+            self.data["running_mode"] = None
+            self.data["set_level"] = None
+            self.data["altitude"] = None
+            self.data["error_code"] = None
+            self.data["hourly_fuel_consumption"] = None
+            raise UpdateFailed(f"Error updating data: {err}")
 
     async def _ensure_connected(self) -> None:
         """Ensure BLE connection is established with exponential backoff."""

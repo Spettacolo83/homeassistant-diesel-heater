@@ -76,6 +76,11 @@ class VevorSensorBase(CoordinatorEntity[VevorHeaterCoordinator], SensorEntity):
             "model": "Diesel Heater",
         }
 
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        return self.coordinator.last_update_success and self.native_value is not None
+
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""

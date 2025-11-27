@@ -124,21 +124,21 @@ After setup, you'll have these entities:
 - `number.vevor_heater_target_temperature` - Set target temperature (8-36°C)
 
 #### Sensors
-- `sensor.vevor_heater_case_temperature` - Heater case temperature (°C)
-- `sensor.vevor_heater_interior_temperature` - Room/cabin temperature (°C)
-- `sensor.vevor_heater_supply_voltage` - Power supply voltage (V)
-- `sensor.vevor_heater_altitude` - Altitude compensation setting (m)
-- `sensor.vevor_heater_running_step` - Current operation step
-- `sensor.vevor_heater_error` - Error status
-- `sensor.vevor_heater_running_mode` - Current running mode
-- `sensor.vevor_heater_set_level` - Current set level
-- `sensor.vevor_heater_hourly_fuel_consumption` - Instantaneous fuel consumption rate (L/h)
-- `sensor.vevor_heater_daily_fuel_consumed` - Daily fuel consumption (L, resets at midnight)
-- `sensor.vevor_heater_total_fuel_consumed` - Total fuel consumed since installation (L)
-- `sensor.vevor_heater_daily_fuel_history` - Historical daily consumption data (stores last 30 days)
+- `sensor.vevor_diesel_heater_case_temperature` - Heater case temperature (°C)
+- `sensor.vevor_diesel_heater_interior_temperature` - Room/cabin temperature (°C)
+- `sensor.vevor_diesel_heater_supply_voltage` - Power supply voltage (V)
+- `sensor.vevor_diesel_heater_altitude` - Altitude compensation setting (m)
+- `sensor.vevor_diesel_heater_running_step` - Current operation step
+- `sensor.vevor_diesel_heater_error` - Error status
+- `sensor.vevor_diesel_heater_running_mode` - Current running mode
+- `sensor.vevor_diesel_heater_set_level` - Current set level
+- `sensor.vevor_diesel_heater_hourly_fuel_consumption` - Instantaneous fuel consumption rate (L/h)
+- `sensor.vevor_diesel_heater_daily_fuel_consumed` - Daily fuel consumption (L, resets at midnight)
+- `sensor.vevor_diesel_heater_total_fuel_consumed` - Total fuel consumed since installation (L)
+- `sensor.vevor_diesel_heater_daily_fuel_history` - Historical daily consumption data (stores last 30 days)
 
 #### Binary Sensors
-- `binary_sensor.vevor_heater_active` - Heater active status
+- `binary_sensor.vevor_diesel_heater_active` - Heater active status
 
 #### Switches
 - `switch.vevor_heater_power` - Simple ON/OFF control
@@ -174,17 +174,51 @@ Create a nice dashboard with these cards:
    type: entities
    title: Heater Status
    entities:
-     - entity: sensor.vevor_heater_interior_temperature
-     - entity: sensor.vevor_heater_case_temperature
-     - entity: sensor.vevor_heater_supply_voltage
-     - entity: binary_sensor.vevor_heater_active
+     - entity: sensor.vevor_diesel_heater_interior_temperature
+     - entity: sensor.vevor_diesel_heater_case_temperature
+     - entity: sensor.vevor_diesel_heater_supply_voltage
+     - entity: binary_sensor.vevor_diesel_heater_active
    ```
 
 ### Fuel Consumption History Graph
 
-The integration includes a historical tracking sensor (`sensor.vevor_heater_daily_fuel_history`) that stores the last 30 days of daily fuel consumption.
+The integration automatically imports daily fuel consumption data into Home Assistant's **long-term statistics**, enabling native graphing without any additional cards or plugins!
 
-#### Using ApexCharts Card (Recommended)
+#### Using Built-in Statistics Graph (Recommended)
+
+**No installation required!** The integration automatically makes historical data available to Home Assistant's native `statistics-graph` card.
+
+![Native Statistics Graph](docs/images/fuel-statistics-graph.png)
+
+**Bar Chart - Last 7 Days:**
+```yaml
+type: statistics-graph
+entities:
+  - sensor.vevor_diesel_heater_daily_fuel_consumed
+stat_types:
+  - sum
+period: day
+days_to_show: 7
+chart_type: bar
+title: Daily Fuel Consumption (Last 7 Days)
+```
+
+**Line Chart - Last 30 Days:**
+```yaml
+type: statistics-graph
+entities:
+  - sensor.vevor_diesel_heater_daily_fuel_consumed
+stat_types:
+  - sum
+period: day
+days_to_show: 30
+chart_type: line
+title: Daily Fuel Consumption (Last 30 Days)
+```
+
+**Note**: The statistics are automatically populated from your fuel history. If you have existing history data, it will be imported on the next restart!
+
+#### Using ApexCharts Card (Alternative)
 
 Install [ApexCharts Card](https://github.com/RomRider/apexcharts-card) via HACS for beautiful historical graphs:
 
@@ -202,7 +236,7 @@ all_series_config:
   type: column
   opacity: 0.8
 series:
-  - entity: sensor.vevor_heater_daily_fuel_history
+  - entity: sensor.vevor_diesel_heater_daily_fuel_history
     data_generator: |
       return Object.entries(entity.attributes.history || {})
         .slice(0, 7)
@@ -232,7 +266,7 @@ all_series_config:
   stroke_width: 2
   curve: smooth
 series:
-  - entity: sensor.vevor_heater_daily_fuel_history
+  - entity: sensor.vevor_diesel_heater_daily_fuel_history
     data_generator: |
       return Object.entries(entity.attributes.history || {})
         .reverse()
@@ -254,11 +288,11 @@ header:
   title: Fuel Consumption Trends
   show: true
 series:
-  - entity: sensor.vevor_heater_daily_fuel_history
+  - entity: sensor.vevor_diesel_heater_daily_fuel_history
     attribute: last_7_days
     name: Last 7 Days
     type: column
-  - entity: sensor.vevor_heater_daily_fuel_history
+  - entity: sensor.vevor_diesel_heater_daily_fuel_history
     attribute: last_30_days
     name: Last 30 Days
     type: column
@@ -277,15 +311,15 @@ yaxis:
 type: entities
 title: Fuel History
 entities:
-  - entity: sensor.vevor_heater_daily_fuel_history
+  - entity: sensor.vevor_diesel_heater_daily_fuel_history
     type: attribute
     attribute: last_7_days
     name: Last 7 Days Total
-  - entity: sensor.vevor_heater_daily_fuel_history
+  - entity: sensor.vevor_diesel_heater_daily_fuel_history
     type: attribute
     attribute: last_30_days
     name: Last 30 Days Total
-  - entity: sensor.vevor_heater_daily_fuel_history
+  - entity: sensor.vevor_diesel_heater_daily_fuel_history
     type: attribute
     attribute: days_tracked
     name: Days Tracked
@@ -296,7 +330,7 @@ entities:
 type: markdown
 title: Daily Fuel History
 content: |
-  {% set history = state_attr('sensor.vevor_heater_daily_fuel_history', 'history') %}
+  {% set history = state_attr('sensor.vevor_diesel_heater_daily_fuel_history', 'history') %}
   {% if history %}
   | Date | Liters |
   |------|--------|
@@ -358,9 +392,21 @@ This integration communicates via Bluetooth LE using the Vevor/BYD diesel heater
 
 ## Changelog
 
-### Version 1.0.7 (Latest)
+### Version 1.0.8 (Latest)
+- **Native Statistics Graphing**: Daily fuel consumption now automatically imports into Home Assistant statistics
+  - No ApexCharts or custom cards needed!
+  - Use built-in `statistics-graph` card for beautiful bar/line charts
+  - Historical data automatically imported at startup
+  - Existing fuel history (up to 30 days) is retroactively imported
+  - Works natively with Home Assistant's energy dashboard integration
+- **Documentation Fix**: Corrected entity names in README
+  - Updated all sensor entity IDs from `sensor.vevor_heater_*` to `sensor.vevor_diesel_heater_*`
+  - Fixed dashboard card examples with correct entity names
+- **Minor Fix**: Improved sensor availability when heater is offline to prevent graph spikes
+
+### Version 1.0.7
 - **New Feature**: Historical Daily Fuel Consumption Tracking
-  - Added `sensor.vevor_heater_daily_fuel_history` to track daily fuel consumption over time
+  - Added `sensor.vevor_diesel_heater_daily_fuel_history` to track daily fuel consumption over time
   - Stores last 30 days of consumption data with automatic cleanup
   - History persists across Home Assistant restarts
   - Daily values automatically saved to history at midnight before reset
