@@ -421,9 +421,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
     async def _ensure_connected(self) -> None:
         """Ensure BLE connection is established with exponential backoff."""
+        # Check if already connected
         if self._client and self._client.is_connected:
             self._connection_attempts = 0  # Reset on successful connection
             return
+
+        # Clean up any stale client before attempting new connection
+        await self._cleanup_connection()
 
         # Exponential backoff: 5s, 10s, 20s, 40s
         current_time = time.time()
@@ -451,35 +455,58 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._connection_attempts
         )
 
-        self._client = await establish_connection(
-            BleakClient,
-            self._ble_device,
-            self._ble_device.address,
-        )
-
-        # Get characteristic first
-        for service in self._client.services:
-            if service.uuid.lower() == SERVICE_UUID.lower():
-                for char in service.characteristics:
-                    if char.uuid.lower() == CHARACTERISTIC_UUID.lower():
-                        self._characteristic = char
-                        break
-
-        if not self._characteristic:
-            raise BleakError("Could not find heater characteristic")
-
-        # Start notifications on the same characteristic (ffe1)
-        # Some Vevor heaters use ffe1 for both write and notify
-        if "notify" in self._characteristic.properties:
-            await self._client.start_notify(
-                CHARACTERISTIC_UUID, self._notification_callback
+        try:
+            # Establish connection with limited retries to avoid log spam
+            # bleak_retry_connector will handle internal retries
+            self._client = await establish_connection(
+                BleakClient,
+                self._ble_device,
+                self._ble_device.address,
+                max_attempts=3,  # Limit internal retries
             )
-            _LOGGER.debug("Started notifications on %s", CHARACTERISTIC_UUID)
-        else:
-            _LOGGER.warning("Characteristic does not support notify")
 
-        self._connection_attempts = 0  # Reset on successful connection
-        _LOGGER.info("Connected to Vevor Heater")
+            # Verify services are available
+            if not self._client.services:
+                _LOGGER.warning("No services discovered, triggering service refresh")
+                # Services might not be cached, disconnect and let next attempt retry
+                await self._cleanup_connection()
+                raise BleakError("No services available")
+
+            # Get characteristic
+            self._characteristic = None
+            for service in self._client.services:
+                if service.uuid.lower() == SERVICE_UUID.lower():
+                    for char in service.characteristics:
+                        if char.uuid.lower() == CHARACTERISTIC_UUID.lower():
+                            self._characteristic = char
+                            break
+
+            if not self._characteristic:
+                await self._cleanup_connection()
+                raise BleakError("Could not find heater characteristic")
+
+            # Start notifications on the same characteristic (ffe1)
+            # Some Vevor heaters use ffe1 for both write and notify
+            if "notify" in self._characteristic.properties:
+                await self._client.start_notify(
+                    CHARACTERISTIC_UUID, self._notification_callback
+                )
+                _LOGGER.debug("Started notifications on %s", CHARACTERISTIC_UUID)
+            else:
+                _LOGGER.warning("Characteristic does not support notify")
+
+            # Send a wake-up ping to ensure device is responsive
+            # Some heaters go into deep sleep and need a nudge
+            _LOGGER.debug("Sending wake-up ping to device")
+            await self._send_wake_up_ping()
+
+            self._connection_attempts = 0  # Reset on successful connection
+            _LOGGER.info("Successfully connected to Vevor Heater")
+
+        except Exception as err:
+            # Clean up on any connection failure
+            await self._cleanup_connection()
+            raise
 
     @callback
     def _notification_callback(self, _sender: int, data: bytearray) -> None:
@@ -671,8 +698,50 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 raw_temp, offset, calibrated_temp
             )
 
-    async def _send_command(self, command: int, argument: int, n: int) -> bool:
-        """Send command to heater."""
+    async def _cleanup_connection(self) -> None:
+        """Clean up BLE connection properly."""
+        if self._client:
+            try:
+                if self._client.is_connected:
+                    # Stop notifications using the CORRECT UUID
+                    if self._characteristic and "notify" in self._characteristic.properties:
+                        try:
+                            await self._client.stop_notify(CHARACTERISTIC_UUID)
+                            _LOGGER.debug("Stopped notifications on %s", CHARACTERISTIC_UUID)
+                        except Exception as err:
+                            _LOGGER.debug("Could not stop notifications: %s", err)
+
+                    # Disconnect
+                    await self._client.disconnect()
+                    _LOGGER.debug("Disconnected from heater")
+            except Exception as err:
+                _LOGGER.debug("Error during cleanup: %s", err)
+            finally:
+                self._client = None
+                self._characteristic = None
+
+    async def _send_wake_up_ping(self) -> None:
+        """Send a wake-up ping to the device to ensure it's responsive."""
+        try:
+            # Send a simple status request to wake the device
+            # Don't wait for response, just send it
+            packet = bytearray([0xAA, 85, 0, 0, 0, 0, 0, 0])
+            packet[2] = self._passkey // 100
+            packet[3] = self._passkey % 100
+            packet[4] = 1  # Status command
+            packet[5] = 0
+            packet[6] = 0
+            packet[7] = (packet[2] + packet[3] + packet[4] + packet[5] + packet[6]) % 256
+
+            if self._client and self._characteristic:
+                await self._client.write_gatt_char(self._characteristic, packet, response=False)
+                await asyncio.sleep(0.5)  # Give device time to wake up
+                _LOGGER.debug("Wake-up ping sent")
+        except Exception as err:
+            _LOGGER.debug("Wake-up ping failed (non-critical): %s", err)
+
+    async def _send_command(self, command: int, argument: int, n: int, timeout: float = 5.0) -> bool:
+        """Send command to heater with configurable timeout."""
         if not self._client or not self._client.is_connected:
             _LOGGER.error(
                 "Cannot send command: heater not connected. "
@@ -686,39 +755,44 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 "Try reloading the integration."
             )
             return False
-        
+
         # Build command packet
         packet = bytearray([0xAA, n % 256, 0, 0, 0, 0, 0, 0])
-        
+
         if n == 136:
             packet[2] = random.randint(0, 255)
             packet[3] = random.randint(0, 255)
         else:  # n == 85
             packet[2] = self._passkey // 100
             packet[3] = self._passkey % 100
-        
+
         packet[4] = command % 256
         packet[5] = argument % 256
         packet[6] = argument // 256
         packet[7] = (packet[2] + packet[3] + packet[4] + packet[5] + packet[6]) % 256
 
         _LOGGER.info("📤 Sending command: %s (cmd=%d, arg=%d)", packet.hex(), command, argument)
-        
+
         try:
             self._notification_data = None
             await self._client.write_gatt_char(self._characteristic, packet)
-            
-            # Wait for notification
-            for _ in range(20):  # Wait up to 2 seconds
+
+            # Wait for notification with configurable timeout
+            # Increased from 2s to 5s default to handle slow BLE responses
+            iterations = int(timeout / 0.1)
+            for _ in range(iterations):
                 await asyncio.sleep(0.1)
                 if self._notification_data:
+                    _LOGGER.debug("Received response after %.1fs", _ * 0.1)
                     return True
-            
-            _LOGGER.warning("No response received")
+
+            _LOGGER.warning("No response received after %.1fs", timeout)
             return False
-            
+
         except Exception as err:
             _LOGGER.error("Error sending command: %s", err)
+            # On write error, the connection might be dead
+            await self._cleanup_connection()
             return False
 
     async def async_turn_on(self) -> None:
@@ -762,10 +836,5 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
     async def async_shutdown(self) -> None:
         """Shutdown coordinator."""
-        if self._client and self._client.is_connected:
-            try:
-                await self._client.stop_notify(NOTIFY_UUID)
-                await self._client.disconnect()
-            except Exception:
-                pass
-        self._client = None
+        _LOGGER.debug("Shutting down Vevor Heater coordinator")
+        await self._cleanup_connection()
