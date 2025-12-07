@@ -679,17 +679,35 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._notification_data = data
 
     def _parse_protocol_aa66_encrypted(self, data: bytearray) -> None:
-        """Parse encrypted protocol AA66 (48 bytes)."""
+        """Parse encrypted protocol AA66 (48 bytes).
+
+        Note: Mode 4 heaters appear to use Fahrenheit internally.
+        We convert to Celsius for display in Home Assistant.
+        """
         self._protocol_mode = 4
-        
+
         self.data["running_state"] = _u8_to_number(data[3])
         self.data["error_code"] = _u8_to_number(data[35])  # Different position!
         self.data["running_step"] = _u8_to_number(data[5])
         self.data["altitude"] = (_u8_to_number(data[7]) + 256 * _u8_to_number(data[6])) / 10
         self.data["running_mode"] = _u8_to_number(data[8])
         self.data["set_level"] = max(1, min(10, _u8_to_number(data[10])))
-        self.data["set_temp"] = max(8, min(36, _u8_to_number(data[9])))
-        
+
+        # Read raw set_temp value - may be in Fahrenheit for mode 4 heaters
+        raw_set_temp = _u8_to_number(data[9])
+        _LOGGER.debug("🌡️ Raw set_temp from heater: %d (byte 9)", raw_set_temp)
+
+        # If value is > 50, it's likely in Fahrenheit (47°F-97°F = 8°C-36°C)
+        # Convert to Celsius for display
+        if raw_set_temp > 50:
+            # Fahrenheit value - convert to Celsius
+            set_temp_celsius = int((raw_set_temp - 32) * 5 / 9)
+            _LOGGER.debug("🌡️ Converted from Fahrenheit: %d°F → %d°C", raw_set_temp, set_temp_celsius)
+            self.data["set_temp"] = max(8, min(36, set_temp_celsius))
+        else:
+            # Already in Celsius or low value
+            self.data["set_temp"] = max(8, min(36, raw_set_temp))
+
         self.data["supply_voltage"] = (256 * data[11] + data[12]) / 10
         self.data["case_temperature"] = _unsign_to_sign(256 * data[13] + data[14])
         self.data["cab_temperature"] = _unsign_to_sign(256 * data[32] + data[33]) / 10
@@ -893,18 +911,33 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         Note: Temperature mode only accepts values 8-36°C.
         Values below 8 will be clamped to 8.
+
+        IMPORTANT: Mode 4 heaters (AA66 encrypted) appear to expect temperature
+        in Fahrenheit for commands, even though we display in Celsius.
         """
-        # Command 4 for temperature - valid range is 8-36°C (not 1-36!)
+        # Clamp to valid Celsius range
         temperature = max(8, min(36, temperature))
         current_temp = self.data.get("set_temp", "unknown")
         current_mode = self.data.get("running_mode", "unknown")
 
-        _LOGGER.info(
-            "🌡️ SET TEMPERATURE REQUEST: target=%d°C, current=%s°C, mode=%s, protocol=%d",
-            temperature, current_temp, current_mode, self._protocol_mode
-        )
+        # For mode 4 heaters, convert Celsius to Fahrenheit
+        # Discovery: When sending 21 (°C), heater set to 47°F (minimum)
+        # This suggests heater interprets the value as Fahrenheit
+        if self._protocol_mode == 4:
+            temp_fahrenheit = int(temperature * 9 / 5 + 32)
+            _LOGGER.info(
+                "🌡️ SET TEMPERATURE REQUEST: target=%d°C (%d°F), current=%s, mode=%s, protocol=%d (using Fahrenheit)",
+                temperature, temp_fahrenheit, current_temp, current_mode, self._protocol_mode
+            )
+            command_temp = temp_fahrenheit
+        else:
+            _LOGGER.info(
+                "🌡️ SET TEMPERATURE REQUEST: target=%d°C, current=%s, mode=%s, protocol=%d",
+                temperature, current_temp, current_mode, self._protocol_mode
+            )
+            command_temp = temperature
 
-        success = await self._send_command(4, temperature, 85)
+        success = await self._send_command(4, command_temp, 85)
 
         if success:
             await self.async_request_refresh()
