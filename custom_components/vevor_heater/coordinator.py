@@ -779,6 +779,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         - 2: AA55 encrypted (48 bytes response)
         - 3: AA66 unencrypted (20 bytes response)
         - 4: AA66 encrypted (48 bytes response)
+
+        IMPORTANT: Even for encrypted protocols (2, 4), the heater accepts
+        UNENCRYPTED commands. It only sends encrypted responses.
+        So we always send 8-byte unencrypted commands with the correct header.
         """
         _LOGGER.info(
             "🔧 Building command packet: protocol_mode=%d, cmd=%d, arg=%d",
@@ -787,15 +791,16 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         # Determine header based on protocol (AA55 vs AA66)
         if self._protocol_mode in [3, 4]:
-            # AA66 protocol
+            # AA66 protocol - heater expects AA66 header in commands
             header_byte = 0x66
-            _LOGGER.debug("Using AA66 protocol header")
+            _LOGGER.debug("Using AA66 protocol header (mode %d)", self._protocol_mode)
         else:
             # AA55 protocol (default)
             header_byte = 0x55
-            _LOGGER.debug("Using AA55 protocol header")
+            _LOGGER.debug("Using AA55 protocol header (mode %d)", self._protocol_mode)
 
-        # Build base 8-byte command packet
+        # Build 8-byte command packet (ALWAYS unencrypted)
+        # The heater accepts unencrypted commands but sends encrypted responses
         packet = bytearray([0xAA, header_byte, 0, 0, 0, 0, 0, 0])
         packet[2] = self._passkey // 100
         packet[3] = self._passkey % 100
@@ -804,18 +809,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         packet[6] = argument // 256
         packet[7] = (packet[2] + packet[3] + packet[4] + packet[5] + packet[6]) % 256
 
-        _LOGGER.debug("Base packet (8 bytes): %s", packet.hex())
-
-        # For encrypted protocols, we need to encrypt the command
-        if self._protocol_mode in [2, 4]:
-            _LOGGER.debug("Protocol requires encryption, encrypting packet...")
-            # Pad to 48 bytes for encrypted protocol
-            padded_packet = bytearray(48)
-            padded_packet[:8] = packet
-            # Fill rest with padding (zeros or could be random)
-            encrypted_packet = _encrypt_data(padded_packet)
-            _LOGGER.debug("Encrypted packet (48 bytes): %s", encrypted_packet.hex())
-            return encrypted_packet
+        _LOGGER.debug("Command packet (8 bytes, unencrypted): %s", packet.hex())
 
         return packet
 
