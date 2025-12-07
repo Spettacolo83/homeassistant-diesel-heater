@@ -699,9 +699,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         # If value is > 50, it's likely in Fahrenheit (47°F-97°F = 8°C-36°C)
         # Convert to Celsius for display
+        # Use round() to avoid off-by-one errors (61°F = 16.1°C → 16°C, not 16°C)
         if raw_set_temp > 50:
             # Fahrenheit value - convert to Celsius
-            set_temp_celsius = int((raw_set_temp - 32) * 5 / 9)
+            set_temp_celsius = round((raw_set_temp - 32) * 5 / 9)
             _LOGGER.debug("🌡️ Converted from Fahrenheit: %d°F → %d°C", raw_set_temp, set_temp_celsius)
             self.data["set_temp"] = max(8, min(36, set_temp_celsius))
         else:
@@ -923,8 +924,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         # For mode 4 heaters, convert Celsius to Fahrenheit
         # Discovery: When sending 21 (°C), heater set to 47°F (minimum)
         # This suggests heater interprets the value as Fahrenheit
+        # Use round() to avoid off-by-one errors (16°C = 60.8°F → 61°F, not 60°F)
         if self._protocol_mode == 4:
-            temp_fahrenheit = int(temperature * 9 / 5 + 32)
+            temp_fahrenheit = round(temperature * 9 / 5 + 32)
             _LOGGER.info(
                 "🌡️ SET TEMPERATURE REQUEST: target=%d°C (%d°F), current=%s, mode=%s, protocol=%d (using Fahrenheit)",
                 temperature, temp_fahrenheit, current_temp, current_mode, self._protocol_mode
