@@ -772,35 +772,29 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             _LOGGER.debug("Wake-up ping failed (non-critical): %s", err)
 
     def _build_command_packet(self, command: int, argument: int) -> bytearray:
-        """Build command packet based on detected protocol mode.
+        """Build command packet for the heater.
 
-        Protocol modes:
-        - 1: AA55 unencrypted (20 bytes response)
-        - 2: AA55 encrypted (48 bytes response)
-        - 3: AA66 unencrypted (20 bytes response)
-        - 4: AA66 encrypted (48 bytes response)
+        IMPORTANT DISCOVERY: The heater ALWAYS accepts AA55 commands,
+        regardless of what protocol it uses for responses!
 
-        IMPORTANT: Even for encrypted protocols (2, 4), the heater accepts
-        UNENCRYPTED commands. It only sends encrypted responses.
-        So we always send 8-byte unencrypted commands with the correct header.
+        - Heater accepts: AA55 unencrypted 8-byte commands
+        - Heater responds: AA66 encrypted 48-byte data (for newer models)
+
+        The response protocol (AA55 vs AA66, encrypted vs not) only affects
+        how we PARSE responses, not how we SEND commands.
         """
         _LOGGER.info(
             "🔧 Building command packet: protocol_mode=%d, cmd=%d, arg=%d",
             self._protocol_mode, command, argument
         )
 
-        # Determine header based on protocol (AA55 vs AA66)
-        if self._protocol_mode in [3, 4]:
-            # AA66 protocol - heater expects AA66 header in commands
-            header_byte = 0x66
-            _LOGGER.debug("Using AA66 protocol header (mode %d)", self._protocol_mode)
-        else:
-            # AA55 protocol (default)
-            header_byte = 0x55
-            _LOGGER.debug("Using AA55 protocol header (mode %d)", self._protocol_mode)
+        # ALWAYS use AA55 header for commands - the heater only accepts AA55!
+        # This was discovered through testing: AA66 commands are ignored,
+        # but AA55 commands work even when heater responds with AA66 data.
+        header_byte = 0x55
+        _LOGGER.debug("Using AA55 protocol header (heater only accepts AA55 commands)")
 
-        # Build 8-byte command packet (ALWAYS unencrypted)
-        # The heater accepts unencrypted commands but sends encrypted responses
+        # Build 8-byte command packet (ALWAYS unencrypted AA55)
         packet = bytearray([0xAA, header_byte, 0, 0, 0, 0, 0, 0])
         packet[2] = self._passkey // 100
         packet[3] = self._passkey % 100
@@ -809,7 +803,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         packet[6] = argument // 256
         packet[7] = (packet[2] + packet[3] + packet[4] + packet[5] + packet[6]) % 256
 
-        _LOGGER.debug("Command packet (8 bytes, unencrypted): %s", packet.hex())
+        _LOGGER.debug("Command packet (8 bytes, AA55): %s", packet.hex())
 
         return packet
 
