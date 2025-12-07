@@ -775,15 +775,17 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         try:
             self._notification_data = None
-            await self._client.write_gatt_char(self._characteristic, packet)
+            # Use response=False to avoid authorization issues with BLE proxies
+            # (e.g., ESPHome BLE proxy). The heater sends a notification as response.
+            await self._client.write_gatt_char(self._characteristic, packet, response=False)
 
             # Wait for notification with configurable timeout
             # Increased from 2s to 5s default to handle slow BLE responses
             iterations = int(timeout / 0.1)
-            for _ in range(iterations):
+            for i in range(iterations):
                 await asyncio.sleep(0.1)
                 if self._notification_data:
-                    _LOGGER.debug("Received response after %.1fs", _ * 0.1)
+                    _LOGGER.debug("Received response after %.1fs", i * 0.1)
                     return True
 
             _LOGGER.warning("No response received after %.1fs", timeout)
@@ -818,9 +820,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             await self.async_request_refresh()
 
     async def async_set_temperature(self, temperature: int) -> None:
-        """Set target temperature."""
-        # Command 4 for temperature (1-36°C)
-        temperature = max(1, min(36, temperature))
+        """Set target temperature (8-36°C).
+
+        Note: Temperature mode only accepts values 8-36°C.
+        Values below 8 will be clamped to 8.
+        """
+        # Command 4 for temperature - valid range is 8-36°C (not 1-36!)
+        temperature = max(8, min(36, temperature))
+        _LOGGER.info("Setting target temperature to %d°C", temperature)
         success = await self._send_command(4, temperature, 85)
         if success:
             await self.async_request_refresh()
