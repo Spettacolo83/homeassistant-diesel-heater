@@ -66,15 +66,21 @@ def _unsign_to_sign(value: int) -> int:
 def _decrypt_data(data: bytearray) -> bytearray:
     """Decrypt encrypted data using XOR with password key."""
     decrypted = bytearray(data)
-    
+
     # Decrypt 6 blocks (each of 8 bytes)
     for j in range(6):
         base_index = 8 * j
         for i in range(8):
             if base_index + i < len(decrypted):
                 decrypted[base_index + i] = ENCRYPTION_KEY[i] ^ decrypted[base_index + i]
-    
+
     return decrypted
+
+
+def _encrypt_data(data: bytearray) -> bytearray:
+    """Encrypt data using XOR with password key (same as decrypt since XOR is symmetric)."""
+    # XOR encryption is symmetric, so we use the same algorithm
+    return _decrypt_data(data)
 
 
 class VevorHeaterCoordinator(DataUpdateCoordinator):
@@ -527,27 +533,52 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if len(data) < 17:
             _LOGGER.debug("Response too short: %d bytes", len(data))
             return
-        
+
         # Check protocol type
         header = (_u8_to_number(data[0]) << 8) | _u8_to_number(data[1])
-        
+        old_protocol = self._protocol_mode
+
         if header == 0xAA55 and len(data) == 20:
             # Protocol 1: 0xAA 0x55, 20 bytes, not encrypted
+            _LOGGER.info("🔍 Detected protocol: AA55 unencrypted (mode=1)")
             self._parse_protocol_aa55(data)
         elif header == 0xAA66 and len(data) == 20:
-            # Protocol 2: 0xAA 0x66, 20 bytes, not encrypted
+            # Protocol 3: 0xAA 0x66, 20 bytes, not encrypted
+            _LOGGER.info("🔍 Detected protocol: AA66 unencrypted (mode=3)")
             self._parse_protocol_aa66(data)
         elif len(data) == 48:
-            # Protocol 3/4: 48 bytes, encrypted
+            # Protocol 2/4: 48 bytes, encrypted
             decrypted = _decrypt_data(data)
             header = (_u8_to_number(decrypted[0]) << 8) | _u8_to_number(decrypted[1])
-            
+            _LOGGER.debug("Decrypted header: 0x%04X", header)
+
             if header == 0xAA55:
+                _LOGGER.info("🔍 Detected protocol: AA55 encrypted (mode=2)")
                 self._parse_protocol_aa55_encrypted(decrypted)
             elif header == 0xAA66:
+                _LOGGER.info("🔍 Detected protocol: AA66 encrypted (mode=4)")
                 self._parse_protocol_aa66_encrypted(decrypted)
+            else:
+                _LOGGER.warning(
+                    "🔍 Unknown encrypted protocol, decrypted header: 0x%04X",
+                    header
+                )
         else:
-            _LOGGER.debug("Unknown protocol, length: %d, header: 0x%04X", len(data), header)
+            _LOGGER.warning(
+                "🔍 Unknown protocol, length: %d, header: 0x%04X",
+                len(data), header
+            )
+
+        # Log protocol change
+        if old_protocol != self._protocol_mode:
+            _LOGGER.info(
+                "📋 Protocol mode changed: %d → %d (commands will now use %s format)",
+                old_protocol, self._protocol_mode,
+                "AA66 encrypted" if self._protocol_mode == 4 else
+                "AA66 unencrypted" if self._protocol_mode == 3 else
+                "AA55 encrypted" if self._protocol_mode == 2 else
+                "AA55 unencrypted"
+            )
 
     def _parse_protocol_aa55(self, data: bytearray) -> None:
         """Parse protocol AA55 (20 bytes, unencrypted)."""
@@ -740,8 +771,63 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         except Exception as err:
             _LOGGER.debug("Wake-up ping failed (non-critical): %s", err)
 
-    async def _send_command(self, command: int, argument: int, n: int, timeout: float = 5.0) -> bool:
-        """Send command to heater with configurable timeout."""
+    def _build_command_packet(self, command: int, argument: int) -> bytearray:
+        """Build command packet based on detected protocol mode.
+
+        Protocol modes:
+        - 1: AA55 unencrypted (20 bytes response)
+        - 2: AA55 encrypted (48 bytes response)
+        - 3: AA66 unencrypted (20 bytes response)
+        - 4: AA66 encrypted (48 bytes response)
+        """
+        _LOGGER.info(
+            "🔧 Building command packet: protocol_mode=%d, cmd=%d, arg=%d",
+            self._protocol_mode, command, argument
+        )
+
+        # Determine header based on protocol (AA55 vs AA66)
+        if self._protocol_mode in [3, 4]:
+            # AA66 protocol
+            header_byte = 0x66
+            _LOGGER.debug("Using AA66 protocol header")
+        else:
+            # AA55 protocol (default)
+            header_byte = 0x55
+            _LOGGER.debug("Using AA55 protocol header")
+
+        # Build base 8-byte command packet
+        packet = bytearray([0xAA, header_byte, 0, 0, 0, 0, 0, 0])
+        packet[2] = self._passkey // 100
+        packet[3] = self._passkey % 100
+        packet[4] = command % 256
+        packet[5] = argument % 256
+        packet[6] = argument // 256
+        packet[7] = (packet[2] + packet[3] + packet[4] + packet[5] + packet[6]) % 256
+
+        _LOGGER.debug("Base packet (8 bytes): %s", packet.hex())
+
+        # For encrypted protocols, we need to encrypt the command
+        if self._protocol_mode in [2, 4]:
+            _LOGGER.debug("Protocol requires encryption, encrypting packet...")
+            # Pad to 48 bytes for encrypted protocol
+            padded_packet = bytearray(48)
+            padded_packet[:8] = packet
+            # Fill rest with padding (zeros or could be random)
+            encrypted_packet = _encrypt_data(padded_packet)
+            _LOGGER.debug("Encrypted packet (48 bytes): %s", encrypted_packet.hex())
+            return encrypted_packet
+
+        return packet
+
+    async def _send_command(self, command: int, argument: int, n: int = 85, timeout: float = 5.0) -> bool:
+        """Send command to heater with configurable timeout.
+
+        Args:
+            command: Command code (1=status, 2=mode, 3=on/off, 4=level/temp)
+            argument: Command argument
+            n: Legacy parameter (ignored, kept for compatibility)
+            timeout: Timeout in seconds for waiting response
+        """
         if not self._client or not self._client.is_connected:
             _LOGGER.error(
                 "Cannot send command: heater not connected. "
@@ -756,28 +842,20 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             )
             return False
 
-        # Build command packet
-        packet = bytearray([0xAA, n % 256, 0, 0, 0, 0, 0, 0])
+        # Build protocol-aware command packet
+        packet = self._build_command_packet(command, argument)
 
-        if n == 136:
-            packet[2] = random.randint(0, 255)
-            packet[3] = random.randint(0, 255)
-        else:  # n == 85
-            packet[2] = self._passkey // 100
-            packet[3] = self._passkey % 100
-
-        packet[4] = command % 256
-        packet[5] = argument % 256
-        packet[6] = argument // 256
-        packet[7] = (packet[2] + packet[3] + packet[4] + packet[5] + packet[6]) % 256
-
-        _LOGGER.info("📤 Sending command: %s (cmd=%d, arg=%d)", packet.hex(), command, argument)
+        _LOGGER.info(
+            "📤 Sending command: %s (cmd=%d, arg=%d, protocol=%d, len=%d)",
+            packet.hex(), command, argument, self._protocol_mode, len(packet)
+        )
 
         try:
             self._notification_data = None
             # Use response=False to avoid authorization issues with BLE proxies
             # (e.g., ESPHome BLE proxy). The heater sends a notification as response.
             await self._client.write_gatt_char(self._characteristic, packet, response=False)
+            _LOGGER.debug("Command written to BLE characteristic")
 
             # Wait for notification with configurable timeout
             # Increased from 2s to 5s default to handle slow BLE responses
@@ -785,14 +863,17 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             for i in range(iterations):
                 await asyncio.sleep(0.1)
                 if self._notification_data:
-                    _LOGGER.debug("Received response after %.1fs", i * 0.1)
+                    _LOGGER.info(
+                        "✅ Received response after %.1fs (protocol=%d)",
+                        i * 0.1, self._protocol_mode
+                    )
                     return True
 
-            _LOGGER.warning("No response received after %.1fs", timeout)
+            _LOGGER.warning("⚠️ No response received after %.1fs", timeout)
             return False
 
         except Exception as err:
-            _LOGGER.error("Error sending command: %s", err)
+            _LOGGER.error("❌ Error sending command: %s", err)
             # On write error, the connection might be dead
             await self._cleanup_connection()
             return False
@@ -827,10 +908,27 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """
         # Command 4 for temperature - valid range is 8-36°C (not 1-36!)
         temperature = max(8, min(36, temperature))
-        _LOGGER.info("Setting target temperature to %d°C", temperature)
+        current_temp = self.data.get("set_temp", "unknown")
+        current_mode = self.data.get("running_mode", "unknown")
+
+        _LOGGER.info(
+            "🌡️ SET TEMPERATURE REQUEST: target=%d°C, current=%s°C, mode=%s, protocol=%d",
+            temperature, current_temp, current_mode, self._protocol_mode
+        )
+
         success = await self._send_command(4, temperature, 85)
+
         if success:
             await self.async_request_refresh()
+            # Log result after refresh
+            new_temp = self.data.get("set_temp", "unknown")
+            _LOGGER.info(
+                "🌡️ SET TEMPERATURE RESULT: requested=%d°C, heater_reports=%s°C, %s",
+                temperature, new_temp,
+                "✅ SUCCESS" if new_temp == temperature else "❌ FAILED - heater did not accept"
+            )
+        else:
+            _LOGGER.warning("🌡️ SET TEMPERATURE FAILED: command not sent successfully")
 
     async def async_set_mode(self, mode: int) -> None:
         """Set running mode (0=Manual, 1=Level, 2=Temperature)."""
