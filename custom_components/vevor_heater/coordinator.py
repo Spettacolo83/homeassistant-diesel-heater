@@ -641,10 +641,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         voltage_raw = _u8_to_number(data[11]) | (_u8_to_number(data[12]) << 8)
         self.data["supply_voltage"] = voltage_raw / 10.0
 
-        # Bytes 13-14: Case temperature in 0.1°C (little endian)
-        # 0x9b 0x00 = 0x009b = 155 → 155 * 0.1 = 15.5°C
+        # Bytes 13-14: Case temperature (little endian)
+        # Some heaters send 0.1°C format (need /10), others send direct °C
+        # Auto-detect: if raw > 350, definitely 0.1°C format (350°C case is impossible)
         case_temp_raw = _u8_to_number(data[13]) | (_u8_to_number(data[14]) << 8)
-        self.data["case_temperature"] = case_temp_raw / 10.0
+        if case_temp_raw > 350:
+            self.data["case_temperature"] = case_temp_raw / 10.0
+        else:
+            self.data["case_temperature"] = float(case_temp_raw)
 
         # Byte 15: Cabin/interior temperature in °C (direct value)
         # 0x1a = 26 → 26°C
