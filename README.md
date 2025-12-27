@@ -392,7 +392,14 @@ This integration communicates via Bluetooth LE using the Vevor/BYD diesel heater
 
 ## Changelog
 
-### Version 1.0.12 (Latest)
+### Version 1.0.13 (Latest)
+- **BLE Connection Resilience**: Improved stability for intermittent Bluetooth connections
+  - Added "stale data tolerance" - keeps last valid sensor values for 3 failed cycles instead of immediately showing unavailable
+  - Reduced log spam by using debug level for repeated connection failures
+  - Only shows warning after 4+ consecutive failures
+  - Better connection failure handling with cached last valid data
+
+### Version 1.0.12
 - **Case Temperature Auto-Detection**: Fixed case temperature parsing for heaters that send direct °C values
   - Some heaters (AA66 unencrypted) send case temperature as direct °C, not 0.1°C format
   - Added auto-detection: if raw value > 350, divide by 10 (0.1°C format); otherwise use raw value (direct °C)

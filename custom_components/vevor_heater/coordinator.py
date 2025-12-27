@@ -110,6 +110,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._protocol_mode = 0  # Will be detected from response
         self._connection_attempts = 0
         self._last_connection_attempt = 0.0
+        self._consecutive_failures = 0  # Track consecutive update failures
+        self._max_stale_cycles = 3  # Keep last values for this many failed cycles
+        self._last_valid_data: dict[str, Any] = {}  # Cache of last valid sensor readings
         
         # Current state
         self.data: dict[str, Any] = {
@@ -344,6 +347,65 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             # Save immediately after reset to persist the new day and history
             await self.async_save_data()
 
+    def _clear_sensor_values(self) -> None:
+        """Clear sensor values to show as unavailable."""
+        self.data["case_temperature"] = None
+        self.data["cab_temperature"] = None
+        self.data["supply_voltage"] = None
+        self.data["running_step"] = None
+        self.data["running_mode"] = None
+        self.data["set_level"] = None
+        self.data["altitude"] = None
+        self.data["error_code"] = None
+        self.data["hourly_fuel_consumption"] = None
+
+    def _restore_stale_data(self) -> None:
+        """Restore last valid sensor values during temporary connection issues."""
+        if self._last_valid_data:
+            for key in ["case_temperature", "cab_temperature", "supply_voltage",
+                       "running_step", "running_mode", "set_level", "altitude",
+                       "error_code", "hourly_fuel_consumption"]:
+                if key in self._last_valid_data:
+                    self.data[key] = self._last_valid_data[key]
+
+    def _save_valid_data(self) -> None:
+        """Save current sensor values as last valid data."""
+        self._last_valid_data = {
+            "case_temperature": self.data.get("case_temperature"),
+            "cab_temperature": self.data.get("cab_temperature"),
+            "supply_voltage": self.data.get("supply_voltage"),
+            "running_step": self.data.get("running_step"),
+            "running_mode": self.data.get("running_mode"),
+            "set_level": self.data.get("set_level"),
+            "altitude": self.data.get("altitude"),
+            "error_code": self.data.get("error_code"),
+            "hourly_fuel_consumption": self.data.get("hourly_fuel_consumption"),
+        }
+
+    def _handle_connection_failure(self, err: Exception) -> None:
+        """Handle connection failure with stale data tolerance."""
+        self._consecutive_failures += 1
+        self.data["connected"] = False
+
+        if self._consecutive_failures <= self._max_stale_cycles:
+            # Keep last valid values for a few cycles
+            self._restore_stale_data()
+            _LOGGER.debug(
+                "Connection failed (attempt %d/%d), keeping last values: %s",
+                self._consecutive_failures,
+                self._max_stale_cycles,
+                err
+            )
+        else:
+            # Too many failures, clear values
+            self._clear_sensor_values()
+            if self._consecutive_failures == self._max_stale_cycles + 1:
+                _LOGGER.warning(
+                    "Vevor Heater offline after %d attempts: %s",
+                    self._consecutive_failures,
+                    err
+                )
+
     async def _async_update_data(self) -> dict[str, Any]:
         """Update data from the heater."""
         # Check for daily reset FIRST, even if heater is offline
@@ -354,23 +416,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             try:
                 await self._ensure_connected()
             except Exception as err:
-                _LOGGER.warning(
-                    "Failed to connect to Vevor Heater (attempt %d): %s. "
-                    "Will retry automatically.",
-                    self._connection_attempts,
-                    err
-                )
-                self.data["connected"] = False
-                # Clear sensor values when offline so they show as unavailable
-                self.data["case_temperature"] = None
-                self.data["cab_temperature"] = None
-                self.data["supply_voltage"] = None
-                self.data["running_step"] = None
-                self.data["running_mode"] = None
-                self.data["set_level"] = None
-                self.data["altitude"] = None
-                self.data["error_code"] = None
-                self.data["hourly_fuel_consumption"] = None
+                self._handle_connection_failure(err)
                 raise UpdateFailed(f"Failed to connect: {err}")
         
         try:
@@ -379,6 +425,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
             if status:
                 self.data["connected"] = True
+                # Reset failure counter and save valid data on success
+                self._consecutive_failures = 0
+                self._save_valid_data()
 
                 # Update fuel consumption tracking
                 current_time = time.time()
@@ -394,35 +443,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
                 return self.data
             else:
-                _LOGGER.warning("No status received from heater")
-                self.data["connected"] = False
-                # Clear sensor values when offline
-                self.data["case_temperature"] = None
-                self.data["cab_temperature"] = None
-                self.data["supply_voltage"] = None
-                self.data["running_step"] = None
-                self.data["running_mode"] = None
-                self.data["set_level"] = None
-                self.data["altitude"] = None
-                self.data["error_code"] = None
-                self.data["hourly_fuel_consumption"] = None
+                self._handle_connection_failure(Exception("No status received"))
                 raise UpdateFailed("No status received from heater")
 
         except UpdateFailed:
             raise
         except Exception as err:
-            _LOGGER.error("Error updating data: %s", err)
-            self.data["connected"] = False
-            # Clear sensor values when offline
-            self.data["case_temperature"] = None
-            self.data["cab_temperature"] = None
-            self.data["supply_voltage"] = None
-            self.data["running_step"] = None
-            self.data["running_mode"] = None
-            self.data["set_level"] = None
-            self.data["altitude"] = None
-            self.data["error_code"] = None
-            self.data["hourly_fuel_consumption"] = None
+            _LOGGER.debug("Error updating data: %s", err)
+            self._handle_connection_failure(err)
             raise UpdateFailed(f"Error updating data: {err}")
 
     async def _ensure_connected(self) -> None:
