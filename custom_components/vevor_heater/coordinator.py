@@ -27,6 +27,7 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     CHARACTERISTIC_UUID,
+    CHARACTERISTIC_UUID_ALT,
     CONF_TEMPERATURE_OFFSET,
     DEFAULT_TEMPERATURE_OFFSET,
     DOMAIN,
@@ -41,6 +42,7 @@ from .const import (
     SENSOR_TEMP_MAX,
     SENSOR_TEMP_MIN,
     SERVICE_UUID,
+    SERVICE_UUID_ALT,
     STORAGE_KEY_DAILY_DATE,
     STORAGE_KEY_DAILY_FUEL,
     STORAGE_KEY_DAILY_HISTORY,
@@ -105,6 +107,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self.config_entry = config_entry
         self._client: BleakClient | None = None
         self._characteristic = None
+        self._active_char_uuid: str | None = None  # Track which UUID variant is active
         self._notification_data: bytearray | None = None
         self._passkey = 1234  # Passkey for BYD/Vevor heaters
         self._protocol_mode = 0  # Will be detected from response
@@ -506,26 +509,49 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 await self._cleanup_connection()
                 raise BleakError("No services available")
 
-            # Get characteristic
+            # Get characteristic - try both UUID variants (FFE0/FFE1 and FFF0/FFF1)
             self._characteristic = None
-            for service in self._client.services:
-                if service.uuid.lower() == SERVICE_UUID.lower():
-                    for char in service.characteristics:
-                        if char.uuid.lower() == CHARACTERISTIC_UUID.lower():
-                            self._characteristic = char
+            self._active_char_uuid = None
+
+            # Define UUID pairs to try: (service_uuid, characteristic_uuid)
+            uuid_pairs = [
+                (SERVICE_UUID, CHARACTERISTIC_UUID),
+                (SERVICE_UUID_ALT, CHARACTERISTIC_UUID_ALT),
+            ]
+
+            for service_uuid, char_uuid in uuid_pairs:
+                for service in self._client.services:
+                    if service.uuid.lower() == service_uuid.lower():
+                        for char in service.characteristics:
+                            if char.uuid.lower() == char_uuid.lower():
+                                self._characteristic = char
+                                self._active_char_uuid = char_uuid
+                                _LOGGER.info(
+                                    "Found heater characteristic: %s (service: %s)",
+                                    char_uuid, service_uuid
+                                )
+                                break
+                        if self._characteristic:
                             break
+                if self._characteristic:
+                    break
 
             if not self._characteristic:
+                # Log available services for debugging
+                available_services = [s.uuid for s in self._client.services]
+                _LOGGER.error(
+                    "Could not find heater characteristic. Available services: %s",
+                    available_services
+                )
                 await self._cleanup_connection()
                 raise BleakError("Could not find heater characteristic")
 
-            # Start notifications on the same characteristic (ffe1)
-            # Some Vevor heaters use ffe1 for both write and notify
+            # Start notifications on the discovered characteristic
             if "notify" in self._characteristic.properties:
                 await self._client.start_notify(
-                    CHARACTERISTIC_UUID, self._notification_callback
+                    self._active_char_uuid, self._notification_callback
                 )
-                _LOGGER.debug("Started notifications on %s", CHARACTERISTIC_UUID)
+                _LOGGER.debug("Started notifications on %s", self._active_char_uuid)
             else:
                 _LOGGER.warning("Characteristic does not support notify")
 
@@ -785,11 +811,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if self._client:
             try:
                 if self._client.is_connected:
-                    # Stop notifications using the CORRECT UUID
-                    if self._characteristic and "notify" in self._characteristic.properties:
+                    # Stop notifications using the active UUID
+                    if self._characteristic and self._active_char_uuid and "notify" in self._characteristic.properties:
                         try:
-                            await self._client.stop_notify(CHARACTERISTIC_UUID)
-                            _LOGGER.debug("Stopped notifications on %s", CHARACTERISTIC_UUID)
+                            await self._client.stop_notify(self._active_char_uuid)
+                            _LOGGER.debug("Stopped notifications on %s", self._active_char_uuid)
                         except Exception as err:
                             _LOGGER.debug("Could not stop notifications: %s", err)
 
@@ -801,6 +827,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             finally:
                 self._client = None
                 self._characteristic = None
+                self._active_char_uuid = None
 
     async def _send_wake_up_ping(self) -> None:
         """Send a wake-up ping to the device to ensure it's responsive."""
