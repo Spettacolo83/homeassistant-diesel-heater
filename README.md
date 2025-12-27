@@ -392,7 +392,13 @@ This integration communicates via Bluetooth LE using the Vevor/BYD diesel heater
 
 ## Changelog
 
-### Version 1.0.11 (Latest)
+### Version 1.0.12 (Latest)
+- **Case Temperature Auto-Detection**: Fixed case temperature parsing for heaters that send direct °C values
+  - Some heaters (AA66 unencrypted) send case temperature as direct °C, not 0.1°C format
+  - Added auto-detection: if raw value > 350, divide by 10 (0.1°C format); otherwise use raw value (direct °C)
+  - Thanks to Umberto for reporting and testing
+
+### Version 1.0.11
 - **AA66 Encrypted Protocol Support**: Fixed temperature control for heaters using AA66 encrypted protocol (mode 4)
   - Added protocol-aware command building with extensive debug logging
   - Fixed: Always use AA55 commands (heater only accepts AA55, regardless of response protocol)
