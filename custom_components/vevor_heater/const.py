@@ -48,7 +48,7 @@ RUNNING_MODE_TEMPERATURE: Final = 2
 RUNNING_MODE_NAMES: Final = {
     RUNNING_MODE_MANUAL: "Manual",
     RUNNING_MODE_LEVEL: "Level Mode",
-    RUNNING_MODE_TEMPERATURE: "Temperature Mode",
+    RUNNING_MODE_TEMPERATURE: "Auto Temperature Mode",
 }
 
 # Error codes
