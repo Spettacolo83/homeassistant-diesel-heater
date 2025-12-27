@@ -392,7 +392,34 @@ This integration communicates via Bluetooth LE using the Vevor/BYD diesel heater
 
 ## Changelog
 
-### Version 1.0.8 (Latest)
+### Version 1.0.11 (Latest)
+- **AA66 Encrypted Protocol Support**: Fixed temperature control for heaters using AA66 encrypted protocol (mode 4)
+  - Added protocol-aware command building with extensive debug logging
+  - Fixed: Always use AA55 commands (heater only accepts AA55, regardless of response protocol)
+  - Fixed: Convert temperature to Fahrenheit for mode 4 heaters that use Fahrenheit internally
+  - Fixed: Use `round()` instead of `int()` for temperature conversion to avoid off-by-one errors
+- Tested and confirmed working with ESPHome BLE proxy setups
+- Resolves Issue #1 for users with AA66 encrypted heaters
+
+### Version 1.0.10
+- **ESPHome BLE Proxy Fix**: Fixed temperature setting for ESPHome BLE proxy users (Issue #1)
+  - Fixed temperature range from 1-36 to correct 8-36°C
+  - Changed BLE write to use `response=False` to avoid 'Insufficient authorization' error with ESPHome BLE proxy and other BLE relay setups
+  - Added logging for temperature setting commands
+- Resolves issue where target temperature would always revert to 36°C
+
+### Version 1.0.9
+- **Critical BLE Connection Stability Fixes**: Resolved 7 major connection problems causing heater unavailability
+  - Fixed notification UUID mismatch preventing proper disconnect/reconnect
+  - Added proper connection cleanup on failures
+  - Increased status request timeout from 2s to 5s
+  - Added device wake-up mechanism for deep sleep recovery
+  - Limited internal retry attempts to reduce log spam
+  - Added service discovery validation
+  - Improved connection state cleanup
+- Eliminates 'No status received' errors, 'Failed to cancel connection' errors, and '[org.bluez.Error.InProgress]' errors
+
+### Version 1.0.8
 - **Native Statistics Graphing**: Daily fuel consumption now automatically imports into Home Assistant statistics
   - No ApexCharts or custom cards needed!
   - Use built-in `statistics-graph` card for beautiful bar/line charts
