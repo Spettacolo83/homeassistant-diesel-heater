@@ -220,15 +220,11 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         config_entry: config_entries.ConfigEntry,
     ) -> config_entries.OptionsFlow:
         """Get the options flow for this handler."""
-        return VevorHeaterOptionsFlowHandler(config_entry)
+        return VevorHeaterOptionsFlowHandler()
 
 
 class VevorHeaterOptionsFlowHandler(config_entries.OptionsFlow):
     """Handle options flow for Vevor Heater."""
-
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        """Initialize options flow."""
-        self.config_entry = config_entry
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
