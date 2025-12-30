@@ -19,7 +19,7 @@ from homeassistant.components.recorder.statistics import (
     StatisticData,
     StatisticMetaData,
 )
-from homeassistant.const import UnitOfVolume
+from homeassistant.const import UnitOfTime, UnitOfVolume
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -46,7 +46,11 @@ from .const import (
     STORAGE_KEY_DAILY_DATE,
     STORAGE_KEY_DAILY_FUEL,
     STORAGE_KEY_DAILY_HISTORY,
+    STORAGE_KEY_DAILY_RUNTIME,
+    STORAGE_KEY_DAILY_RUNTIME_DATE,
+    STORAGE_KEY_DAILY_RUNTIME_HISTORY,
     STORAGE_KEY_TOTAL_FUEL,
+    STORAGE_KEY_TOTAL_RUNTIME,
     UPDATE_INTERVAL,
 )
 
@@ -134,6 +138,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             "hourly_fuel_consumption": None,
             "daily_fuel_consumed": 0.0,
             "total_fuel_consumed": 0.0,
+            # Runtime tracking
+            "daily_runtime_hours": 0.0,
+            "total_runtime_hours": 0.0,
         }
 
         # Fuel consumption tracking (minimal)
@@ -145,19 +152,32 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._last_save_time: float = time.time()
         self._last_reset_date: str = datetime.now().date().isoformat()
 
+        # Runtime tracking
+        self._total_runtime_seconds: float = 0.0
+        self._daily_runtime_seconds: float = 0.0
+        self._daily_runtime_history: dict[str, float] = {}  # date -> hours running
+        self._last_runtime_reset_date: str = datetime.now().date().isoformat()
+
     async def async_load_data(self) -> None:
-        """Load persistent fuel consumption data."""
+        """Load persistent fuel consumption and runtime data."""
         try:
             data = await self._store.async_load()
             if data:
+                # Load fuel consumption data
                 self._total_fuel_consumed = data.get(STORAGE_KEY_TOTAL_FUEL, 0.0)
                 self._daily_fuel_consumed = data.get(STORAGE_KEY_DAILY_FUEL, 0.0)
                 self._daily_fuel_history = data.get(STORAGE_KEY_DAILY_HISTORY, {})
 
+                # Load runtime tracking data
+                self._total_runtime_seconds = data.get(STORAGE_KEY_TOTAL_RUNTIME, 0.0)
+                self._daily_runtime_seconds = data.get(STORAGE_KEY_DAILY_RUNTIME, 0.0)
+                self._daily_runtime_history = data.get(STORAGE_KEY_DAILY_RUNTIME_HISTORY, {})
+
                 # Clean old history entries (keep only last MAX_HISTORY_DAYS)
                 self._clean_old_history()
+                self._clean_old_runtime_history()
 
-                # Check if we need to reset daily counter
+                # Check if we need to reset daily fuel counter
                 saved_date = data.get(STORAGE_KEY_DAILY_DATE)
                 if saved_date:
                     today = datetime.now().date().isoformat()
@@ -175,10 +195,32 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     # No saved date, use today
                     self._last_reset_date = datetime.now().date().isoformat()
 
+                # Check if we need to reset daily runtime counter
+                saved_runtime_date = data.get(STORAGE_KEY_DAILY_RUNTIME_DATE)
+                if saved_runtime_date:
+                    today = datetime.now().date().isoformat()
+                    if saved_runtime_date != today:
+                        _LOGGER.info("New day detected at startup, resetting daily runtime counter")
+                        # Save yesterday's runtime to history before resetting
+                        if self._daily_runtime_seconds > 0:
+                            hours = round(self._daily_runtime_seconds / 3600.0, 2)
+                            self._daily_runtime_history[saved_runtime_date] = hours
+                            _LOGGER.info("Saved %s: %.2fh to runtime history", saved_runtime_date, hours)
+                        self._daily_runtime_seconds = 0.0
+                        self._last_runtime_reset_date = today
+                    else:
+                        self._last_runtime_reset_date = saved_runtime_date
+                else:
+                    # No saved date, use today
+                    self._last_runtime_reset_date = datetime.now().date().isoformat()
+
                 # Update data dictionary with loaded values
                 self.data["total_fuel_consumed"] = round(self._total_fuel_consumed, 2)
                 self.data["daily_fuel_consumed"] = round(self._daily_fuel_consumed, 2)
                 self.data["daily_fuel_history"] = self._daily_fuel_history
+                self.data["daily_runtime_hours"] = round(self._daily_runtime_seconds / 3600.0, 2)
+                self.data["total_runtime_hours"] = round(self._total_runtime_seconds / 3600.0, 2)
+                self.data["daily_runtime_history"] = self._daily_runtime_history
 
                 _LOGGER.debug(
                     "Loaded fuel data: total=%.2fL, daily=%.2fL, history entries=%d",
@@ -186,25 +228,42 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     self._daily_fuel_consumed,
                     len(self._daily_fuel_history)
                 )
+                _LOGGER.debug(
+                    "Loaded runtime data: total=%.2fh, daily=%.2fh, history entries=%d",
+                    self._total_runtime_seconds / 3600.0,
+                    self._daily_runtime_seconds / 3600.0,
+                    len(self._daily_runtime_history)
+                )
 
                 # Import existing history into statistics for native graphing
                 await self._import_all_history_statistics()
+                await self._import_all_runtime_history_statistics()
         except Exception as err:
-            _LOGGER.warning("Could not load fuel data: %s", err)
+            _LOGGER.warning("Could not load data: %s", err)
 
     async def async_save_data(self) -> None:
-        """Save persistent fuel consumption data."""
+        """Save persistent fuel consumption and runtime data."""
         try:
             data = {
+                # Fuel data
                 STORAGE_KEY_TOTAL_FUEL: self._total_fuel_consumed,
                 STORAGE_KEY_DAILY_FUEL: self._daily_fuel_consumed,
                 STORAGE_KEY_DAILY_DATE: datetime.now().date().isoformat(),
                 STORAGE_KEY_DAILY_HISTORY: self._daily_fuel_history,
+                # Runtime data
+                STORAGE_KEY_TOTAL_RUNTIME: self._total_runtime_seconds,
+                STORAGE_KEY_DAILY_RUNTIME: self._daily_runtime_seconds,
+                STORAGE_KEY_DAILY_RUNTIME_DATE: datetime.now().date().isoformat(),
+                STORAGE_KEY_DAILY_RUNTIME_HISTORY: self._daily_runtime_history,
             }
             await self._store.async_save(data)
-            _LOGGER.debug("Saved fuel data with %d history entries", len(self._daily_fuel_history))
+            _LOGGER.debug(
+                "Saved data: fuel history=%d entries, runtime history=%d entries",
+                len(self._daily_fuel_history),
+                len(self._daily_runtime_history)
+            )
         except Exception as err:
-            _LOGGER.warning("Could not save fuel data: %s", err)
+            _LOGGER.warning("Could not save data: %s", err)
 
     def _clean_old_history(self) -> None:
         """Remove history entries older than MAX_HISTORY_DAYS."""
@@ -218,7 +277,21 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             del self._daily_fuel_history[date]
 
         if old_keys:
-            _LOGGER.debug("Removed %d old history entries (before %s)", len(old_keys), cutoff_date)
+            _LOGGER.debug("Removed %d old fuel history entries (before %s)", len(old_keys), cutoff_date)
+
+    def _clean_old_runtime_history(self) -> None:
+        """Remove runtime history entries older than MAX_HISTORY_DAYS."""
+        if not self._daily_runtime_history:
+            return
+
+        cutoff_date = (datetime.now().date() - timedelta(days=MAX_HISTORY_DAYS)).isoformat()
+        old_keys = [date for date in self._daily_runtime_history if date < cutoff_date]
+
+        for date in old_keys:
+            del self._daily_runtime_history[date]
+
+        if old_keys:
+            _LOGGER.debug("Removed %d old runtime history entries (before %s)", len(old_keys), cutoff_date)
 
     async def _import_statistics(self, date_str: str, liters: float) -> None:
         """Import daily fuel consumption into Home Assistant statistics for graphing."""
@@ -276,6 +349,62 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         _LOGGER.info("Completed import of fuel history into statistics")
 
+    async def _import_runtime_statistics(self, date_str: str, hours: float) -> None:
+        """Import daily runtime into Home Assistant statistics for graphing."""
+        # Skip if recorder is not available
+        if not (recorder := get_instance(self.hass)):
+            _LOGGER.debug("Recorder not available, skipping runtime statistics import")
+            return
+
+        # Define statistic metadata
+        statistic_id = f"{DOMAIN}:daily_runtime_hours"
+        metadata = StatisticMetaData(
+            has_mean=False,
+            has_sum=True,
+            name="Daily Runtime History",
+            source=DOMAIN,
+            statistic_id=statistic_id,
+            unit_of_measurement=UnitOfTime.HOURS,
+        )
+
+        # Parse date and create timestamp for end of day (23:59:59)
+        try:
+            date_obj = datetime.fromisoformat(date_str)
+            # Set time to 23:59:59 to represent the day's end
+            end_of_day = datetime.combine(date_obj.date(), datetime.max.time())
+            # Make it timezone-aware
+            timestamp = dt_util.as_utc(end_of_day)
+        except (ValueError, TypeError) as err:
+            _LOGGER.error("Failed to parse date %s: %s", date_str, err)
+            return
+
+        # Create statistic data point
+        statistic = StatisticData(
+            start=timestamp,
+            state=hours,
+            sum=hours,  # Sum for this day
+        )
+
+        # Import the statistic (wrapped in try-except to prevent crashes)
+        try:
+            async_import_statistics(self.hass, metadata, [statistic])
+            _LOGGER.debug("Imported runtime statistic for %s: %.2fh", date_str, hours)
+        except Exception as err:
+            _LOGGER.warning("Could not import runtime statistic for %s: %s", date_str, err)
+
+    async def _import_all_runtime_history_statistics(self) -> None:
+        """Import all existing runtime history data into statistics (called at startup)."""
+        if not self._daily_runtime_history:
+            _LOGGER.debug("No runtime history to import into statistics")
+            return
+
+        _LOGGER.info("Importing %d days of runtime history into statistics", len(self._daily_runtime_history))
+
+        for date_str, hours in sorted(self._daily_runtime_history.items()):
+            await self._import_runtime_statistics(date_str, hours)
+
+        _LOGGER.info("Completed import of runtime history into statistics")
+
     def _calculate_fuel_consumption(self, elapsed_seconds: float) -> float:
         """Calculate fuel consumed based on power level and elapsed time.
         
@@ -314,6 +443,16 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self.data["daily_fuel_consumed"] = round(self._daily_fuel_consumed, 2)
         self.data["total_fuel_consumed"] = round(self._total_fuel_consumed, 2)
 
+    def _update_runtime_tracking(self, elapsed_seconds: float) -> None:
+        """Update runtime tracking."""
+        # Only count runtime when heater is actually running
+        if self.data.get("running_step") == RUNNING_STEP_RUNNING:
+            self._total_runtime_seconds += elapsed_seconds
+            self._daily_runtime_seconds += elapsed_seconds
+
+        # Update data dictionary (convert to hours for display)
+        self.data["daily_runtime_hours"] = round(self._daily_runtime_seconds / 3600.0, 2)
+        self.data["total_runtime_hours"] = round(self._total_runtime_seconds / 3600.0, 2)
 
     async def _check_daily_reset(self) -> None:
         """Check if we need to reset daily fuel counter (runs every update, even if offline)."""
@@ -346,6 +485,41 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             # Clean old history and update data
             self._clean_old_history()
             self.data["daily_fuel_history"] = self._daily_fuel_history
+
+            # Save immediately after reset to persist the new day and history
+            await self.async_save_data()
+
+    async def _check_daily_runtime_reset(self) -> None:
+        """Check if we need to reset daily runtime counter (runs every update, even if offline)."""
+        current_date = datetime.now().date().isoformat()
+        if current_date != self._last_runtime_reset_date:
+            # Save yesterday's runtime to history before resetting
+            if self._daily_runtime_seconds > 0:
+                hours_running = round(self._daily_runtime_seconds / 3600.0, 2)
+                self._daily_runtime_history[self._last_runtime_reset_date] = hours_running
+                _LOGGER.info(
+                    "New day detected: saved %s runtime (%.2fh) to history",
+                    self._last_runtime_reset_date,
+                    hours_running
+                )
+
+                # Import into statistics for native graphing
+                await self._import_runtime_statistics(self._last_runtime_reset_date, hours_running)
+
+            _LOGGER.info(
+                "Resetting daily runtime counter from %.2fh to 0.0h (was %s, now %s)",
+                self._daily_runtime_seconds / 3600.0,
+                self._last_runtime_reset_date,
+                current_date
+            )
+
+            self._daily_runtime_seconds = 0.0
+            self._last_runtime_reset_date = current_date
+            self.data["daily_runtime_hours"] = 0.0
+
+            # Clean old history and update data
+            self._clean_old_runtime_history()
+            self.data["daily_runtime_history"] = self._daily_runtime_history
 
             # Save immediately after reset to persist the new day and history
             await self.async_save_data()
@@ -412,8 +586,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self) -> dict[str, Any]:
         """Update data from the heater."""
         # Check for daily reset FIRST, even if heater is offline
-        # This ensures the daily counter resets at midnight regardless of connection status
+        # This ensures the daily counters reset at midnight regardless of connection status
         await self._check_daily_reset()
+        await self._check_daily_runtime_reset()
 
         if not self._client or not self._client.is_connected:
             try:
@@ -421,7 +596,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             except Exception as err:
                 self._handle_connection_failure(err)
                 raise UpdateFailed(f"Failed to connect: {err}")
-        
+
         try:
             # Request status
             status = await self._send_command(1, 0, 85)
@@ -432,14 +607,15 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 self._consecutive_failures = 0
                 self._save_valid_data()
 
-                # Update fuel consumption tracking
+                # Update fuel consumption and runtime tracking
                 current_time = time.time()
                 elapsed_seconds = current_time - self._last_update_time
                 self._last_update_time = current_time
 
                 self._update_fuel_tracking(elapsed_seconds)
+                self._update_runtime_tracking(elapsed_seconds)
 
-                # Save fuel data periodically (every 5 minutes)
+                # Save data periodically (every 5 minutes)
                 if current_time - self._last_save_time >= 300:
                     await self.async_save_data()
                     self._last_save_time = current_time

@@ -11,6 +11,7 @@ from homeassistant.const import (
     PERCENTAGE,
     UnitOfElectricPotential,
     UnitOfTemperature,
+    UnitOfTime,
     UnitOfVolume,
 )
 from homeassistant.core import HomeAssistant, callback
@@ -49,6 +50,10 @@ async def async_setup_entry(
             VevorDailyFuelConsumedSensor(coordinator),
             VevorTotalFuelConsumedSensor(coordinator),
             VevorDailyFuelHistorySensor(coordinator),
+            # Runtime tracking sensors
+            VevorDailyRuntimeSensor(coordinator),
+            VevorTotalRuntimeSensor(coordinator),
+            VevorDailyRuntimeHistorySensor(coordinator),
         ]
     )
 
@@ -314,4 +319,84 @@ class VevorDailyFuelHistorySensor(VevorSensorBase):
                 sum(v for k, v in list(sorted_history.items())[:7]), 2
             ),
             "last_30_days": round(sum(sorted_history.values()), 2),
+        }
+
+
+# Runtime tracking sensors
+
+class VevorDailyRuntimeSensor(VevorSensorBase):
+    """Daily runtime sensor."""
+
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_native_unit_of_measurement = UnitOfTime.HOURS
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_icon = "mdi:clock-outline"
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, "daily_runtime", "Daily Runtime")
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the state."""
+        return self.coordinator.data.get("daily_runtime_hours")
+
+
+class VevorTotalRuntimeSensor(VevorSensorBase):
+    """Total runtime sensor."""
+
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_native_unit_of_measurement = UnitOfTime.HOURS
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_icon = "mdi:clock-check"
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, "total_runtime", "Total Runtime")
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the state."""
+        return self.coordinator.data.get("total_runtime_hours")
+
+
+class VevorDailyRuntimeHistorySensor(VevorSensorBase):
+    """Daily runtime history sensor."""
+
+    _attr_icon = "mdi:chart-timeline-variant"
+    _attr_native_unit_of_measurement = "days"
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, "daily_runtime_history", "Daily Runtime History")
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the number of days in history."""
+        history = self.coordinator.data.get("daily_runtime_history", {})
+        return len(history)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, any]:
+        """Return the state attributes with daily runtime history."""
+        history = self.coordinator.data.get("daily_runtime_history", {})
+
+        if not history:
+            return {
+                "history": {},
+                "days_tracked": 0,
+                "total_hours_in_history": 0.0,
+            }
+
+        # Sort history by date (newest first)
+        sorted_history = dict(sorted(history.items(), reverse=True))
+
+        return {
+            "history": sorted_history,
+            "days_tracked": len(sorted_history),
+            "total_hours_in_history": round(sum(sorted_history.values()), 2),
+            "last_7_days_hours": round(
+                sum(v for k, v in list(sorted_history.items())[:7]), 2
+            ),
+            "last_30_days_hours": round(sum(sorted_history.values()), 2),
         }

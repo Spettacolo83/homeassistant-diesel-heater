@@ -116,5 +116,11 @@ STORAGE_KEY_DAILY_FUEL: Final = "daily_fuel_consumed"
 STORAGE_KEY_DAILY_DATE: Final = "daily_fuel_date"
 STORAGE_KEY_DAILY_HISTORY: Final = "daily_fuel_history"
 
+# Runtime tracking persistence keys
+STORAGE_KEY_TOTAL_RUNTIME: Final = "total_runtime_seconds"
+STORAGE_KEY_DAILY_RUNTIME: Final = "daily_runtime_seconds"
+STORAGE_KEY_DAILY_RUNTIME_DATE: Final = "daily_runtime_date"
+STORAGE_KEY_DAILY_RUNTIME_HISTORY: Final = "daily_runtime_history"
+
 # History settings
 MAX_HISTORY_DAYS: Final = 30  # Keep last 30 days of daily consumption
