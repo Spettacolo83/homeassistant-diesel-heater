@@ -592,9 +592,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         header = (_u8_to_number(data[0]) << 8) | _u8_to_number(data[1])
         old_protocol = self._protocol_mode
 
-        if header == 0xAA55 and len(data) == 20:
-            # Protocol 1: 0xAA 0x55, 20 bytes, not encrypted
-            _LOGGER.info("🔍 Detected protocol: AA55 unencrypted (mode=1)")
+        if header == 0xAA55 and len(data) in (18, 20):
+            # Protocol 1: 0xAA 0x55, 18-20 bytes, not encrypted
+            _LOGGER.info("🔍 Detected protocol: AA55 unencrypted (mode=1, %d bytes)", len(data))
             self._parse_protocol_aa55(data)
         elif header == 0xAA66 and len(data) == 20:
             # Protocol 3: 0xAA 0x66, 20 bytes, not encrypted
@@ -635,7 +635,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             )
 
     def _parse_protocol_aa55(self, data: bytearray) -> None:
-        """Parse protocol AA55 (20 bytes, unencrypted)."""
+        """Parse protocol AA55 (18-20 bytes, unencrypted)."""
         self._protocol_mode = 1
         
         self.data["running_state"] = _u8_to_number(data[3])
