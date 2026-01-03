@@ -120,6 +120,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._consecutive_failures = 0  # Track consecutive update failures
         self._max_stale_cycles = 3  # Keep last values for this many failed cycles
         self._last_valid_data: dict[str, Any] = {}  # Cache of last valid sensor readings
+        self._heater_uses_fahrenheit: bool = False  # Detected from heater response
         
         # Current state
         self.data: dict[str, Any] = {
@@ -936,11 +937,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         # Use round() to avoid off-by-one errors (61°F = 16.1°C → 16°C, not 16°C)
         if raw_set_temp > 50:
             # Fahrenheit value - convert to Celsius
+            self._heater_uses_fahrenheit = True
             set_temp_celsius = round((raw_set_temp - 32) * 5 / 9)
-            _LOGGER.debug("🌡️ Converted from Fahrenheit: %d°F → %d°C", raw_set_temp, set_temp_celsius)
+            _LOGGER.debug("🌡️ Heater uses Fahrenheit: %d°F → %d°C", raw_set_temp, set_temp_celsius)
             self.data["set_temp"] = max(8, min(36, set_temp_celsius))
         else:
-            # Already in Celsius or low value
+            # Already in Celsius
+            self._heater_uses_fahrenheit = False
+            _LOGGER.debug("🌡️ Heater uses Celsius: %d°C", raw_set_temp)
             self.data["set_temp"] = max(8, min(36, raw_set_temp))
 
         self.data["supply_voltage"] = (256 * data[11] + data[12]) / 10
@@ -1148,28 +1152,26 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         Note: Temperature mode only accepts values 8-36°C.
         Values below 8 will be clamped to 8.
 
-        IMPORTANT: Mode 4 heaters (AA66 encrypted) appear to expect temperature
-        in Fahrenheit for commands, even though we display in Celsius.
+        The temperature unit (Celsius or Fahrenheit) is auto-detected from the
+        heater's response. We send commands in the same unit the heater uses.
         """
         # Clamp to valid Celsius range
         temperature = max(8, min(36, temperature))
         current_temp = self.data.get("set_temp", "unknown")
         current_mode = self.data.get("running_mode", "unknown")
 
-        # For mode 4 heaters, convert Celsius to Fahrenheit
-        # Discovery: When sending 21 (°C), heater set to 47°F (minimum)
-        # This suggests heater interprets the value as Fahrenheit
-        # Use round() to avoid off-by-one errors (16°C = 60.8°F → 61°F, not 60°F)
-        if self._protocol_mode == 4:
+        # Send temperature in the unit the heater expects (detected from response)
+        # Some mode 4 heaters use Fahrenheit, others use Celsius
+        if self._heater_uses_fahrenheit:
             temp_fahrenheit = round(temperature * 9 / 5 + 32)
             _LOGGER.info(
-                "🌡️ SET TEMPERATURE REQUEST: target=%d°C (%d°F), current=%s, mode=%s, protocol=%d (using Fahrenheit)",
+                "🌡️ SET TEMPERATURE REQUEST: target=%d°C (%d°F), current=%s, mode=%s, protocol=%d (heater uses Fahrenheit)",
                 temperature, temp_fahrenheit, current_temp, current_mode, self._protocol_mode
             )
             command_temp = temp_fahrenheit
         else:
             _LOGGER.info(
-                "🌡️ SET TEMPERATURE REQUEST: target=%d°C, current=%s, mode=%s, protocol=%d",
+                "🌡️ SET TEMPERATURE REQUEST: target=%d°C, current=%s, mode=%s, protocol=%d (heater uses Celsius)",
                 temperature, current_temp, current_mode, self._protocol_mode
             )
             command_temp = temperature
