@@ -179,6 +179,7 @@ class VevorSetLevelSensor(VevorSensorBase):
     """Set level sensor."""
 
     _attr_icon = "mdi:gauge"
+    _attr_state_class = SensorStateClass.MEASUREMENT
 
     def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
         """Initialize the sensor."""

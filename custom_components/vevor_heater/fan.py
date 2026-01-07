@@ -18,7 +18,6 @@ from .const import (
     DOMAIN,
     MAX_LEVEL,
     MIN_LEVEL,
-    RUNNING_MODE_MANUAL,
     RUNNING_MODE_LEVEL,
 )
 from .coordinator import VevorHeaterCoordinator
@@ -62,12 +61,13 @@ class VevorHeaterFan(FanEntity):
     @property
     def available(self) -> bool:
         """Return if entity is available."""
-        # Only available when connected and in Manual or Level mode
+        # Only available when connected and in Level mode
+        # Manual mode only allows Start/Stop, not level control
         if not self.coordinator.data.get("connected", False):
             return False
 
         running_mode = self.coordinator.data.get("running_mode")
-        return running_mode in [RUNNING_MODE_MANUAL, RUNNING_MODE_LEVEL]
+        return running_mode == RUNNING_MODE_LEVEL
 
     @property
     def is_on(self) -> bool:
