@@ -135,6 +135,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             "case_temperature": None,
             "cab_temperature": None,
             "connected": False,
+            "auto_start_stop": None,  # Automatic Start/Stop flag (byte 31)
             # Fuel consumption tracking
             "hourly_fuel_consumption": None,
             "daily_fuel_consumed": 0.0,
@@ -916,8 +917,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     def _parse_protocol_aa66_encrypted(self, data: bytearray) -> None:
         """Parse encrypted protocol AA66 (48 bytes).
 
-        Note: Mode 4 heaters appear to use Fahrenheit internally.
-        We convert to Celsius for display in Home Assistant.
+        Protocol byte mapping (from warehog/esphome-diesel-heater-ble):
+        - Byte 27: Temperature unit (0=Celsius, 1=Fahrenheit)
+        - Byte 31: Automatic Start/Stop flag (0=disabled, 1=enabled)
         """
         self._protocol_mode = 4
 
@@ -928,24 +930,32 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self.data["running_mode"] = _u8_to_number(data[8])
         self.data["set_level"] = max(1, min(10, _u8_to_number(data[10])))
 
-        # Read raw set_temp value - may be in Fahrenheit for mode 4 heaters
+        # Byte 27: Temperature unit detection (more reliable than >50 heuristic)
+        # 0 = Celsius, 1 = Fahrenheit
+        temp_unit_byte = _u8_to_number(data[27])
+        self._heater_uses_fahrenheit = (temp_unit_byte == 1)
+        _LOGGER.debug("🌡️ Temperature unit byte 27: %d (%s)",
+                     temp_unit_byte, "Fahrenheit" if self._heater_uses_fahrenheit else "Celsius")
+
+        # Read raw set_temp value
         raw_set_temp = _u8_to_number(data[9])
         _LOGGER.debug("🌡️ Raw set_temp from heater: %d (byte 9)", raw_set_temp)
 
-        # If value is > 50, it's likely in Fahrenheit (47°F-97°F = 8°C-36°C)
-        # Convert to Celsius for display
-        # Use round() to avoid off-by-one errors (61°F = 16.1°C → 16°C, not 16°C)
-        if raw_set_temp > 50:
-            # Fahrenheit value - convert to Celsius
-            self._heater_uses_fahrenheit = True
+        # Convert to Celsius if heater uses Fahrenheit
+        if self._heater_uses_fahrenheit:
             set_temp_celsius = round((raw_set_temp - 32) * 5 / 9)
-            _LOGGER.debug("🌡️ Heater uses Fahrenheit: %d°F → %d°C", raw_set_temp, set_temp_celsius)
+            _LOGGER.debug("🌡️ Converted from Fahrenheit: %d°F → %d°C", raw_set_temp, set_temp_celsius)
             self.data["set_temp"] = max(8, min(36, set_temp_celsius))
         else:
-            # Already in Celsius
-            self._heater_uses_fahrenheit = False
             _LOGGER.debug("🌡️ Heater uses Celsius: %d°C", raw_set_temp)
             self.data["set_temp"] = max(8, min(36, raw_set_temp))
+
+        # Byte 31: Automatic Start/Stop flag
+        # When enabled in Temperature mode, heater will stop when room reaches target temp
+        auto_start_stop_byte = _u8_to_number(data[31])
+        self.data["auto_start_stop"] = (auto_start_stop_byte == 1)
+        _LOGGER.debug("🔄 Auto Start/Stop byte 31: %d (%s)",
+                     auto_start_stop_byte, "Enabled" if self.data["auto_start_stop"] else "Disabled")
 
         self.data["supply_voltage"] = (256 * data[11] + data[12]) / 10
         self.data["case_temperature"] = _unsign_to_sign(256 * data[13] + data[14])
@@ -1198,6 +1208,35 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         success = await self._send_command(2, mode, 85)
         if success:
             await self.async_request_refresh()
+
+    async def async_set_auto_start_stop(self, enabled: bool) -> None:
+        """Set Automatic Start/Stop mode (cmd 18).
+
+        When enabled in Temperature mode, the heater will completely stop
+        when the room temperature reaches 2°C above the target, and restart
+        when it drops 2°C below the target.
+        """
+        _LOGGER.info("Setting Auto Start/Stop to %s", "enabled" if enabled else "disabled")
+        # Command 18, arg=1 for enabled, arg=0 for disabled
+        success = await self._send_command(18, 1 if enabled else 0, 85)
+        if success:
+            await self.async_request_refresh()
+
+    async def async_sync_time(self) -> None:
+        """Sync heater time with Home Assistant time (cmd 10).
+
+        The time is sent as: 60 * hours + minutes
+        Example: 14:30 = 60 * 14 + 30 = 870
+        """
+        now = datetime.now()
+        time_value = 60 * now.hour + now.minute
+        _LOGGER.info("Syncing heater time to %02d:%02d (value=%d)", now.hour, now.minute, time_value)
+        # Command 10 for time sync
+        success = await self._send_command(10, time_value, 85)
+        if success:
+            _LOGGER.info("✅ Time sync successful")
+        else:
+            _LOGGER.warning("❌ Time sync failed")
 
     async def async_shutdown(self) -> None:
         """Shutdown coordinator."""

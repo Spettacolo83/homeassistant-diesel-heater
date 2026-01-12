@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, RUNNING_STATE_ON
+from .const import DOMAIN, RUNNING_MODE_TEMPERATURE, RUNNING_STATE_ON
 from .coordinator import VevorHeaterCoordinator
 
 
@@ -20,8 +20,11 @@ async def async_setup_entry(
 ) -> None:
     """Set up Vevor Heater switch."""
     coordinator: VevorHeaterCoordinator = hass.data[DOMAIN][entry.entry_id]
-    
-    async_add_entities([VevorHeaterPowerSwitch(coordinator)])
+
+    async_add_entities([
+        VevorHeaterPowerSwitch(coordinator),
+        VevorAutoStartStopSwitch(coordinator),
+    ])
 
 
 class VevorHeaterPowerSwitch(CoordinatorEntity[VevorHeaterCoordinator], SwitchEntity):
@@ -54,6 +57,61 @@ class VevorHeaterPowerSwitch(CoordinatorEntity[VevorHeaterCoordinator], SwitchEn
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the heater off."""
         await self.coordinator.async_turn_off()
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+
+class VevorAutoStartStopSwitch(CoordinatorEntity[VevorHeaterCoordinator], SwitchEntity):
+    """Vevor Heater Auto Start/Stop switch.
+
+    When enabled in Temperature mode, the heater will completely stop
+    when the room temperature reaches 2°C above the target, and restart
+    when it drops 2°C below the target.
+
+    Without this, the heater only reduces power to level 1 but keeps running.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Auto Start/Stop"
+    _attr_icon = "mdi:thermostat-auto"
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the switch."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_auto_start_stop"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, coordinator.address)},
+            "name": "Vevor Diesel Heater",
+            "manufacturer": "Vevor",
+            "model": "Diesel Heater",
+        }
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available.
+
+        Auto Start/Stop is only relevant in Temperature mode.
+        """
+        if not self.coordinator.data.get("connected", False):
+            return False
+        # Only show as available in Temperature mode
+        return self.coordinator.data.get("running_mode") == RUNNING_MODE_TEMPERATURE
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return true if auto start/stop is enabled."""
+        return self.coordinator.data.get("auto_start_stop")
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Enable auto start/stop."""
+        await self.coordinator.async_set_auto_start_stop(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Disable auto start/stop."""
+        await self.coordinator.async_set_auto_start_stop(False)
 
     @callback
     def _handle_coordinator_update(self) -> None:

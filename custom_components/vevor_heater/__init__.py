@@ -17,13 +17,14 @@ from .coordinator import VevorHeaterCoordinator
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [
+    Platform.BINARY_SENSOR,
+    Platform.BUTTON,
     Platform.CLIMATE,
     Platform.FAN,
+    Platform.NUMBER,
     Platform.SELECT,
     Platform.SENSOR,
     Platform.SWITCH,
-    Platform.NUMBER,
-    Platform.BINARY_SENSOR,
 ]
 
 
