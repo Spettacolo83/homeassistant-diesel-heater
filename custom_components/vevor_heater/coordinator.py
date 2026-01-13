@@ -306,11 +306,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             return
 
         # Define statistic metadata
-        statistic_id = f"{DOMAIN}:daily_fuel_consumed"
+        # statistic_id must be unique per device and lowercase with valid characters
+        device_id = self.address.replace(":", "_").lower()
+        statistic_id = f"{DOMAIN}:{device_id}_daily_fuel_consumed"
         metadata = StatisticMetaData(
             has_mean=False,
             has_sum=True,
-            name="Daily Fuel Consumption History",
+            name=f"Daily Fuel Consumption ({self.address[-5:]})",
             source=DOMAIN,
             statistic_id=statistic_id,
             unit_of_measurement=UnitOfVolume.LITERS,
@@ -362,11 +364,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             return
 
         # Define statistic metadata
-        statistic_id = f"{DOMAIN}:daily_runtime_hours"
+        # statistic_id must be unique per device and lowercase with valid characters
+        device_id = self.address.replace(":", "_").lower()
+        statistic_id = f"{DOMAIN}:{device_id}_daily_runtime_hours"
         metadata = StatisticMetaData(
             has_mean=False,
             has_sum=True,
-            name="Daily Runtime History",
+            name=f"Daily Runtime ({self.address[-5:]})",
             source=DOMAIN,
             statistic_id=statistic_id,
             unit_of_measurement=UnitOfTime.HOURS,
