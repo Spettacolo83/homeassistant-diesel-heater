@@ -14,10 +14,14 @@ from homeassistant.const import CONF_ADDRESS
 from homeassistant.data_entry_flow import FlowResult
 
 from .const import (
+    CONF_PIN,
     CONF_TEMPERATURE_OFFSET,
+    DEFAULT_PIN,
     DEFAULT_TEMPERATURE_OFFSET,
     DOMAIN,
+    MAX_PIN,
     MAX_TEMPERATURE_OFFSET,
+    MIN_PIN,
     MIN_TEMPERATURE_OFFSET,
     SERVICE_UUID,
 )
@@ -62,6 +66,7 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_TEMPERATURE_OFFSET: user_input.get(
                         CONF_TEMPERATURE_OFFSET, DEFAULT_TEMPERATURE_OFFSET
                     ),
+                    CONF_PIN: user_input.get(CONF_PIN, DEFAULT_PIN),
                 },
             )
 
@@ -76,6 +81,13 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ): vol.All(
                     vol.Coerce(float),
                     vol.Range(min=MIN_TEMPERATURE_OFFSET, max=MAX_TEMPERATURE_OFFSET),
+                ),
+                vol.Optional(
+                    CONF_PIN,
+                    default=DEFAULT_PIN
+                ): vol.All(
+                    vol.Coerce(int),
+                    vol.Range(min=MIN_PIN, max=MAX_PIN),
                 ),
             }),
             description_placeholders={
@@ -99,6 +111,7 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_TEMPERATURE_OFFSET: user_input.get(
                         CONF_TEMPERATURE_OFFSET, DEFAULT_TEMPERATURE_OFFSET
                     ),
+                    CONF_PIN: user_input.get(CONF_PIN, DEFAULT_PIN),
                 },
             )
 
@@ -167,6 +180,13 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     vol.Coerce(float),
                     vol.Range(min=MIN_TEMPERATURE_OFFSET, max=MAX_TEMPERATURE_OFFSET),
                 ),
+                vol.Optional(
+                    CONF_PIN,
+                    default=DEFAULT_PIN
+                ): vol.All(
+                    vol.Coerce(int),
+                    vol.Range(min=MIN_PIN, max=MAX_PIN),
+                ),
             }),
         )
 
@@ -193,6 +213,7 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_TEMPERATURE_OFFSET: user_input.get(
                             CONF_TEMPERATURE_OFFSET, DEFAULT_TEMPERATURE_OFFSET
                         ),
+                        CONF_PIN: user_input.get(CONF_PIN, DEFAULT_PIN),
                     },
                 )
 
@@ -206,6 +227,13 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ): vol.All(
                     vol.Coerce(float),
                     vol.Range(min=MIN_TEMPERATURE_OFFSET, max=MAX_TEMPERATURE_OFFSET),
+                ),
+                vol.Optional(
+                    CONF_PIN,
+                    default=DEFAULT_PIN
+                ): vol.All(
+                    vol.Coerce(int),
+                    vol.Range(min=MIN_PIN, max=MAX_PIN),
                 ),
             }),
             errors=errors,
@@ -231,14 +259,14 @@ class VevorHeaterOptionsFlowHandler(config_entries.OptionsFlow):
     ) -> FlowResult:
         """Manage the options."""
         if user_input is not None:
-            # Update config entry with new offset
+            # Update config entry with new settings
             self.hass.config_entries.async_update_entry(
                 self.config_entry,
                 data={**self.config_entry.data, **user_input},
             )
             return self.async_create_entry(title="", data={})
 
-        # Show current offset value in options form
+        # Show current values in options form
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema({
@@ -251,6 +279,16 @@ class VevorHeaterOptionsFlowHandler(config_entries.OptionsFlow):
                 ): vol.All(
                     vol.Coerce(float),
                     vol.Range(min=MIN_TEMPERATURE_OFFSET, max=MAX_TEMPERATURE_OFFSET),
+                ),
+                vol.Optional(
+                    CONF_PIN,
+                    default=self.config_entry.data.get(
+                        CONF_PIN,
+                        DEFAULT_PIN
+                    )
+                ): vol.All(
+                    vol.Coerce(int),
+                    vol.Range(min=MIN_PIN, max=MAX_PIN),
                 ),
             }),
         )

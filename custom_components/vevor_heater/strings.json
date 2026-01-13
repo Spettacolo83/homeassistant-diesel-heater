@@ -4,30 +4,36 @@
       "confirm": {
         "description": "Do you want to set up {name}?",
         "data": {
-          "temperature_offset": "Temperature Offset (°C)"
+          "temperature_offset": "Temperature Offset (°C)",
+          "pin": "PIN Code"
         },
         "data_description": {
-          "temperature_offset": "Calibration offset for interior temperature sensor. Use negative value if readings are too high, positive if too low. Range: -20 to +20°C."
+          "temperature_offset": "Calibration offset for interior temperature sensor. Use negative value if readings are too high, positive if too low. Range: -20 to +20°C.",
+          "pin": "4-digit PIN for heater authentication. Factory default is 1234. If you changed the PIN in the Vevor app, enter your custom PIN here."
         }
       },
       "user": {
         "data": {
           "address": "Device",
-          "temperature_offset": "Temperature Offset (°C)"
+          "temperature_offset": "Temperature Offset (°C)",
+          "pin": "PIN Code"
         },
         "description": "Select your Vevor Diesel Heater from the list.",
         "data_description": {
-          "temperature_offset": "Calibration offset for interior temperature sensor. Use negative value if readings are too high, positive if too low. Range: -20 to +20°C."
+          "temperature_offset": "Calibration offset for interior temperature sensor. Use negative value if readings are too high, positive if too low. Range: -20 to +20°C.",
+          "pin": "4-digit PIN for heater authentication. Factory default is 1234. If you changed the PIN in the Vevor app, enter your custom PIN here."
         }
       },
       "manual": {
         "data": {
           "address": "Bluetooth MAC Address",
-          "temperature_offset": "Temperature Offset (°C)"
+          "temperature_offset": "Temperature Offset (°C)",
+          "pin": "PIN Code"
         },
         "description": "Enter the Bluetooth MAC address of your Vevor heater (e.g., A4:C1:37:24:B8:64). You can find this in the Bluetooth logs or using a BLE scanner app.",
         "data_description": {
-          "temperature_offset": "Calibration offset for interior temperature sensor. Use negative value if readings are too high, positive if too low. Range: -20 to +20°C."
+          "temperature_offset": "Calibration offset for interior temperature sensor. Use negative value if readings are too high, positive if too low. Range: -20 to +20°C.",
+          "pin": "4-digit PIN for heater authentication. Factory default is 1234. If you changed the PIN in the Vevor app, enter your custom PIN here."
         }
       }
     },
@@ -42,10 +48,12 @@
     "step": {
       "init": {
         "data": {
-          "temperature_offset": "Temperature Offset (°C)"
+          "temperature_offset": "Temperature Offset (°C)",
+          "pin": "PIN Code"
         },
         "data_description": {
-          "temperature_offset": "Adjust temperature calibration. Changes take effect within 30 seconds. Range: -20 to +20°C."
+          "temperature_offset": "Adjust temperature calibration. Changes take effect within 30 seconds. Range: -20 to +20°C.",
+          "pin": "4-digit PIN for heater authentication. Factory default is 1234. Changes require integration reload."
         }
       }
     }
