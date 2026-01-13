@@ -13,14 +13,25 @@ from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
 from homeassistant.const import CONF_ADDRESS
 from homeassistant.data_entry_flow import FlowResult
 
+from homeassistant.helpers import selector
+
 from .const import (
+    CONF_AUTO_OFFSET_MAX,
+    CONF_EXTERNAL_TEMP_SENSOR,
     CONF_PIN,
+    CONF_PRESET_AWAY_TEMP,
+    CONF_PRESET_COMFORT_TEMP,
     CONF_TEMPERATURE_OFFSET,
+    DEFAULT_AUTO_OFFSET_MAX,
     DEFAULT_PIN,
+    DEFAULT_PRESET_AWAY_TEMP,
+    DEFAULT_PRESET_COMFORT_TEMP,
     DEFAULT_TEMPERATURE_OFFSET,
     DOMAIN,
+    MAX_AUTO_OFFSET_MAX,
     MAX_PIN,
     MAX_TEMPERATURE_OFFSET,
+    MIN_AUTO_OFFSET_MAX,
     MIN_PIN,
     MIN_TEMPERATURE_OFFSET,
     SERVICE_UUID,
@@ -289,6 +300,45 @@ class VevorHeaterOptionsFlowHandler(config_entries.OptionsFlow):
                 ): vol.All(
                     vol.Coerce(int),
                     vol.Range(min=MIN_PIN, max=MAX_PIN),
+                ),
+                vol.Optional(
+                    CONF_PRESET_AWAY_TEMP,
+                    default=self.config_entry.data.get(
+                        CONF_PRESET_AWAY_TEMP,
+                        DEFAULT_PRESET_AWAY_TEMP
+                    )
+                ): vol.All(
+                    vol.Coerce(int),
+                    vol.Range(min=8, max=36),
+                ),
+                vol.Optional(
+                    CONF_PRESET_COMFORT_TEMP,
+                    default=self.config_entry.data.get(
+                        CONF_PRESET_COMFORT_TEMP,
+                        DEFAULT_PRESET_COMFORT_TEMP
+                    )
+                ): vol.All(
+                    vol.Coerce(int),
+                    vol.Range(min=8, max=36),
+                ),
+                vol.Optional(
+                    CONF_EXTERNAL_TEMP_SENSOR,
+                    default=self.config_entry.data.get(CONF_EXTERNAL_TEMP_SENSOR, "")
+                ): selector.EntitySelector(
+                    selector.EntitySelectorConfig(
+                        domain="sensor",
+                        device_class="temperature",
+                    )
+                ),
+                vol.Optional(
+                    CONF_AUTO_OFFSET_MAX,
+                    default=self.config_entry.data.get(
+                        CONF_AUTO_OFFSET_MAX,
+                        DEFAULT_AUTO_OFFSET_MAX
+                    )
+                ): vol.All(
+                    vol.Coerce(int),
+                    vol.Range(min=MIN_AUTO_OFFSET_MAX, max=MAX_AUTO_OFFSET_MAX),
                 ),
             }),
         )

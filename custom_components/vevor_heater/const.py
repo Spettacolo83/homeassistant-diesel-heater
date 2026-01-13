@@ -100,6 +100,21 @@ DEFAULT_PIN: Final = 1234
 MIN_PIN: Final = 0
 MAX_PIN: Final = 9999
 
+# Climate presets
+CONF_PRESET_AWAY_TEMP: Final = "preset_away_temp"
+CONF_PRESET_COMFORT_TEMP: Final = "preset_comfort_temp"
+DEFAULT_PRESET_AWAY_TEMP: Final = 8
+DEFAULT_PRESET_COMFORT_TEMP: Final = 21
+
+# Auto temperature offset from external sensor
+CONF_EXTERNAL_TEMP_SENSOR: Final = "external_temp_sensor"
+CONF_AUTO_OFFSET_MAX: Final = "auto_offset_max"
+DEFAULT_AUTO_OFFSET_MAX: Final = 5
+MIN_AUTO_OFFSET_MAX: Final = 0
+MAX_AUTO_OFFSET_MAX: Final = 20
+AUTO_OFFSET_THROTTLE_SECONDS: Final = 60
+AUTO_OFFSET_THRESHOLD: Final = 1.0  # Only adjust if difference >= 1°C
+
 # Update interval
 UPDATE_INTERVAL: Final = 30  # seconds
 

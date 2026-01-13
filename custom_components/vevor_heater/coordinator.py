@@ -25,11 +25,18 @@ from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
+from homeassistant.helpers.event import async_track_state_change_event
+
 from .const import (
+    AUTO_OFFSET_THRESHOLD,
+    AUTO_OFFSET_THROTTLE_SECONDS,
     CHARACTERISTIC_UUID,
     CHARACTERISTIC_UUID_ALT,
+    CONF_AUTO_OFFSET_MAX,
+    CONF_EXTERNAL_TEMP_SENSOR,
     CONF_PIN,
     CONF_TEMPERATURE_OFFSET,
+    DEFAULT_AUTO_OFFSET_MAX,
     DEFAULT_PIN,
     DEFAULT_TEMPERATURE_OFFSET,
     DOMAIN,
@@ -163,6 +170,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._daily_runtime_history: dict[str, float] = {}  # date -> hours running
         self._last_runtime_reset_date: str = datetime.now().date().isoformat()
 
+        # Auto temperature offset from external sensor
+        self._auto_offset_unsub: callable | None = None
+        self._last_auto_offset_time: float = 0.0
+        self._current_auto_offset: float = 0.0  # Current auto-calculated offset
+
     async def async_load_data(self) -> None:
         """Load persistent fuel consumption and runtime data."""
         try:
@@ -245,6 +257,113 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 await self._import_all_runtime_history_statistics()
         except Exception as err:
             _LOGGER.warning("Could not load data: %s", err)
+
+        # Set up external temperature sensor listener for auto offset
+        await self._setup_external_temp_listener()
+
+    async def _setup_external_temp_listener(self) -> None:
+        """Set up listener for external temperature sensor state changes."""
+        # Clean up any existing listener
+        if self._auto_offset_unsub:
+            self._auto_offset_unsub()
+            self._auto_offset_unsub = None
+
+        # Get external sensor entity_id from config
+        external_sensor = self.config_entry.data.get(CONF_EXTERNAL_TEMP_SENSOR, "")
+        if not external_sensor:
+            _LOGGER.debug("No external temperature sensor configured")
+            return
+
+        _LOGGER.info(
+            "Setting up auto offset from external sensor: %s (max offset: %d°C)",
+            external_sensor,
+            self.config_entry.data.get(CONF_AUTO_OFFSET_MAX, DEFAULT_AUTO_OFFSET_MAX)
+        )
+
+        # Subscribe to state changes
+        self._auto_offset_unsub = async_track_state_change_event(
+            self.hass,
+            [external_sensor],
+            self._async_external_temp_changed
+        )
+
+        # Calculate initial offset
+        await self._async_calculate_auto_offset()
+
+    @callback
+    def _async_external_temp_changed(self, event) -> None:
+        """Handle external temperature sensor state changes."""
+        # Schedule the async calculation
+        self.hass.async_create_task(self._async_calculate_auto_offset())
+
+    async def _async_calculate_auto_offset(self) -> None:
+        """Calculate and apply auto temperature offset based on external sensor.
+
+        This compares the heater's internal temperature sensor with an external
+        reference sensor and calculates an offset to compensate for any difference.
+        The offset is limited by CONF_AUTO_OFFSET_MAX and throttled to avoid
+        frequent changes.
+        """
+        external_sensor = self.config_entry.data.get(CONF_EXTERNAL_TEMP_SENSOR, "")
+        if not external_sensor:
+            return
+
+        # Throttle offset updates
+        current_time = time.time()
+        if current_time - self._last_auto_offset_time < AUTO_OFFSET_THROTTLE_SECONDS:
+            _LOGGER.debug("Auto offset throttled (last update %.0fs ago)",
+                         current_time - self._last_auto_offset_time)
+            return
+
+        # Get external sensor state
+        state = self.hass.states.get(external_sensor)
+        if state is None or state.state in ("unknown", "unavailable"):
+            _LOGGER.debug("External sensor %s unavailable", external_sensor)
+            return
+
+        try:
+            external_temp = float(state.state)
+        except (ValueError, TypeError):
+            _LOGGER.warning("Invalid external sensor value: %s", state.state)
+            return
+
+        # Get heater's raw cab temperature (before any offset)
+        # We need the uncalibrated value for comparison
+        raw_heater_temp = self.data.get("cab_temperature")
+        if raw_heater_temp is None:
+            _LOGGER.debug("Heater temperature not available")
+            return
+
+        # Remove current offsets to get raw value
+        manual_offset = self.config_entry.data.get(CONF_TEMPERATURE_OFFSET, DEFAULT_TEMPERATURE_OFFSET)
+        raw_heater_temp = raw_heater_temp - manual_offset - self._current_auto_offset
+
+        # Calculate the difference: positive means heater reads lower than external
+        difference = external_temp - raw_heater_temp
+
+        # Only adjust if difference is significant
+        if abs(difference) < AUTO_OFFSET_THRESHOLD:
+            _LOGGER.debug(
+                "Auto offset: difference (%.1f°C) below threshold (%.1f°C), no adjustment",
+                difference, AUTO_OFFSET_THRESHOLD
+            )
+            return
+
+        # Calculate new offset (clamped to max)
+        max_offset = self.config_entry.data.get(CONF_AUTO_OFFSET_MAX, DEFAULT_AUTO_OFFSET_MAX)
+        new_auto_offset = max(-max_offset, min(max_offset, difference))
+
+        # Only update if offset changed significantly
+        if abs(new_auto_offset - self._current_auto_offset) >= 0.5:
+            old_offset = self._current_auto_offset
+            self._current_auto_offset = new_auto_offset
+            self._last_auto_offset_time = current_time
+
+            _LOGGER.info(
+                "Auto offset updated: external=%.1f°C, heater_raw=%.1f°C, "
+                "difference=%.1f°C, offset: %.1f → %.1f°C",
+                external_temp, raw_heater_temp, difference, old_offset, new_auto_offset
+            )
 
     async def async_save_data(self) -> None:
         """Save persistent fuel consumption and runtime data."""
@@ -975,17 +1094,24 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._notification_data = data
 
     def _apply_temperature_calibration(self) -> None:
-        """Apply temperature offset calibration to cab_temperature."""
-        # Get configured offset (default to 0.0 if not set)
-        offset = self.config_entry.data.get(CONF_TEMPERATURE_OFFSET, DEFAULT_TEMPERATURE_OFFSET)
+        """Apply temperature offset calibration to cab_temperature.
+
+        Applies both manual offset (from config) and auto offset (from external sensor).
+        Total offset = manual_offset + auto_offset
+        """
+        # Get configured manual offset (default to 0.0 if not set)
+        manual_offset = self.config_entry.data.get(CONF_TEMPERATURE_OFFSET, DEFAULT_TEMPERATURE_OFFSET)
 
         # Get raw temperature
         raw_temp = self.data.get("cab_temperature")
         if raw_temp is None:
             return
 
-        # Apply offset
-        calibrated_temp = raw_temp + offset
+        # Calculate total offset (manual + auto)
+        total_offset = manual_offset + self._current_auto_offset
+
+        # Apply combined offset
+        calibrated_temp = raw_temp + total_offset
 
         # Clamp to sensor range
         calibrated_temp = max(SENSOR_TEMP_MIN, min(SENSOR_TEMP_MAX, calibrated_temp))
@@ -996,11 +1122,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         # Update data with calibrated value
         self.data["cab_temperature"] = calibrated_temp
 
-        # Log calibration if offset is non-zero
-        if offset != 0.0:
+        # Log calibration if any offset is applied
+        if total_offset != 0.0:
             _LOGGER.debug(
-                "Applied temperature calibration: raw=%s°C, offset=%s°C, calibrated=%s°C",
-                raw_temp, offset, calibrated_temp
+                "Applied temperature calibration: raw=%s°C, manual=%s°C, auto=%s°C, total=%s°C, calibrated=%s°C",
+                raw_temp, manual_offset, self._current_auto_offset, total_offset, calibrated_temp
             )
 
     async def _cleanup_connection(self) -> None:
@@ -1248,4 +1374,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     async def async_shutdown(self) -> None:
         """Shutdown coordinator."""
         _LOGGER.debug("Shutting down Vevor Heater coordinator")
+
+        # Clean up external sensor listener
+        if self._auto_offset_unsub:
+            self._auto_offset_unsub()
+            self._auto_offset_unsub = None
+
         await self._cleanup_connection()

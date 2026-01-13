@@ -10,7 +10,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, ERROR_NONE, RUNNING_STATE_ON
+from .const import DOMAIN, ERROR_NONE, RUNNING_MODE_TEMPERATURE, RUNNING_STATE_ON
 from .coordinator import VevorHeaterCoordinator
 
 
@@ -27,6 +27,7 @@ async def async_setup_entry(
             VevorHeaterActiveSensor(coordinator),
             VevorHeaterProblemSensor(coordinator),
             VevorHeaterConnectedSensor(coordinator),
+            VevorAutoStartStopSensor(coordinator),
         ]
     )
 
@@ -118,6 +119,52 @@ class VevorHeaterConnectedSensor(
     def is_on(self) -> bool:
         """Return true if connected."""
         return self.coordinator.data.get("connected", False)
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+
+class VevorAutoStartStopSensor(
+    CoordinatorEntity[VevorHeaterCoordinator], BinarySensorEntity
+):
+    """Vevor Heater Auto Start/Stop binary sensor.
+
+    Shows whether Auto Start/Stop is enabled. When enabled in Temperature mode,
+    the heater will completely stop when the room temperature reaches 2°C above
+    the target, and restart when it drops 2°C below the target.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Auto Start/Stop"
+    _attr_icon = "mdi:thermostat-auto"
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the binary sensor."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_auto_start_stop_sensor"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, coordinator.address)},
+            "name": "Vevor Diesel Heater",
+            "manufacturer": "Vevor",
+            "model": "Diesel Heater",
+        }
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available.
+
+        Auto Start/Stop is only relevant in Temperature mode.
+        """
+        if not self.coordinator.data.get("connected", False):
+            return False
+        return self.coordinator.data.get("running_mode") == RUNNING_MODE_TEMPERATURE
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return true if Auto Start/Stop is enabled."""
+        return self.coordinator.data.get("auto_start_stop")
 
     @callback
     def _handle_coordinator_update(self) -> None:

@@ -49,11 +49,19 @@
       "init": {
         "data": {
           "temperature_offset": "Temperature Offset (°C)",
-          "pin": "PIN Code"
+          "pin": "PIN Code",
+          "preset_away_temp": "Away Preset Temperature (°C)",
+          "preset_comfort_temp": "Comfort Preset Temperature (°C)",
+          "external_temp_sensor": "External Temperature Sensor",
+          "auto_offset_max": "Max Auto Offset (°C)"
         },
         "data_description": {
-          "temperature_offset": "Adjust temperature calibration. Changes take effect within 30 seconds. Range: -20 to +20°C.",
-          "pin": "4-digit PIN for heater authentication. Factory default is 1234. Changes require integration reload."
+          "temperature_offset": "Manual temperature calibration offset. Changes take effect within 30 seconds. Range: -20 to +20°C.",
+          "pin": "4-digit PIN for heater authentication. Factory default is 1234. Changes require integration reload.",
+          "preset_away_temp": "Temperature for Away preset (anti-freeze protection). Default: 8°C.",
+          "preset_comfort_temp": "Temperature for Comfort preset (normal heating). Default: 21°C.",
+          "external_temp_sensor": "Select an external temperature sensor to automatically calibrate the heater's internal sensor. Leave empty to disable auto calibration.",
+          "auto_offset_max": "Maximum automatic offset in °C. Limits how much the temperature can be adjusted based on external sensor. Default: 5°C."
         }
       }
     }
