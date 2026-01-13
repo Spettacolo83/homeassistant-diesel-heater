@@ -18,6 +18,7 @@ from homeassistant.components.recorder.statistics import (
     async_add_external_statistics,
     StatisticData,
     StatisticMetaData,
+    StatisticMeanType,
 )
 from homeassistant.const import UnitOfTime, UnitOfVolume
 from homeassistant.core import HomeAssistant, callback
@@ -431,19 +432,20 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         metadata = StatisticMetaData(
             has_mean=False,
             has_sum=True,
+            mean_type=StatisticMeanType.NONE,
             name=f"Daily Fuel Consumption ({self.address[-5:]})",
             source=DOMAIN,
             statistic_id=statistic_id,
             unit_of_measurement=UnitOfVolume.LITERS,
         )
 
-        # Parse date and create timestamp for end of day (23:59:59)
+        # Parse date and create timestamp at midnight (start of hour required by HA)
         try:
             date_obj = datetime.fromisoformat(date_str)
-            # Set time to 23:59:59 to represent the day's end
-            end_of_day = datetime.combine(date_obj.date(), datetime.max.time())
+            # Use midnight (00:00:00) - HA requires timestamps at top of hour
+            midnight = datetime.combine(date_obj.date(), datetime.min.time())
             # Make it timezone-aware
-            timestamp = dt_util.as_utc(end_of_day)
+            timestamp = dt_util.as_utc(midnight)
         except (ValueError, TypeError) as err:
             _LOGGER.error("Failed to parse date %s: %s", date_str, err)
             return
@@ -497,19 +499,20 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         metadata = StatisticMetaData(
             has_mean=False,
             has_sum=True,
+            mean_type=StatisticMeanType.NONE,
             name=f"Daily Runtime ({self.address[-5:]})",
             source=DOMAIN,
             statistic_id=statistic_id,
             unit_of_measurement=UnitOfTime.HOURS,
         )
 
-        # Parse date and create timestamp for end of day (23:59:59)
+        # Parse date and create timestamp at midnight (start of hour required by HA)
         try:
             date_obj = datetime.fromisoformat(date_str)
-            # Set time to 23:59:59 to represent the day's end
-            end_of_day = datetime.combine(date_obj.date(), datetime.max.time())
+            # Use midnight (00:00:00) - HA requires timestamps at top of hour
+            midnight = datetime.combine(date_obj.date(), datetime.min.time())
             # Make it timezone-aware
-            timestamp = dt_util.as_utc(end_of_day)
+            timestamp = dt_util.as_utc(midnight)
         except (ValueError, TypeError) as err:
             _LOGGER.error("Failed to parse date %s: %s", date_str, err)
             return
