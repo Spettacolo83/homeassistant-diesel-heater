@@ -28,7 +28,9 @@ from homeassistant.util import dt as dt_util
 from .const import (
     CHARACTERISTIC_UUID,
     CHARACTERISTIC_UUID_ALT,
+    CONF_PIN,
     CONF_TEMPERATURE_OFFSET,
+    DEFAULT_PIN,
     DEFAULT_TEMPERATURE_OFFSET,
     DOMAIN,
     ENCRYPTION_KEY,
@@ -113,7 +115,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._characteristic = None
         self._active_char_uuid: str | None = None  # Track which UUID variant is active
         self._notification_data: bytearray | None = None
-        self._passkey = 1234  # Passkey for BYD/Vevor heaters
+        # Get passkey from config, default to 1234 (factory default for most heaters)
+        self._passkey = config_entry.data.get(CONF_PIN, DEFAULT_PIN)
         self._protocol_mode = 0  # Will be detected from response
         self._connection_attempts = 0
         self._last_connection_attempt = 0.0
