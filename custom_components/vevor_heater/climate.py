@@ -137,6 +137,8 @@ class VevorHeaterClimate(CoordinatorEntity[VevorHeaterCoordinator], ClimateEntit
             _LOGGER.info("Clearing preset mode")
             # Keep current temperature, just clear the preset
             self._current_preset = None
+            # Persist the state change
+            self.async_write_ha_state()
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Set new target temperature."""

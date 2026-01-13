@@ -437,6 +437,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             source=DOMAIN,
             statistic_id=statistic_id,
             unit_of_measurement=UnitOfVolume.LITERS,
+            unit_class="volume",
         )
 
         # Parse date and create timestamp at midnight (start of hour required by HA)
@@ -504,6 +505,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             source=DOMAIN,
             statistic_id=statistic_id,
             unit_of_measurement=UnitOfTime.HOURS,
+            unit_class="duration",
         )
 
         # Parse date and create timestamp at midnight (start of hour required by HA)
