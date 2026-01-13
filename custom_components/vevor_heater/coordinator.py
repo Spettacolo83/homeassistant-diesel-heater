@@ -456,11 +456,18 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         )
 
         # Import the statistic (wrapped in try-except to prevent crashes)
+        _LOGGER.info(
+            "Importing fuel statistic: id=%s, date=%s, value=%.2fL",
+            statistic_id, date_str, liters
+        )
         try:
             async_import_statistics(self.hass, metadata, [statistic])
-            _LOGGER.debug("Imported statistic for %s: %.2fL", date_str, liters)
+            _LOGGER.debug("Successfully imported fuel statistic for %s", date_str)
         except Exception as err:
-            _LOGGER.warning("Could not import statistic for %s: %s - Statistics graph may not work", date_str, err)
+            _LOGGER.warning(
+                "Could not import fuel statistic for %s: %s (statistic_id=%s)",
+                date_str, err, statistic_id
+            )
 
     async def _import_all_history_statistics(self) -> None:
         """Import all existing history data into statistics (called at startup)."""
@@ -514,11 +521,18 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         )
 
         # Import the statistic (wrapped in try-except to prevent crashes)
+        _LOGGER.info(
+            "Importing runtime statistic: id=%s, date=%s, value=%.2fh",
+            statistic_id, date_str, hours
+        )
         try:
             async_import_statistics(self.hass, metadata, [statistic])
-            _LOGGER.debug("Imported runtime statistic for %s: %.2fh", date_str, hours)
+            _LOGGER.debug("Successfully imported runtime statistic for %s", date_str)
         except Exception as err:
-            _LOGGER.warning("Could not import runtime statistic for %s: %s", date_str, err)
+            _LOGGER.warning(
+                "Could not import runtime statistic for %s: %s (statistic_id=%s)",
+                date_str, err, statistic_id
+            )
 
     async def _import_all_runtime_history_statistics(self) -> None:
         """Import all existing runtime history data into statistics (called at startup)."""
