@@ -15,7 +15,7 @@ from bleak_retry_connector import establish_connection
 from homeassistant.components import bluetooth
 from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.statistics import (
-    async_import_statistics,
+    async_add_external_statistics,
     StatisticData,
     StatisticMetaData,
 )
@@ -456,12 +456,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         )
 
         # Import the statistic (wrapped in try-except to prevent crashes)
+        # Use async_add_external_statistics for external statistics (uses : delimiter)
         _LOGGER.info(
             "Importing fuel statistic: id=%s, date=%s, value=%.2fL",
             statistic_id, date_str, liters
         )
         try:
-            async_import_statistics(self.hass, metadata, [statistic])
+            async_add_external_statistics(self.hass, metadata, [statistic])
             _LOGGER.debug("Successfully imported fuel statistic for %s", date_str)
         except Exception as err:
             _LOGGER.warning(
@@ -521,12 +522,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         )
 
         # Import the statistic (wrapped in try-except to prevent crashes)
+        # Use async_add_external_statistics for external statistics (uses : delimiter)
         _LOGGER.info(
             "Importing runtime statistic: id=%s, date=%s, value=%.2fh",
             statistic_id, date_str, hours
         )
         try:
-            async_import_statistics(self.hass, metadata, [statistic])
+            async_add_external_statistics(self.hass, metadata, [statistic])
             _LOGGER.debug("Successfully imported runtime statistic for %s", date_str)
         except Exception as err:
             _LOGGER.warning(
