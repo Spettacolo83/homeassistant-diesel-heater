@@ -63,6 +63,7 @@ class VevorHeaterClimate(CoordinatorEntity[VevorHeaterCoordinator], ClimateEntit
         super().__init__(coordinator)
         self._config_entry = config_entry
         self._current_preset: str | None = None
+        self._user_cleared_preset: bool = False  # Track if user explicitly selected "None"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, coordinator.address)},
             "name": "Vevor Heater",
@@ -105,8 +106,13 @@ class VevorHeaterClimate(CoordinatorEntity[VevorHeaterCoordinator], ClimateEntit
     def preset_mode(self) -> str | None:
         """Return the current preset mode.
 
-        Auto-detects preset based on current target temperature.
+        Auto-detects preset based on current target temperature,
+        unless user explicitly cleared the preset.
         """
+        # If user explicitly selected "None", respect that choice
+        if self._user_cleared_preset:
+            return None
+
         current_temp = self.coordinator.data.get("set_temp")
         if current_temp is None:
             return self._current_preset
@@ -126,10 +132,12 @@ class VevorHeaterClimate(CoordinatorEntity[VevorHeaterCoordinator], ClimateEntit
         self._current_preset = preset_mode
 
         if preset_mode == PRESET_AWAY:
+            self._user_cleared_preset = False  # Clear the "None" flag
             temp = self._get_away_temp()
             _LOGGER.info("Setting preset to Away (%d°C)", temp)
             await self.coordinator.async_set_temperature(temp)
         elif preset_mode == PRESET_COMFORT:
+            self._user_cleared_preset = False  # Clear the "None" flag
             temp = self._get_comfort_temp()
             _LOGGER.info("Setting preset to Comfort (%d°C)", temp)
             await self.coordinator.async_set_temperature(temp)
@@ -137,6 +145,7 @@ class VevorHeaterClimate(CoordinatorEntity[VevorHeaterCoordinator], ClimateEntit
             _LOGGER.info("Clearing preset mode")
             # Keep current temperature, just clear the preset
             self._current_preset = None
+            self._user_cleared_preset = True  # User explicitly selected "None"
             # Persist the state change
             self.async_write_ha_state()
 
@@ -146,6 +155,9 @@ class VevorHeaterClimate(CoordinatorEntity[VevorHeaterCoordinator], ClimateEntit
             return
 
         temperature = int(temperature)
+
+        # User is manually setting temperature, clear the "None" flag
+        self._user_cleared_preset = False
 
         # Auto-select preset if temperature matches
         if temperature == self._get_away_temp():
