@@ -9,8 +9,10 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     DOMAIN,
+    MAX_HEATER_OFFSET,
     MAX_LEVEL,
     MAX_TEMP_CELSIUS,
+    MIN_HEATER_OFFSET,
     MIN_LEVEL,
     MIN_TEMP_CELSIUS,
 )
@@ -24,11 +26,12 @@ async def async_setup_entry(
 ) -> None:
     """Set up Vevor Heater number entities."""
     coordinator: VevorHeaterCoordinator = hass.data[DOMAIN][entry.entry_id]
-    
+
     async_add_entities(
         [
             VevorHeaterLevelNumber(coordinator),
             VevorHeaterTemperatureNumber(coordinator),
+            VevorHeaterOffsetNumber(coordinator),
         ]
     )
 
@@ -102,6 +105,48 @@ class VevorHeaterTemperatureNumber(
     async def async_set_native_value(self, value: float) -> None:
         """Set new value."""
         await self.coordinator.async_set_temperature(int(value))
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+
+class VevorHeaterOffsetNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberEntity):
+    """Vevor Heater temperature offset number entity.
+
+    This allows manual control of the temperature offset sent to the heater
+    via BLE command 12. The heater uses this offset to adjust its internal
+    temperature sensor reading for auto-start/stop logic.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Temperature Offset"
+    _attr_icon = "mdi:thermometer-plus"
+    _attr_native_unit_of_measurement = "°C"
+    _attr_native_min_value = MIN_HEATER_OFFSET
+    _attr_native_max_value = MAX_HEATER_OFFSET
+    _attr_native_step = 1
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the number entity."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_heater_offset"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, coordinator.address)},
+            "name": "Vevor Diesel Heater",
+            "manufacturer": "Vevor",
+            "model": "Diesel Heater",
+        }
+
+    @property
+    def native_value(self) -> float:
+        """Return the current value."""
+        return self.coordinator.data.get("heater_offset", 0)
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Set new value."""
+        await self.coordinator.async_set_heater_offset(int(value))
 
     @callback
     def _handle_coordinator_update(self) -> None:

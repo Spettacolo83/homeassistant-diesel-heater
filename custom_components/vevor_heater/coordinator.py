@@ -33,6 +33,7 @@ from .const import (
     AUTO_OFFSET_THROTTLE_SECONDS,
     CHARACTERISTIC_UUID,
     CHARACTERISTIC_UUID_ALT,
+    CONF_AUTO_OFFSET_ENABLED,
     CONF_AUTO_OFFSET_MAX,
     CONF_EXTERNAL_TEMP_SENSOR,
     CONF_PIN,
@@ -43,7 +44,9 @@ from .const import (
     DOMAIN,
     ENCRYPTION_KEY,
     FUEL_CONSUMPTION_TABLE,
+    MAX_HEATER_OFFSET,
     MAX_HISTORY_DAYS,
+    MIN_HEATER_OFFSET,
     NOTIFY_UUID,
     RUNNING_MODE_LEVEL,
     RUNNING_MODE_MANUAL,
@@ -145,8 +148,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             "supply_voltage": None,
             "case_temperature": None,
             "cab_temperature": None,
+            "cab_temperature_raw": None,  # Raw temperature before any offset
+            "heater_offset": 0,  # Current offset sent to heater (cmd 12)
             "connected": False,
             "auto_start_stop": None,  # Automatic Start/Stop flag (byte 31)
+            "auto_offset_enabled": False,  # Auto offset adjustment enabled
             # Fuel consumption tracking
             "hourly_fuel_consumption": None,
             "daily_fuel_consumed": 0.0,
@@ -174,7 +180,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         # Auto temperature offset from external sensor
         self._auto_offset_unsub: callable | None = None
         self._last_auto_offset_time: float = 0.0
-        self._current_auto_offset: float = 0.0  # Current auto-calculated offset
+        self._current_heater_offset: int = 0  # Current offset sent to heater via cmd 12
 
     async def async_load_data(self) -> None:
         """Load persistent fuel consumption and runtime data."""
@@ -302,14 +308,23 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         This compares the heater's internal temperature sensor with an external
         reference sensor and calculates an offset to compensate for any difference.
+        The offset is sent to the heater via BLE command 12, so the heater itself
+        uses the corrected temperature for auto-start/stop logic.
+
         The offset is limited by CONF_AUTO_OFFSET_MAX and throttled to avoid
-        frequent changes.
+        frequent BLE commands.
         """
-        external_sensor = self.config_entry.data.get(CONF_EXTERNAL_TEMP_SENSOR, "")
-        if not external_sensor:
+        # Check if auto offset is enabled
+        if not self.data.get("auto_offset_enabled", False):
+            _LOGGER.debug("Auto offset disabled")
             return
 
-        # Throttle offset updates
+        external_sensor = self.config_entry.data.get(CONF_EXTERNAL_TEMP_SENSOR, "")
+        if not external_sensor:
+            _LOGGER.debug("No external temperature sensor configured")
+            return
+
+        # Throttle offset updates to avoid too many BLE commands
         current_time = time.time()
         if current_time - self._last_auto_offset_time < AUTO_OFFSET_THROTTLE_SECONDS:
             _LOGGER.debug("Auto offset throttled (last update %.0fs ago)",
@@ -329,20 +344,19 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             return
 
         # Get heater's raw cab temperature (before any offset)
-        # We need the uncalibrated value for comparison
-        raw_heater_temp = self.data.get("cab_temperature")
+        raw_heater_temp = self.data.get("cab_temperature_raw")
         if raw_heater_temp is None:
-            _LOGGER.debug("Heater temperature not available")
+            _LOGGER.debug("Heater raw temperature not available yet")
             return
 
-        # Remove current offsets to get raw value
-        manual_offset = self.config_entry.data.get(CONF_TEMPERATURE_OFFSET, DEFAULT_TEMPERATURE_OFFSET)
-        raw_heater_temp = raw_heater_temp - manual_offset - self._current_auto_offset
+        # Round external temp to nearest integer (heater only accepts integer offset)
+        external_temp_rounded = round(external_temp)
 
-        # Calculate the difference: positive means heater reads lower than external
-        difference = external_temp - raw_heater_temp
+        # Calculate the difference: positive offset means heater reads lower than external
+        # If external=22°C and heater=25°C, we need offset=-3 to make heater think it's 22°C
+        difference = external_temp_rounded - raw_heater_temp
 
-        # Only adjust if difference is significant
+        # Only adjust if difference is significant (>= 1°C)
         if abs(difference) < AUTO_OFFSET_THRESHOLD:
             _LOGGER.debug(
                 "Auto offset: difference (%.1f°C) below threshold (%.1f°C), no adjustment",
@@ -352,19 +366,22 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         # Calculate new offset (clamped to max)
         max_offset = self.config_entry.data.get(CONF_AUTO_OFFSET_MAX, DEFAULT_AUTO_OFFSET_MAX)
-        new_auto_offset = max(-max_offset, min(max_offset, difference))
+        new_offset = int(max(-max_offset, min(max_offset, difference)))
 
-        # Only update if offset changed significantly
-        if abs(new_auto_offset - self._current_auto_offset) >= 0.5:
-            old_offset = self._current_auto_offset
-            self._current_auto_offset = new_auto_offset
+        # Only send command if offset changed
+        if new_offset != self._current_heater_offset:
+            old_offset = self._current_heater_offset
             self._last_auto_offset_time = current_time
 
             _LOGGER.info(
-                "Auto offset updated: external=%.1f°C, heater_raw=%.1f°C, "
-                "difference=%.1f°C, offset: %.1f → %.1f°C",
-                external_temp, raw_heater_temp, difference, old_offset, new_auto_offset
+                "Auto offset: external=%.1f°C (rounded=%d), heater_raw=%.1f°C, "
+                "difference=%.1f°C, sending offset: %d → %d°C",
+                external_temp, external_temp_rounded, raw_heater_temp,
+                difference, old_offset, new_offset
             )
+
+            # Send the offset command to the heater
+            await self.async_set_heater_offset(new_offset)
 
     async def async_save_data(self) -> None:
         """Save persistent fuel consumption and runtime data."""
@@ -1115,40 +1132,43 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._notification_data = data
 
     def _apply_temperature_calibration(self) -> None:
-        """Apply temperature offset calibration to cab_temperature.
+        """Store raw temperature and apply manual HA-side offset calibration.
 
-        Applies both manual offset (from config) and auto offset (from external sensor).
-        Total offset = manual_offset + auto_offset
+        The heater offset (sent via cmd 12) is handled separately.
+        This only applies the manual HA-side display offset from config.
         """
-        # Get configured manual offset (default to 0.0 if not set)
-        manual_offset = self.config_entry.data.get(CONF_TEMPERATURE_OFFSET, DEFAULT_TEMPERATURE_OFFSET)
-
-        # Get raw temperature
+        # Get raw temperature (already set by protocol parser)
         raw_temp = self.data.get("cab_temperature")
         if raw_temp is None:
             return
 
-        # Calculate total offset (manual + auto)
-        total_offset = manual_offset + self._current_auto_offset
+        # Store raw temperature before any offset (for auto-offset calculation)
+        self.data["cab_temperature_raw"] = raw_temp
 
-        # Apply combined offset
-        calibrated_temp = raw_temp + total_offset
+        # Get configured manual offset (default to 0.0 if not set)
+        # This is an HA-side display offset, separate from the heater offset
+        manual_offset = self.config_entry.data.get(CONF_TEMPERATURE_OFFSET, DEFAULT_TEMPERATURE_OFFSET)
 
-        # Clamp to sensor range
-        calibrated_temp = max(SENSOR_TEMP_MIN, min(SENSOR_TEMP_MAX, calibrated_temp))
+        # Apply manual offset for display purposes
+        if manual_offset != 0.0:
+            calibrated_temp = raw_temp + manual_offset
 
-        # Round to 1 decimal place
-        calibrated_temp = round(calibrated_temp, 1)
+            # Clamp to sensor range
+            calibrated_temp = max(SENSOR_TEMP_MIN, min(SENSOR_TEMP_MAX, calibrated_temp))
 
-        # Update data with calibrated value
-        self.data["cab_temperature"] = calibrated_temp
+            # Round to 1 decimal place
+            calibrated_temp = round(calibrated_temp, 1)
 
-        # Log calibration if any offset is applied
-        if total_offset != 0.0:
+            # Update data with calibrated value
+            self.data["cab_temperature"] = calibrated_temp
+
             _LOGGER.debug(
-                "Applied temperature calibration: raw=%s°C, manual=%s°C, auto=%s°C, total=%s°C, calibrated=%s°C",
-                raw_temp, manual_offset, self._current_auto_offset, total_offset, calibrated_temp
+                "Applied HA display offset: raw=%s°C, offset=%s°C, display=%s°C",
+                raw_temp, manual_offset, calibrated_temp
             )
+
+        # Update heater offset value in data for sensor display
+        self.data["heater_offset"] = self._current_heater_offset
 
     async def _cleanup_connection(self) -> None:
         """Clean up BLE connection properly."""
@@ -1391,6 +1411,63 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             _LOGGER.info("✅ Time sync successful")
         else:
             _LOGGER.warning("❌ Time sync failed")
+
+    async def async_set_heater_offset(self, offset: int) -> None:
+        """Set temperature offset on the heater (cmd 12).
+
+        This sends the offset value directly to the heater's control board.
+        The heater will then use this offset for its own temperature readings
+        and auto-start/stop logic.
+
+        Args:
+            offset: Temperature offset in °C (-20 to +20)
+        """
+        # Clamp to valid range
+        offset = max(MIN_HEATER_OFFSET, min(MAX_HEATER_OFFSET, offset))
+
+        _LOGGER.info("🌡️ Setting heater temperature offset to %d°C", offset)
+
+        # Command 12 for temperature offset
+        # The argument needs to handle negative values
+        # Convert to unsigned: -20 to +20 → 0 to 40 or use two's complement
+        # Based on warehog's code, offset is sent as signed byte
+        if offset < 0:
+            # Convert negative to unsigned byte (two's complement)
+            arg = 256 + offset
+        else:
+            arg = offset
+
+        success = await self._send_command(12, arg, 85)
+
+        if success:
+            self._current_heater_offset = offset
+            self.data["heater_offset"] = offset
+            _LOGGER.info("✅ Heater offset set to %d°C", offset)
+            await self.async_request_refresh()
+        else:
+            _LOGGER.warning("❌ Failed to set heater offset")
+
+    async def async_set_auto_offset_enabled(self, enabled: bool) -> None:
+        """Enable or disable automatic temperature offset adjustment.
+
+        When enabled, the integration will automatically calculate and send
+        temperature offset commands to the heater based on an external
+        temperature sensor.
+
+        Args:
+            enabled: True to enable, False to disable
+        """
+        _LOGGER.info("Setting auto offset to %s", "enabled" if enabled else "disabled")
+        self.data["auto_offset_enabled"] = enabled
+
+        if enabled:
+            # Trigger initial calculation
+            await self._async_calculate_auto_offset()
+        else:
+            # Reset heater offset to 0 when disabling
+            if self._current_heater_offset != 0:
+                _LOGGER.info("Resetting heater offset to 0")
+                await self.async_set_heater_offset(0)
 
     async def async_shutdown(self) -> None:
         """Shutdown coordinator."""

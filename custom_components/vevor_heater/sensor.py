@@ -34,11 +34,13 @@ async def async_setup_entry(
 ) -> None:
     """Set up Vevor Heater sensors."""
     coordinator: VevorHeaterCoordinator = hass.data[DOMAIN][entry.entry_id]
-    
+
     async_add_entities(
         [
             VevorCaseTemperatureSensor(coordinator),
             VevorCabTemperatureSensor(coordinator),
+            VevorRawInteriorTemperatureSensor(coordinator),
+            VevorHeaterOffsetSensor(coordinator),
             VevorSupplyVoltageSensor(coordinator),
             VevorRunningStepSensor(coordinator),
             VevorRunningModeSensor(coordinator),
@@ -124,6 +126,58 @@ class VevorCabTemperatureSensor(VevorSensorBase):
     def native_value(self) -> float | None:
         """Return the state."""
         return self.coordinator.data.get("cab_temperature")
+
+
+class VevorRawInteriorTemperatureSensor(VevorSensorBase):
+    """Raw interior temperature sensor (before any offset).
+
+    This shows the actual temperature reading from the heater's internal
+    sensor, before any offset is applied. Useful for debugging and
+    understanding the offset calibration.
+    """
+
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_registry_enabled_default = False  # Disabled by default
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, "cab_temp_raw", "Interior Temperature (Raw)")
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the state."""
+        return self.coordinator.data.get("cab_temperature_raw")
+
+
+class VevorHeaterOffsetSensor(VevorSensorBase):
+    """Heater temperature offset sensor.
+
+    Shows the current temperature offset that has been sent to the heater
+    via BLE command 12. This offset is used by the heater's control board
+    for its temperature-based auto-start/stop logic.
+    """
+
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:thermometer-plus"
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, "heater_offset", "Temperature Offset")
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the state."""
+        return self.coordinator.data.get("heater_offset", 0)
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        # Always available when coordinator is available (offset defaults to 0)
+        return self.coordinator.last_update_success
 
 
 class VevorSupplyVoltageSensor(VevorSensorBase):

@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, RUNNING_MODE_TEMPERATURE, RUNNING_STATE_ON
+from .const import CONF_EXTERNAL_TEMP_SENSOR, DOMAIN, RUNNING_MODE_TEMPERATURE, RUNNING_STATE_ON
 from .coordinator import VevorHeaterCoordinator
 
 
@@ -24,6 +24,7 @@ async def async_setup_entry(
     async_add_entities([
         VevorHeaterPowerSwitch(coordinator),
         VevorAutoStartStopSwitch(coordinator),
+        VevorAutoOffsetSwitch(coordinator),
     ])
 
 
@@ -112,6 +113,64 @@ class VevorAutoStartStopSwitch(CoordinatorEntity[VevorHeaterCoordinator], Switch
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Disable auto start/stop."""
         await self.coordinator.async_set_auto_start_stop(False)
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+
+class VevorAutoOffsetSwitch(CoordinatorEntity[VevorHeaterCoordinator], SwitchEntity):
+    """Vevor Heater Auto Temperature Offset switch.
+
+    When enabled, the integration automatically calculates and sends temperature
+    offset commands to the heater based on an external temperature sensor.
+    This makes the heater's control board use a more accurate temperature
+    for its auto-start/stop logic.
+
+    Requires an external temperature sensor to be configured in the integration
+    options.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Auto Temperature Offset"
+    _attr_icon = "mdi:thermometer-auto"
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the switch."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_auto_offset"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, coordinator.address)},
+            "name": "Vevor Diesel Heater",
+            "manufacturer": "Vevor",
+            "model": "Diesel Heater",
+        }
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available.
+
+        Auto offset only works when an external sensor is configured.
+        """
+        if not self.coordinator.data.get("connected", False):
+            return False
+        # Only show as available if external sensor is configured
+        external_sensor = self.coordinator.config_entry.data.get(CONF_EXTERNAL_TEMP_SENSOR, "")
+        return bool(external_sensor)
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return true if auto offset is enabled."""
+        return self.coordinator.data.get("auto_offset_enabled", False)
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Enable auto offset."""
+        await self.coordinator.async_set_auto_offset_enabled(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Disable auto offset."""
+        await self.coordinator.async_set_auto_offset_enabled(False)
 
     @callback
     def _handle_coordinator_update(self) -> None:

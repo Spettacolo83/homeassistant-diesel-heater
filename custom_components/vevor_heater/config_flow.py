@@ -270,12 +270,24 @@ class VevorHeaterOptionsFlowHandler(config_entries.OptionsFlow):
     ) -> FlowResult:
         """Manage the options."""
         if user_input is not None:
+            # Handle clearing of external sensor (empty string means cleared)
+            # The EntitySelector returns None when cleared, but we store as empty string
+            if CONF_EXTERNAL_TEMP_SENSOR in user_input:
+                if user_input[CONF_EXTERNAL_TEMP_SENSOR] is None:
+                    user_input[CONF_EXTERNAL_TEMP_SENSOR] = ""
+
             # Update config entry with new settings
             self.hass.config_entries.async_update_entry(
                 self.config_entry,
                 data={**self.config_entry.data, **user_input},
             )
             return self.async_create_entry(title="", data={})
+
+        # Get current external sensor value (may be empty string or None)
+        current_external_sensor = self.config_entry.data.get(CONF_EXTERNAL_TEMP_SENSOR)
+        # EntitySelector expects None for empty, not empty string
+        if not current_external_sensor:
+            current_external_sensor = None
 
         # Show current values in options form
         return self.async_show_form(
@@ -323,7 +335,7 @@ class VevorHeaterOptionsFlowHandler(config_entries.OptionsFlow):
                 ),
                 vol.Optional(
                     CONF_EXTERNAL_TEMP_SENSOR,
-                    default=self.config_entry.data.get(CONF_EXTERNAL_TEMP_SENSOR, "")
+                    description={"suggested_value": current_external_sensor}
                 ): selector.EntitySelector(
                     selector.EntitySelectorConfig(
                         domain="sensor",
@@ -341,4 +353,7 @@ class VevorHeaterOptionsFlowHandler(config_entries.OptionsFlow):
                     vol.Range(min=MIN_AUTO_OFFSET_MAX, max=MAX_AUTO_OFFSET_MAX),
                 ),
             }),
+            description_placeholders={
+                "note": "To clear the external temperature sensor, leave the field empty."
+            }
         )

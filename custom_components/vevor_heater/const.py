@@ -109,11 +109,16 @@ DEFAULT_PRESET_COMFORT_TEMP: Final = 21
 # Auto temperature offset from external sensor
 CONF_EXTERNAL_TEMP_SENSOR: Final = "external_temp_sensor"
 CONF_AUTO_OFFSET_MAX: Final = "auto_offset_max"
+CONF_AUTO_OFFSET_ENABLED: Final = "auto_offset_enabled"
 DEFAULT_AUTO_OFFSET_MAX: Final = 5
 MIN_AUTO_OFFSET_MAX: Final = 0
 MAX_AUTO_OFFSET_MAX: Final = 20
 AUTO_OFFSET_THROTTLE_SECONDS: Final = 60
 AUTO_OFFSET_THRESHOLD: Final = 1.0  # Only adjust if difference >= 1°C
+
+# Heater temperature offset (sent to heater via cmd 12)
+MIN_HEATER_OFFSET: Final = -20
+MAX_HEATER_OFFSET: Final = 20
 
 # Update interval
 UPDATE_INTERVAL: Final = 30  # seconds
