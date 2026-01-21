@@ -28,6 +28,21 @@ Control your Vevor/BYD Diesel Heater from Home Assistant via Bluetooth.
 - ⚡ **Real-time Updates** - 30-second polling interval
 - 💾 **Data Persistence** - Fuel consumption data saved across restarts
 
+## Table of Contents
+
+- [Features](#features)
+- [Supported Devices](#supported-devices)
+- [Screenshots](#screenshots)
+- [Installation](#installation)
+- [Troubleshooting](#troubleshooting) ⚠️
+- [Finding Your Heater's MAC Address](#finding-your-heaters-mac-address)
+- [Configuration](#configuration)
+- [Dashboard Cards](#dashboard-cards)
+- [Protocol Details](#protocol-details)
+- [Changelog](#changelog)
+- [Contributing](#contributing)
+- [Support](#support)
+
 ## Supported Devices
 
 This integration has been tested with:
@@ -67,6 +82,73 @@ Full control over your heater including temperature, level, and mode selection:
 1. Download the latest release from [GitHub](https://github.com/Spettacolo83/homeassistant-vevor-heater/releases)
 2. Copy the `custom_components/vevor_heater` folder to your Home Assistant's `custom_components` directory
 3. Restart Home Assistant
+
+## Troubleshooting
+
+### Heater Not Found / Connection Issues
+
+**1. Unpair from your phone first!**
+> The most common issue! If the heater is paired with the Vevor app on your phone, Home Assistant cannot connect.
+- Open your phone's Bluetooth settings
+- Find the heater device and **forget/unpair** it
+- Close the Vevor app completely
+- Try adding the integration again
+
+**2. Bluetooth Proxy Connection Limits**
+> ESPHome Bluetooth proxies have a maximum of **3-7 simultaneous connections** (varies by ESP32 model).
+- Check how many BLE devices are using your proxy
+- Consider adding a dedicated ESP32 proxy for the heater
+- Or use a USB Bluetooth dongle directly on your HA server
+
+**3. Raspberry Pi 4 Internal Bluetooth Issues**
+> The built-in Bluetooth on RPi4 can be unreliable for BLE devices.
+- **Recommended**: Use an external USB Bluetooth 5.0 dongle
+- **Alternative**: Use an ESPHome Bluetooth proxy (ESP32)
+- Disable the internal Bluetooth if using external adapter:
+  ```
+  # Add to /boot/config.txt
+  dtoverlay=disable-bt
+  ```
+
+**4. Other Integrations Interfering**
+> Some integrations scan for Bluetooth devices aggressively.
+- Check if you have other BLE integrations running
+- The Bluetooth Integration's passive scanning can cause conflicts
+- Try disabling other BLE integrations temporarily to test
+
+**5. Distance and Obstacles**
+> Bluetooth LE has limited range, especially through walls.
+- Move your Bluetooth adapter/proxy closer to the heater
+- ESP32 proxies can be placed near the heater with power over USB
+- Metal surfaces and water (including bodies) block BLE signals
+
+### Connection Drops / "Unavailable" Status
+
+**1. Stale Data Tolerance**
+> The integration keeps sensor values for 3 polling cycles before showing unavailable.
+- Brief disconnections won't affect your automations
+- If unavailable persists, check the issues above
+
+**2. Enable Debug Logging**
+> Add this to your `configuration.yaml` to see detailed connection logs:
+```yaml
+logger:
+  default: info
+  logs:
+    custom_components.vevor_heater: debug
+```
+
+### Temperature Not Changing
+
+**1. Check Running Mode**
+> Temperature control only works in **Temperature Mode**.
+- Use `select.vevor_heater_running_mode` to switch to "Temperature Mode"
+- In "Level Mode", the heater uses fixed power levels instead
+
+**2. Protocol Compatibility**
+> Some heaters use Fahrenheit internally (AA66 encrypted).
+- The integration auto-detects and converts temperatures
+- If issues persist, check the logs for "protocol" messages
 
 ## Finding Your Heater's MAC Address
 
@@ -340,39 +422,6 @@ content: |
   {% else %}
   No history data available yet.
   {% endif %}
-```
-
-## Troubleshooting
-
-### Heater Not Found
-
-- Make sure Bluetooth is enabled on your Home Assistant host
-- Ensure the heater is powered on
-- Vevor app must be **disconnected** (only one BLE connection allowed)
-- Try running `find_heater.py` again to verify MAC address
-
-### No Data / Connection Issues
-
-- Check Home Assistant logs: **Settings** → **System** → **Logs**
-- Look for entries with `vevor_heater`
-- The integration uses exponential backoff (5s, 10s, 20s, 40s) for reconnection
-
-### Commands Not Working
-
-- Verify you're using the correct passkey (default: `1234`)
-- Some commands only work in specific modes:
-  - Temperature setting: Temperature Mode
-  - Level setting: Manual or Level Mode
-
-### Debug Logging
-
-Enable debug logging in `configuration.yaml`:
-
-```yaml
-logger:
-  default: info
-  logs:
-    custom_components.vevor_heater: debug
 ```
 
 ## Protocol Details
