@@ -111,11 +111,11 @@ class VevorHeaterClimate(CoordinatorEntity[VevorHeaterCoordinator], ClimateEntit
         """
         # If user explicitly selected "None", respect that choice
         if self._user_cleared_preset:
-            return None
+            return PRESET_NONE
 
         current_temp = self.coordinator.data.get("set_temp")
         if current_temp is None:
-            return self._current_preset
+            return self._current_preset if self._current_preset else PRESET_NONE
 
         # Check if current temp matches a preset
         if current_temp == self._get_away_temp():
@@ -125,7 +125,7 @@ class VevorHeaterClimate(CoordinatorEntity[VevorHeaterCoordinator], ClimateEntit
 
         # If we manually set the preset, keep it even if temp doesn't match exactly
         # This handles cases where heater rounds temperature
-        return self._current_preset
+        return self._current_preset if self._current_preset else PRESET_NONE
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         """Set new preset mode."""
