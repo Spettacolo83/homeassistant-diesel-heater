@@ -7,6 +7,7 @@ from typing import Any
 from homeassistant.components.climate import (
     ClimateEntity,
     ClimateEntityFeature,
+    HVACAction,
     HVACMode,
     PRESET_AWAY,
     PRESET_COMFORT,
@@ -24,6 +25,12 @@ from .const import (
     DEFAULT_PRESET_AWAY_TEMP,
     DEFAULT_PRESET_COMFORT_TEMP,
     DOMAIN,
+    RUNNING_STEP_STANDBY,
+    RUNNING_STEP_SELF_TEST,
+    RUNNING_STEP_IGNITION,
+    RUNNING_STEP_RUNNING,
+    RUNNING_STEP_COOLDOWN,
+    RUNNING_STEP_VENTILATION,
 )
 from .coordinator import VevorHeaterCoordinator
 
@@ -89,6 +96,26 @@ class VevorHeaterClimate(CoordinatorEntity[VevorHeaterCoordinator], ClimateEntit
         if running_state == 1:
             return HVACMode.HEAT
         return HVACMode.OFF
+
+    @property
+    def hvac_action(self) -> HVACAction | None:
+        """Return the current HVAC action (what the heater is actually doing)."""
+        running_step = self.coordinator.data.get("running_step")
+
+        if running_step is None:
+            return None
+
+        if running_step == RUNNING_STEP_STANDBY:
+            return HVACAction.OFF
+        elif running_step in (RUNNING_STEP_SELF_TEST, RUNNING_STEP_IGNITION, RUNNING_STEP_RUNNING):
+            return HVACAction.HEATING
+        elif running_step == RUNNING_STEP_COOLDOWN:
+            return HVACAction.IDLE
+        elif running_step == RUNNING_STEP_VENTILATION:
+            return HVACAction.FAN
+        else:
+            # Unknown step, return idle as safe default
+            return HVACAction.IDLE
 
     def _get_away_temp(self) -> int:
         """Get configured away preset temperature."""
