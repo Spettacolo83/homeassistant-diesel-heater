@@ -1,10 +1,10 @@
 send_command:
   name: Send Command
-  description: Send a raw BLE command to the heater for debugging purposes. Use this to test different command numbers.
+  description: "Send a raw BLE command to the heater for debugging purposes."
   fields:
     command:
       name: Command
-      description: The command number (0-255). Known commands - 1: Status, 2: Mode, 3: Power, 4: Temp/Level, 15: Offset, 18: Auto Start/Stop
+      description: "Command number (0-255). Known: 1=Status, 2=Mode, 3=Power, 4=Temp/Level, 15=Offset, 18=AutoStartStop"
       required: true
       example: 15
       selector:
@@ -14,7 +14,7 @@ send_command:
           mode: box
     argument:
       name: Argument
-      description: The argument value (-128 to 255). For negative offsets, use negative values (e.g., -5 for -5°C offset)
+      description: "Argument value (-128 to 255). Use negative for offset (e.g. -5 for -5C)"
       required: true
       example: 0
       selector:
