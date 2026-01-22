@@ -99,13 +99,24 @@ class VevorHeaterClimate(CoordinatorEntity[VevorHeaterCoordinator], ClimateEntit
 
     @property
     def hvac_action(self) -> HVACAction | None:
-        """Return the current HVAC action (what the heater is actually doing)."""
+        """Return the current HVAC action (what the heater is actually doing).
+
+        Uses both running_state and running_step to determine the action:
+        - running_state OFF + Standby = OFF (heater is completely off)
+        - running_state ON + Standby = IDLE (heater is on but waiting, e.g. Auto Start/Stop)
+        """
         running_step = self.coordinator.data.get("running_step")
+        running_state = self.coordinator.data.get("running_state", 0)
 
         if running_step is None:
             return None
 
         if running_step == RUNNING_STEP_STANDBY:
+            # Check if heater is actually ON or OFF
+            # When ON but Standby, it's idle (e.g., Auto Start/Stop waiting)
+            # When OFF and Standby, it's truly off
+            if running_state == 1:  # RUNNING_STATE_ON
+                return HVACAction.IDLE
             return HVACAction.OFF
         elif running_step in (RUNNING_STEP_SELF_TEST, RUNNING_STEP_IGNITION, RUNNING_STEP_RUNNING):
             return HVACAction.HEATING

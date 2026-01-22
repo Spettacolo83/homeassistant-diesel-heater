@@ -5,16 +5,29 @@ import asyncio
 import logging
 from typing import Any
 
+import voluptuous as vol
+
 from homeassistant.components import bluetooth
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_ADDRESS, Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers import config_validation as cv
 
 from .const import DOMAIN
 from .coordinator import VevorHeaterCoordinator
 
 _LOGGER = logging.getLogger(__name__)
+
+# Service constants
+SERVICE_SEND_COMMAND = "send_command"
+ATTR_COMMAND = "command"
+ATTR_ARGUMENT = "argument"
+
+SERVICE_SEND_COMMAND_SCHEMA = vol.Schema({
+    vol.Required(ATTR_COMMAND): vol.All(vol.Coerce(int), vol.Range(min=0, max=255)),
+    vol.Required(ATTR_ARGUMENT): vol.All(vol.Coerce(int), vol.Range(min=-128, max=255)),
+})
 
 PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
@@ -83,6 +96,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Forward entry setup to platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Register debug service (only once)
+    if not hass.services.has_service(DOMAIN, SERVICE_SEND_COMMAND):
+        async def async_send_command(call: ServiceCall) -> None:
+            """Handle send_command service call for debugging."""
+            command = call.data[ATTR_COMMAND]
+            argument = call.data[ATTR_ARGUMENT]
+
+            _LOGGER.info(
+                "Service %s.%s called: command=%d, argument=%d",
+                DOMAIN, SERVICE_SEND_COMMAND, command, argument
+            )
+
+            # Send to all configured heaters
+            for entry_id, coord in hass.data[DOMAIN].items():
+                if isinstance(coord, VevorHeaterCoordinator):
+                    await coord.async_send_raw_command(command, argument)
+
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_SEND_COMMAND,
+            async_send_command,
+            schema=SERVICE_SEND_COMMAND_SCHEMA,
+        )
+        _LOGGER.debug("Registered debug service: %s.%s", DOMAIN, SERVICE_SEND_COMMAND)
 
     return True
 

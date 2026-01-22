@@ -1072,6 +1072,16 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self.data["case_temperature"] = _unsign_to_sign(256 * data[13] + data[14])
         self.data["cab_temperature"] = _unsign_to_sign(256 * data[32] + data[33]) / 10
 
+        # Byte 34: Temperature offset reported by heater
+        if len(data) > 34:
+            heater_offset_raw = data[34]
+            if heater_offset_raw > 127:
+                heater_offset = heater_offset_raw - 256
+            else:
+                heater_offset = heater_offset_raw
+            self.data["heater_offset"] = heater_offset
+            _LOGGER.debug("🌡️ Heater offset byte 34: %d", heater_offset)
+
         # Apply temperature calibration
         self._apply_temperature_calibration()
 
@@ -1125,6 +1135,18 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self.data["case_temperature"] = _unsign_to_sign(256 * data[13] + data[14])
         self.data["cab_temperature"] = _unsign_to_sign(256 * data[32] + data[33]) / 10
 
+        # Byte 34: Temperature offset reported by heater
+        # This is a signed value (-10 to +10 typically)
+        if len(data) > 34:
+            heater_offset_raw = data[34]
+            # Convert unsigned byte to signed (-128 to 127)
+            if heater_offset_raw > 127:
+                heater_offset = heater_offset_raw - 256
+            else:
+                heater_offset = heater_offset_raw
+            self.data["heater_offset"] = heater_offset
+            _LOGGER.debug("🌡️ Heater offset byte 34: %d (raw=%d)", heater_offset, heater_offset_raw)
+
         # Apply temperature calibration
         self._apply_temperature_calibration()
 
@@ -1167,8 +1189,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 raw_temp, manual_offset, calibrated_temp
             )
 
-        # Update heater offset value in data for sensor display
-        self.data["heater_offset"] = self._current_heater_offset
+        # Note: heater_offset is now read from byte 34 of the response,
+        # so we don't overwrite it here. It shows what the heater reports.
 
     async def _cleanup_connection(self) -> None:
         """Clean up BLE connection properly."""
@@ -1413,31 +1435,33 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             _LOGGER.warning("❌ Time sync failed")
 
     async def async_set_heater_offset(self, offset: int) -> None:
-        """Set temperature offset on the heater (cmd 12).
+        """Set temperature offset on the heater (cmd 15).
 
         This sends the offset value directly to the heater's control board.
         The heater will then use this offset for its own temperature readings
         and auto-start/stop logic.
 
+        Note: Command number verified from AirHeaterBLE app decompilation.
+        Cmd 15 (0x0F) is used for temperature offset.
+
         Args:
-            offset: Temperature offset in °C (-20 to +20)
+            offset: Temperature offset in °C (-10 to +10 typically, clamped to -20 to +20)
         """
         # Clamp to valid range
         offset = max(MIN_HEATER_OFFSET, min(MAX_HEATER_OFFSET, offset))
 
         _LOGGER.info("🌡️ Setting heater temperature offset to %d°C", offset)
 
-        # Command 12 for temperature offset
+        # Command 15 for temperature offset (from AirHeaterBLE app)
         # The argument needs to handle negative values
-        # Convert to unsigned: -20 to +20 → 0 to 40 or use two's complement
-        # Based on warehog's code, offset is sent as signed byte
+        # Convert to unsigned byte using two's complement
         if offset < 0:
             # Convert negative to unsigned byte (two's complement)
             arg = 256 + offset
         else:
             arg = offset
 
-        success = await self._send_command(12, arg, 85)
+        success = await self._send_command(15, arg, 85)
 
         if success:
             self._current_heater_offset = offset
@@ -1468,6 +1492,35 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             if self._current_heater_offset != 0:
                 _LOGGER.info("Resetting heater offset to 0")
                 await self.async_set_heater_offset(0)
+
+    async def async_send_raw_command(self, command: int, argument: int) -> bool:
+        """Send a raw command to the heater for debugging purposes.
+
+        This allows testing different command numbers to discover the correct
+        command for various heater functions.
+
+        Args:
+            command: Command number (0-255)
+            argument: Argument value (0-255, will be converted if negative)
+
+        Returns:
+            True if command was sent successfully
+        """
+        _LOGGER.info("🔧 DEBUG: Sending raw command: cmd=%d, arg=%d", command, argument)
+
+        # Handle negative arguments (two's complement)
+        if argument < 0:
+            argument = 256 + argument
+
+        success = await self._send_command(command, argument, 85)
+
+        if success:
+            _LOGGER.info("✅ DEBUG: Raw command sent successfully")
+            await self.async_request_refresh()
+        else:
+            _LOGGER.warning("❌ DEBUG: Failed to send raw command")
+
+        return success
 
     async def async_shutdown(self) -> None:
         """Shutdown coordinator."""
