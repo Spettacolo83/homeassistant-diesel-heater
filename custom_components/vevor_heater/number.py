@@ -116,8 +116,11 @@ class VevorHeaterOffsetNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberE
     """Vevor Heater temperature offset number entity.
 
     This allows manual control of the temperature offset sent to the heater
-    via BLE command 12. The heater uses this offset to adjust its internal
+    via BLE command 20. The heater uses this offset to adjust its internal
     temperature sensor reading for auto-start/stop logic.
+
+    LIMITATION: Only positive offsets (0 to +10) work via BLE.
+    Negative offsets must be set using the phone app.
     """
 
     _attr_has_entity_name = True
@@ -127,6 +130,7 @@ class VevorHeaterOffsetNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberE
     _attr_native_min_value = MIN_HEATER_OFFSET
     _attr_native_max_value = MAX_HEATER_OFFSET
     _attr_native_step = 1
+    _attr_entity_category = None  # Show in main controls, not configuration
 
     def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
         """Initialize the number entity."""

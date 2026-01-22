@@ -371,9 +371,20 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             )
             return
 
-        # Calculate new offset (clamped to max)
+        # Calculate new offset (clamped to 0-max range)
+        # NOTE: Only positive offsets (0-10) work via BLE; negative not supported
         max_offset = self.config_entry.data.get(CONF_AUTO_OFFSET_MAX, DEFAULT_AUTO_OFFSET_MAX)
-        new_offset = int(max(-max_offset, min(max_offset, difference)))
+        max_offset = min(max_offset, MAX_HEATER_OFFSET)  # Cap at 10
+        new_offset = int(max(0, min(max_offset, difference)))
+
+        # If difference is negative, we can't apply it via BLE
+        if difference < 0:
+            _LOGGER.debug(
+                "Auto offset: would need negative offset (%.1f°C) but only positive "
+                "offsets work via BLE. Setting to 0.",
+                difference
+            )
+            new_offset = 0
 
         # Only send command if offset changed
         if new_offset != self._current_heater_offset:
@@ -382,7 +393,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
             _LOGGER.info(
                 "Auto offset: external=%.1f°C (rounded=%d), heater_raw=%.1f°C, "
-                "difference=%.1f°C, sending offset: %d → %d°C",
+                "difference=%.1f°C, sending offset: %d → +%d°C",
                 external_temp, external_temp_rounded, raw_heater_temp,
                 difference, old_offset, new_offset
             )
@@ -1624,33 +1635,27 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             _LOGGER.warning("❌ Time sync failed")
 
     async def async_set_heater_offset(self, offset: int) -> None:
-        """Set temperature offset on the heater (cmd 15).
+        """Set temperature offset on the heater (cmd 20).
 
         This sends the offset value directly to the heater's control board.
         The heater will then use this offset for its own temperature readings
         and auto-start/stop logic.
 
-        Note: Command number verified from AirHeaterBLE app decompilation.
-        Cmd 15 (0x0F) is used for temperature offset.
+        IMPORTANT: Only positive offsets (0-10) are confirmed working via BLE.
+        Negative offsets must be set via the phone app - the BLE encoding for
+        negative values has not been discovered yet despite extensive testing.
 
         Args:
-            offset: Temperature offset in °C (-10 to +10 typically, clamped to -20 to +20)
+            offset: Temperature offset in °C (0 to +10, clamped)
         """
-        # Clamp to valid range
+        # Clamp to valid range (only positive values work via BLE)
         offset = max(MIN_HEATER_OFFSET, min(MAX_HEATER_OFFSET, offset))
 
-        _LOGGER.info("🌡️ Setting heater temperature offset to %d°C", offset)
+        _LOGGER.info("🌡️ Setting heater temperature offset to +%d°C (cmd 20)", offset)
 
-        # Command 15 for temperature offset (from AirHeaterBLE app)
-        # The argument needs to handle negative values
-        # Convert to unsigned byte using two's complement
-        if offset < 0:
-            # Convert negative to unsigned byte (two's complement)
-            arg = 256 + offset
-        else:
-            arg = offset
-
-        success = await self._send_command(15, arg, 85)
+        # Command 20 for temperature offset (confirmed working via testing)
+        # Only positive values 0-10 work; negative offset encoding unknown
+        success = await self._send_command(20, offset, 0)
 
         if success:
             self._current_heater_offset = offset
