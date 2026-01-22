@@ -871,15 +871,28 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     self._is_abba_device = True
                     self._protocol_mode = 5  # ABBA protocol
 
+                    # Log all characteristics in this service for debugging
+                    char_list = [f"{c.uuid} (props: {c.properties})" for c in service.characteristics]
+                    _LOGGER.info("📋 ABBA service characteristics: %s", char_list)
+
                     # Find notify and write characteristics
                     for char in service.characteristics:
                         if char.uuid.lower() == ABBA_NOTIFY_UUID.lower():
                             self._characteristic = char
                             self._active_char_uuid = ABBA_NOTIFY_UUID
-                            _LOGGER.info("Found ABBA notify characteristic: %s", char.uuid)
+                            _LOGGER.info("✅ Found ABBA notify characteristic (fff1): %s", char.uuid)
                         elif char.uuid.lower() == ABBA_WRITE_UUID.lower():
                             self._abba_write_char = char
-                            _LOGGER.info("Found ABBA write characteristic: %s", char.uuid)
+                            _LOGGER.info("✅ Found ABBA write characteristic (fff2): %s", char.uuid)
+
+                    # Warning if write characteristic not found
+                    if not self._abba_write_char:
+                        _LOGGER.warning(
+                            "⚠️ ABBA device but fff2 write characteristic not found! "
+                            "Will try writing to fff1 as fallback."
+                        )
+                        # Fall back to using fff1 for writing if fff2 not available
+                        self._abba_write_char = self._characteristic
                     break
 
             # If not ABBA, try Vevor UUIDs
@@ -1316,20 +1329,30 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     async def _send_wake_up_ping(self) -> None:
         """Send a wake-up ping to the device to ensure it's responsive."""
         try:
-            # Send a simple status request to wake the device
-            # Don't wait for response, just send it
-            packet = bytearray([0xAA, 85, 0, 0, 0, 0, 0, 0])
-            packet[2] = self._passkey // 100
-            packet[3] = self._passkey % 100
-            packet[4] = 1  # Status command
-            packet[5] = 0
-            packet[6] = 0
-            packet[7] = (packet[2] + packet[3] + packet[4] + packet[5] + packet[6]) % 256
+            # For ABBA devices, use ABBA protocol and write to fff2
+            if self._is_abba_device:
+                if self._client and self._abba_write_char:
+                    # Send ABBA status request: baab04cc000000 + checksum
+                    packet = self._build_abba_command("baab04cc000000")
+                    await self._client.write_gatt_char(self._abba_write_char, packet, response=False)
+                    await asyncio.sleep(0.5)
+                    _LOGGER.debug("ABBA wake-up ping sent to fff2: %s", packet.hex())
+                else:
+                    _LOGGER.warning("ABBA device but no write characteristic found")
+            else:
+                # Standard Vevor protocol wake-up
+                packet = bytearray([0xAA, 85, 0, 0, 0, 0, 0, 0])
+                packet[2] = self._passkey // 100
+                packet[3] = self._passkey % 100
+                packet[4] = 1  # Status command
+                packet[5] = 0
+                packet[6] = 0
+                packet[7] = (packet[2] + packet[3] + packet[4] + packet[5] + packet[6]) % 256
 
-            if self._client and self._characteristic:
-                await self._client.write_gatt_char(self._characteristic, packet, response=False)
-                await asyncio.sleep(0.5)  # Give device time to wake up
-                _LOGGER.debug("Wake-up ping sent")
+                if self._client and self._characteristic:
+                    await self._client.write_gatt_char(self._characteristic, packet, response=False)
+                    await asyncio.sleep(0.5)
+                    _LOGGER.debug("Wake-up ping sent")
         except Exception as err:
             _LOGGER.debug("Wake-up ping failed (non-critical): %s", err)
 
