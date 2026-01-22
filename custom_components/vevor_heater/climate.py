@@ -120,9 +120,8 @@ class VevorHeaterClimate(CoordinatorEntity[VevorHeaterCoordinator], ClimateEntit
             return HVACAction.OFF
         elif running_step in (RUNNING_STEP_SELF_TEST, RUNNING_STEP_IGNITION, RUNNING_STEP_RUNNING):
             return HVACAction.HEATING
-        elif running_step == RUNNING_STEP_COOLDOWN:
-            return HVACAction.IDLE
-        elif running_step == RUNNING_STEP_VENTILATION:
+        elif running_step in (RUNNING_STEP_COOLDOWN, RUNNING_STEP_VENTILATION):
+            # Cooldown and Ventilation both run fans at full speed
             return HVACAction.FAN
         else:
             # Unknown step, return idle as safe default
