@@ -1270,13 +1270,18 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         The heater offset (sent via cmd 12) is handled separately.
         This only applies the manual HA-side display offset from config.
         """
-        # Get raw temperature (already set by protocol parser)
-        raw_temp = self.data.get("cab_temperature")
-        if raw_temp is None:
+        # Get reported temperature (already set by protocol parser)
+        # This is AFTER the heater's internal offset has been applied
+        reported_temp = self.data.get("cab_temperature")
+        if reported_temp is None:
             return
 
-        # Store raw temperature before any offset (for auto-offset calculation)
-        self.data["cab_temperature_raw"] = raw_temp
+        # Calculate the TRUE raw sensor temperature (before heater's internal offset)
+        # Formula: raw_sensor_temp = reported_temp - heater_offset
+        # Example: reported=18°C, heater_offset=-2°C → raw_sensor=18-(-2)=20°C
+        heater_offset = self.data.get("heater_offset", 0)
+        raw_sensor_temp = reported_temp - heater_offset
+        self.data["cab_temperature_raw"] = raw_sensor_temp
 
         # Get configured manual offset (default to 0.0 if not set)
         # This is an HA-side display offset, separate from the heater offset
@@ -1284,7 +1289,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         # Apply manual offset for display purposes
         if manual_offset != 0.0:
-            calibrated_temp = raw_temp + manual_offset
+            calibrated_temp = reported_temp + manual_offset
 
             # Clamp to sensor range
             calibrated_temp = max(SENSOR_TEMP_MIN, min(SENSOR_TEMP_MAX, calibrated_temp))
@@ -1296,8 +1301,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self.data["cab_temperature"] = calibrated_temp
 
             _LOGGER.debug(
-                "Applied HA display offset: raw=%s°C, offset=%s°C, display=%s°C",
-                raw_temp, manual_offset, calibrated_temp
+                "Applied HA display offset: reported=%s°C, ha_offset=%s°C, display=%s°C, raw_sensor=%s°C (heater_offset=%s°C)",
+                reported_temp, manual_offset, calibrated_temp, raw_sensor_temp, heater_offset
             )
 
         # Note: heater_offset is now read from byte 34 of the response,
