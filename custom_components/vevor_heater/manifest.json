@@ -12,7 +12,11 @@
     {
       "connectable": true,
       "manufacturer_id": 65535
+    },
+    {
+      "connectable": true,
+      "service_uuid": "0000fff0-0000-1000-8000-00805f9b34fb"
     }
   ],
-  "version": "1.0.26-beta.4"
+  "version": "1.0.26-beta.5"
 }
