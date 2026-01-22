@@ -29,6 +29,10 @@ from homeassistant.util import dt as dt_util
 from homeassistant.helpers.event import async_track_state_change_event
 
 from .const import (
+    ABBA_CMD_STATUS,
+    ABBA_NOTIFY_UUID,
+    ABBA_SERVICE_UUID,
+    ABBA_WRITE_UUID,
     AUTO_OFFSET_THRESHOLD,
     AUTO_OFFSET_THROTTLE_SECONDS,
     CHARACTERISTIC_UUID,
@@ -48,6 +52,7 @@ from .const import (
     MAX_HISTORY_DAYS,
     MIN_HEATER_OFFSET,
     NOTIFY_UUID,
+    PROTOCOL_HEADER_ABBA,
     RUNNING_MODE_LEVEL,
     RUNNING_MODE_MANUAL,
     RUNNING_MODE_TEMPERATURE,
@@ -128,7 +133,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._notification_data: bytearray | None = None
         # Get passkey from config, default to 1234 (factory default for most heaters)
         self._passkey = config_entry.data.get(CONF_PIN, DEFAULT_PIN)
-        self._protocol_mode = 0  # Will be detected from response
+        self._protocol_mode = 0  # Will be detected from response (1-4 Vevor, 5 ABBA)
+        self._is_abba_device = False  # True if using ABBA/HeaterCC protocol
+        self._abba_write_char = None  # ABBA devices use separate write characteristic
         self._connection_attempts = 0
         self._last_connection_attempt = 0.0
         self._consecutive_failures = 0  # Track consecutive update failures
@@ -851,32 +858,54 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 await self._cleanup_connection()
                 raise BleakError("No services available")
 
-            # Get characteristic - try both UUID variants (FFE0/FFE1 and FFF0/FFF1)
+            # Get characteristic - try Vevor UUIDs first, then ABBA
             self._characteristic = None
             self._active_char_uuid = None
+            self._is_abba_device = False
+            self._abba_write_char = None
 
-            # Define UUID pairs to try: (service_uuid, characteristic_uuid)
-            uuid_pairs = [
-                (SERVICE_UUID, CHARACTERISTIC_UUID),
-                (SERVICE_UUID_ALT, CHARACTERISTIC_UUID_ALT),
-            ]
+            # First, check for ABBA/HeaterCC device (service fff0)
+            for service in self._client.services:
+                if service.uuid.lower() == ABBA_SERVICE_UUID.lower():
+                    _LOGGER.info("🔍 Detected ABBA/HeaterCC heater (service fff0)")
+                    self._is_abba_device = True
+                    self._protocol_mode = 5  # ABBA protocol
 
-            for service_uuid, char_uuid in uuid_pairs:
-                for service in self._client.services:
-                    if service.uuid.lower() == service_uuid.lower():
-                        for char in service.characteristics:
-                            if char.uuid.lower() == char_uuid.lower():
-                                self._characteristic = char
-                                self._active_char_uuid = char_uuid
-                                _LOGGER.info(
-                                    "Found heater characteristic: %s (service: %s)",
-                                    char_uuid, service_uuid
-                                )
-                                break
-                        if self._characteristic:
-                            break
-                if self._characteristic:
+                    # Find notify and write characteristics
+                    for char in service.characteristics:
+                        if char.uuid.lower() == ABBA_NOTIFY_UUID.lower():
+                            self._characteristic = char
+                            self._active_char_uuid = ABBA_NOTIFY_UUID
+                            _LOGGER.info("Found ABBA notify characteristic: %s", char.uuid)
+                        elif char.uuid.lower() == ABBA_WRITE_UUID.lower():
+                            self._abba_write_char = char
+                            _LOGGER.info("Found ABBA write characteristic: %s", char.uuid)
                     break
+
+            # If not ABBA, try Vevor UUIDs
+            if not self._is_abba_device:
+                # Define UUID pairs to try: (service_uuid, characteristic_uuid)
+                uuid_pairs = [
+                    (SERVICE_UUID, CHARACTERISTIC_UUID),
+                    (SERVICE_UUID_ALT, CHARACTERISTIC_UUID_ALT),
+                ]
+
+                for service_uuid, char_uuid in uuid_pairs:
+                    for service in self._client.services:
+                        if service.uuid.lower() == service_uuid.lower():
+                            for char in service.characteristics:
+                                if char.uuid.lower() == char_uuid.lower():
+                                    self._characteristic = char
+                                    self._active_char_uuid = char_uuid
+                                    _LOGGER.info(
+                                        "Found Vevor heater characteristic: %s (service: %s)",
+                                        char_uuid, service_uuid
+                                    )
+                                    break
+                            if self._characteristic:
+                                break
+                    if self._characteristic:
+                        break
 
             if not self._characteristic:
                 # Log available services for debugging
@@ -926,13 +955,23 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
     def _parse_response(self, data: bytearray) -> None:
         """Parse response from heater."""
-        if len(data) < 17:
+        if len(data) < 8:
             _LOGGER.debug("Response too short: %d bytes", len(data))
             return
 
         # Check protocol type
         header = (_u8_to_number(data[0]) << 8) | _u8_to_number(data[1])
         old_protocol = self._protocol_mode
+
+        # Check for ABBA protocol (HeaterCC heaters)
+        if header == PROTOCOL_HEADER_ABBA or self._is_abba_device:
+            _LOGGER.info("🔍 Detected protocol: ABBA/HeaterCC (mode=5, %d bytes)", len(data))
+            self._parse_protocol_abba(data)
+            return
+
+        if len(data) < 17:
+            _LOGGER.debug("Response too short for Vevor protocol: %d bytes", len(data))
+            return
 
         if header == 0xAA55 and len(data) in (18, 20):
             # Protocol 1: 0xAA 0x55, 18-20 bytes, not encrypted
@@ -1153,6 +1192,65 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         _LOGGER.debug("Parsed AA66 encrypted: %s", self.data)
         self._notification_data = data
 
+    def _parse_protocol_abba(self, data: bytearray) -> None:
+        """Parse ABBA protocol response (HeaterCC heaters).
+
+        ABBA protocol is used by HeaterCC app heaters.
+        Header is 0xABBA (notifications) or 0xBAAB (commands).
+
+        Note: This is a basic implementation based on reverse engineering.
+        The exact byte positions may need adjustment based on testing.
+        """
+        self._protocol_mode = 5
+
+        _LOGGER.info("🔍 Parsing ABBA protocol response (%d bytes): %s", len(data), data.hex())
+
+        # ABBA responses have header 0xABBA
+        header = (_u8_to_number(data[0]) << 8) | _u8_to_number(data[1])
+        if header != PROTOCOL_HEADER_ABBA:
+            _LOGGER.debug("ABBA: Unexpected header 0x%04X, expected 0xABBA", header)
+            # Still try to parse as we detected ABBA device by service UUID
+
+        # Basic parsing - structure needs verification from testing
+        # For now, extract what we can and log for debugging
+        if len(data) >= 20:
+            # Attempt to extract common data (positions may differ from Vevor)
+            # These positions are guesses and need verification
+            try:
+                # Try to extract temperature and state info
+                # The exact format needs to be determined through testing
+                self.data["connected"] = True
+
+                # Log all bytes for debugging
+                _LOGGER.debug("ABBA bytes: %s", [hex(b) for b in data])
+
+                # Attempt some basic parsing based on common patterns
+                # Byte 2 might be command type
+                cmd_type = data[2] if len(data) > 2 else 0
+                _LOGGER.debug("ABBA cmd/type byte: 0x%02X", cmd_type)
+
+                # Try to find temperature values (usually 1 byte each)
+                # This is speculative and needs testing
+                if len(data) >= 10:
+                    # Look for reasonable temperature values (8-40°C range)
+                    for i, b in enumerate(data[3:min(len(data), 15)]):
+                        if 8 <= b <= 45:
+                            _LOGGER.debug("ABBA potential temp at byte %d: %d", i + 3, b)
+
+                # For now, set basic state to show device is connected
+                # Full parsing will be implemented after testing with real device
+                if self.data.get("running_state") is None:
+                    self.data["running_state"] = 0
+                if self.data.get("running_step") is None:
+                    self.data["running_step"] = 0
+                if self.data.get("error_code") is None:
+                    self.data["error_code"] = 0
+
+            except Exception as err:
+                _LOGGER.warning("ABBA parse error: %s", err)
+
+        self._notification_data = data
+
     def _apply_temperature_calibration(self) -> None:
         """Store raw temperature and apply manual HA-side offset calibration.
 
@@ -1235,26 +1333,39 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         except Exception as err:
             _LOGGER.debug("Wake-up ping failed (non-critical): %s", err)
 
+    def _build_abba_command(self, cmd_hex: str) -> bytearray:
+        """Build ABBA protocol command packet.
+
+        ABBA commands have format: baab + length + cmd + data + checksum
+        Checksum is (sum of all bytes) & 0xFF
+        """
+        # Convert hex string to bytes
+        cmd_bytes = bytes.fromhex(cmd_hex.replace(" ", ""))
+
+        # Calculate checksum (sum of all bytes & 0xFF)
+        checksum = sum(cmd_bytes) & 0xFF
+        packet = bytearray(cmd_bytes) + bytearray([checksum])
+
+        _LOGGER.debug("ABBA command packet: %s", packet.hex())
+        return packet
+
     def _build_command_packet(self, command: int, argument: int) -> bytearray:
         """Build command packet for the heater.
 
-        IMPORTANT DISCOVERY: The heater ALWAYS accepts AA55 commands,
-        regardless of what protocol it uses for responses!
-
-        - Heater accepts: AA55 unencrypted 8-byte commands
-        - Heater responds: AA66 encrypted 48-byte data (for newer models)
-
-        The response protocol (AA55 vs AA66, encrypted vs not) only affects
-        how we PARSE responses, not how we SEND commands.
+        For Vevor heaters: Always use AA55 protocol.
+        For ABBA/HeaterCC heaters: Use ABBA protocol with BAAB header.
         """
         _LOGGER.info(
-            "🔧 Building command packet: protocol_mode=%d, cmd=%d, arg=%d",
-            self._protocol_mode, command, argument
+            "🔧 Building command packet: protocol_mode=%d, cmd=%d, arg=%d, is_abba=%s",
+            self._protocol_mode, command, argument, self._is_abba_device
         )
 
-        # ALWAYS use AA55 header for commands - the heater only accepts AA55!
-        # This was discovered through testing: AA66 commands are ignored,
-        # but AA55 commands work even when heater responds with AA66 data.
+        # ABBA/HeaterCC protocol
+        if self._is_abba_device:
+            return self._build_abba_command_for_vevor_cmd(command, argument)
+
+        # Vevor protocol - ALWAYS use AA55 header for commands
+        # The heater only accepts AA55, regardless of response protocol
         header_byte = 0x55
         _LOGGER.debug("Using AA55 protocol header (heater only accepts AA55 commands)")
 
@@ -1270,6 +1381,38 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         _LOGGER.debug("Command packet (8 bytes, AA55): %s", packet.hex())
 
         return packet
+
+    def _build_abba_command_for_vevor_cmd(self, command: int, argument: int) -> bytearray:
+        """Translate Vevor-style command to ABBA protocol.
+
+        Maps Vevor command codes to ABBA hex commands.
+        """
+        # Map Vevor commands to ABBA commands
+        if command == 1:
+            # Status request
+            return self._build_abba_command("baab04cc000000")
+        elif command == 3:
+            # Power on/off
+            if argument == 1:
+                return self._build_abba_command("baab04bba10000")  # Heat on
+            else:
+                return self._build_abba_command("baab04bba00000")  # Heat off (assumed)
+        elif command == 4:
+            # Set temperature/level - depends on mode
+            # For temperature mode, use set temp command
+            temp_hex = format(argument, '02x')
+            # baab04db + temp + 00 + unit (00=Celsius)
+            return self._build_abba_command(f"baab04db{temp_hex}0000")
+        elif command == 2:
+            # Running mode
+            if argument == 2:  # Temperature mode
+                return self._build_abba_command("baab04bbac0000")  # Const temp mode
+            else:
+                return self._build_abba_command("baab04bbad0000")  # Other mode
+        else:
+            # Unknown command - send status request as fallback
+            _LOGGER.warning("ABBA: Unknown command %d, sending status request", command)
+            return self._build_abba_command("baab04cc000000")
 
     async def _send_command(self, command: int, argument: int, n: int = 85, timeout: float = 5.0) -> bool:
         """Send command to heater with configurable timeout.
@@ -1304,10 +1447,28 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         try:
             self._notification_data = None
+
+            # For ABBA devices, write to fff2 characteristic
+            # For Vevor devices, write to the main characteristic (ffe1 or fff1)
+            if self._is_abba_device and self._abba_write_char:
+                write_char = self._abba_write_char
+                _LOGGER.debug("Using ABBA write characteristic (fff2)")
+            else:
+                write_char = self._characteristic
+                _LOGGER.debug("Using standard write characteristic")
+
             # Use response=False to avoid authorization issues with BLE proxies
             # (e.g., ESPHome BLE proxy). The heater sends a notification as response.
-            await self._client.write_gatt_char(self._characteristic, packet, response=False)
+            await self._client.write_gatt_char(write_char, packet, response=False)
             _LOGGER.debug("Command written to BLE characteristic")
+
+            # For ABBA devices, send a follow-up status request after commands
+            # (as per HeaterCC app behavior)
+            if self._is_abba_device and command != 1:  # Don't loop on status request
+                await asyncio.sleep(0.5)
+                status_packet = self._build_abba_command("baab04cc000000")
+                await self._client.write_gatt_char(write_char, status_packet, response=False)
+                _LOGGER.debug("ABBA: Sent follow-up status request")
 
             # Wait for notification with configurable timeout
             # Increased from 2s to 5s default to handle slow BLE responses

@@ -15,11 +15,33 @@ CHARACTERISTIC_UUID_ALT: Final = "0000fff1-0000-1000-8000-00805f9b34fb"
 NOTIFY_UUID_ALT: Final = "0000fff2-0000-1000-8000-00805f9b34fb"
 
 # Protocol constants
-PROTOCOL_HEADER_AA55: Final = 0xAA55  # Protocol type 1
-PROTOCOL_HEADER_AA66: Final = 0xAA66  # Protocol type 2
+PROTOCOL_HEADER_AA55: Final = 0xAA55  # Protocol type 1 (Vevor)
+PROTOCOL_HEADER_AA66: Final = 0xAA66  # Protocol type 2 (Vevor encrypted)
+PROTOCOL_HEADER_ABBA: Final = 0xABBA  # Protocol type 5 (HeaterCC/ABBA)
+PROTOCOL_HEADER_BAAB: Final = 0xBAAB  # ABBA command header (reversed)
 
 # XOR encryption key for encrypted protocols
 ENCRYPTION_KEY: Final = [112, 97, 115, 115, 119, 111, 114, 100]  # "password"
+
+# ABBA Protocol (HeaterCC heaters)
+# These heaters use service fff0 with characteristics fff1 (notify) and fff2 (write)
+ABBA_SERVICE_UUID: Final = "0000fff0-0000-1000-8000-00805f9b34fb"
+ABBA_NOTIFY_UUID: Final = "0000fff1-0000-1000-8000-00805f9b34fb"
+ABBA_WRITE_UUID: Final = "0000fff2-0000-1000-8000-00805f9b34fb"
+
+# ABBA Protocol commands (without checksum - added at send time)
+ABBA_CMD_HEAT_ON: Final = bytes.fromhex("baab04bba10000")
+ABBA_CMD_HEAT_OFF: Final = bytes.fromhex("baab04bba00000")  # Assumed - needs testing
+ABBA_CMD_TEMP_UP: Final = bytes.fromhex("baab04bba20000")
+ABBA_CMD_TEMP_DOWN: Final = bytes.fromhex("baab04bba30000")
+ABBA_CMD_FAN_ONLY: Final = bytes.fromhex("baab04bba40000")
+ABBA_CMD_PLATEAU: Final = bytes.fromhex("baab04bba50000")
+ABBA_CMD_AUTO: Final = bytes.fromhex("baab04bba60000")
+ABBA_CMD_CONST_TEMP: Final = bytes.fromhex("baab04bbac0000")
+ABBA_CMD_OTHER_MODE: Final = bytes.fromhex("baab04bbad0000")
+ABBA_CMD_GET_TIME: Final = bytes.fromhex("baab04ec000000")
+ABBA_CMD_GET_AUTO_CONFIG: Final = bytes.fromhex("baab04dc000000")
+ABBA_CMD_STATUS: Final = bytes.fromhex("baab04cc00000035")  # Status/ACK request
 
 # Running states
 RUNNING_STATE_OFF: Final = 0
