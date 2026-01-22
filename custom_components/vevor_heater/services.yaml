@@ -4,21 +4,32 @@ send_command:
   fields:
     command:
       name: Command
-      description: "Command number (0-255). Known: 1=Status, 2=Mode, 3=Power, 4=Temp/Level, 15=Offset, 18=AutoStartStop"
+      description: "Command number (0-255). Known: 1=Status, 2=Mode, 3=Power, 4=Temp/Level, 20=Offset, 18=AutoStartStop"
       required: true
-      example: 15
+      example: 20
       selector:
         number:
           min: 0
           max: 255
           mode: box
     argument:
-      name: Argument
-      description: "Argument value (-128 to 255). Use negative for offset (e.g. -5 for -5C)"
+      name: Argument (data1)
+      description: "First argument value (0-255). For offset cmd 20: the offset value (0-9 confirmed working)"
       required: true
       example: 0
       selector:
         number:
-          min: -128
+          min: 0
+          max: 255
+          mode: box
+    argument2:
+      name: Argument 2 (data2)
+      description: "Second argument value (0-255). Default 85 (0x55). For testing offset sign: try 0 or 1"
+      required: false
+      default: 85
+      example: 0
+      selector:
+        number:
+          min: 0
           max: 255
           mode: box

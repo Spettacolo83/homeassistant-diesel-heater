@@ -1682,7 +1682,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 _LOGGER.info("Resetting heater offset to 0")
                 await self.async_set_heater_offset(0)
 
-    async def async_send_raw_command(self, command: int, argument: int) -> bool:
+    async def async_send_raw_command(self, command: int, argument: int, argument2: int = 85) -> bool:
         """Send a raw command to the heater for debugging purposes.
 
         This allows testing different command numbers to discover the correct
@@ -1690,18 +1690,18 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         Args:
             command: Command number (0-255)
-            argument: Argument value (0-255, will be converted if negative)
+            argument: First argument value (0-255)
+            argument2: Second argument value (0-255), default 85 (0x55)
 
         Returns:
             True if command was sent successfully
         """
-        _LOGGER.info("🔧 DEBUG: Sending raw command: cmd=%d, arg=%d", command, argument)
+        _LOGGER.info(
+            "🔧 DEBUG: Sending raw command: cmd=%d, arg1=%d, arg2=%d (packet: aa55 0c22 %02x %02x %02x)",
+            command, argument, argument2, command, argument, argument2
+        )
 
-        # Handle negative arguments (two's complement)
-        if argument < 0:
-            argument = 256 + argument
-
-        success = await self._send_command(command, argument, 85)
+        success = await self._send_command(command, argument, argument2)
 
         if success:
             _LOGGER.info("✅ DEBUG: Raw command sent successfully")
