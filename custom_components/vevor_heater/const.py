@@ -139,9 +139,9 @@ AUTO_OFFSET_THROTTLE_SECONDS: Final = 60
 AUTO_OFFSET_THRESHOLD: Final = 1.0  # Only adjust if difference >= 1°C
 
 # Heater temperature offset (sent to heater via cmd 20)
-# Note: Only positive values 0-10 are confirmed working via BLE
-# Negative offsets must be set via the phone app (investigation ongoing)
-MIN_HEATER_OFFSET: Final = 0
+# Both positive and negative offsets now work via BLE
+# Encoding: arg1 = value % 256, arg2 = (value // 256) % 256
+MIN_HEATER_OFFSET: Final = -10
 MAX_HEATER_OFFSET: Final = 10
 
 # Update interval
