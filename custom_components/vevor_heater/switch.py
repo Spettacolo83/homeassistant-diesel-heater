@@ -138,6 +138,7 @@ class VevorAutoOffsetSwitch(CoordinatorEntity[VevorHeaterCoordinator], SwitchEnt
     _attr_has_entity_name = True
     _attr_name = "Auto Temperature Offset"
     _attr_icon = "mdi:thermometer-auto"
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
         """Initialize the switch."""

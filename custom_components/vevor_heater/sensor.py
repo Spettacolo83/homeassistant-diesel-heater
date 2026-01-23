@@ -8,6 +8,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
+    EntityCategory,
     PERCENTAGE,
     UnitOfElectricPotential,
     UnitOfTemperature,
@@ -100,6 +101,7 @@ class VevorCaseTemperatureSensor(VevorSensorBase):
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
     _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
         """Initialize the sensor."""
@@ -186,6 +188,7 @@ class VevorSupplyVoltageSensor(VevorSensorBase):
     _attr_device_class = SensorDeviceClass.VOLTAGE
     _attr_native_unit_of_measurement = UnitOfElectricPotential.VOLT
     _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
         """Initialize the sensor."""
@@ -251,6 +254,7 @@ class VevorAltitudeSensor(VevorSensorBase):
     _attr_icon = "mdi:altimeter"
     _attr_native_unit_of_measurement = "m"
     _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
         """Initialize the sensor."""
@@ -266,6 +270,7 @@ class VevorErrorCodeSensor(VevorSensorBase):
     """Error code sensor."""
 
     _attr_icon = "mdi:alert-circle"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
         """Initialize the sensor."""
@@ -340,6 +345,7 @@ class VevorDailyFuelHistorySensor(VevorSensorBase):
 
     _attr_icon = "mdi:chart-bar"
     _attr_native_unit_of_measurement = "days"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
         """Initialize the sensor."""
@@ -420,6 +426,7 @@ class VevorDailyRuntimeHistorySensor(VevorSensorBase):
 
     _attr_icon = "mdi:chart-timeline-variant"
     _attr_native_unit_of_measurement = "days"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
         """Initialize the sensor."""

@@ -7,17 +7,13 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from homeassistant.const import EntityCategory
-
 from .const import (
     DOMAIN,
     MAX_HEATER_OFFSET,
     MAX_LEVEL,
-    MAX_TANK_VOLUME,
     MAX_TEMP_CELSIUS,
     MIN_HEATER_OFFSET,
     MIN_LEVEL,
-    MIN_TANK_VOLUME,
     MIN_TEMP_CELSIUS,
 )
 from .coordinator import VevorHeaterCoordinator
@@ -36,7 +32,6 @@ async def async_setup_entry(
             VevorHeaterLevelNumber(coordinator),
             VevorHeaterTemperatureNumber(coordinator),
             VevorHeaterOffsetNumber(coordinator),
-            VevorHeaterTankVolumeNumber(coordinator),
         ]
     )
 
@@ -155,48 +150,6 @@ class VevorHeaterOffsetNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberE
     async def async_set_native_value(self, value: float) -> None:
         """Set new value."""
         await self.coordinator.async_set_heater_offset(int(value))
-
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator."""
-        self.async_write_ha_state()
-
-
-class VevorHeaterTankVolumeNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberEntity):
-    """Vevor Heater tank volume number entity.
-
-    Sets the fuel tank volume in liters. This is used by the heater
-    for fuel consumption tracking on the physical display.
-    """
-
-    _attr_has_entity_name = True
-    _attr_name = "Tank Volume"
-    _attr_icon = "mdi:gas-station"
-    _attr_native_unit_of_measurement = "L"
-    _attr_native_min_value = MIN_TANK_VOLUME
-    _attr_native_max_value = MAX_TANK_VOLUME
-    _attr_native_step = 1
-    _attr_entity_category = EntityCategory.CONFIG
-
-    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
-        """Initialize the number entity."""
-        super().__init__(coordinator)
-        self._attr_unique_id = f"{coordinator.address}_tank_volume"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, coordinator.address)},
-            "name": "Vevor Diesel Heater",
-            "manufacturer": "Vevor",
-            "model": "Diesel Heater",
-        }
-
-    @property
-    def native_value(self) -> float | None:
-        """Return the current value."""
-        return self.coordinator.data.get("tank_volume")
-
-    async def async_set_native_value(self, value: float) -> None:
-        """Set new value."""
-        await self.coordinator.async_set_tank_volume(int(value))
 
     @callback
     def _handle_coordinator_update(self) -> None:

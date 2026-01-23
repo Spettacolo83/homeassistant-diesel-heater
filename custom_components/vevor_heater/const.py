@@ -70,9 +70,9 @@ RUNNING_MODE_LEVEL: Final = 1
 RUNNING_MODE_TEMPERATURE: Final = 2
 
 RUNNING_MODE_NAMES: Final = {
-    RUNNING_MODE_MANUAL: "Manual",
-    RUNNING_MODE_LEVEL: "Level Mode",
-    RUNNING_MODE_TEMPERATURE: "Auto Temperature Mode",
+    RUNNING_MODE_MANUAL: "Off",
+    RUNNING_MODE_LEVEL: "Level",
+    RUNNING_MODE_TEMPERATURE: "Temperature",
 }
 
 # Error codes
@@ -133,16 +133,16 @@ CONF_EXTERNAL_TEMP_SENSOR: Final = "external_temp_sensor"
 CONF_AUTO_OFFSET_MAX: Final = "auto_offset_max"
 CONF_AUTO_OFFSET_ENABLED: Final = "auto_offset_enabled"
 DEFAULT_AUTO_OFFSET_MAX: Final = 5
-MIN_AUTO_OFFSET_MAX: Final = 0
-MAX_AUTO_OFFSET_MAX: Final = 20
+MIN_AUTO_OFFSET_MAX: Final = 1
+MAX_AUTO_OFFSET_MAX: Final = 9
 AUTO_OFFSET_THROTTLE_SECONDS: Final = 60
 AUTO_OFFSET_THRESHOLD: Final = 1.0  # Only adjust if difference >= 1°C
 
 # Heater temperature offset (sent to heater via cmd 20)
 # Both positive and negative offsets now work via BLE
 # Encoding: arg1 = value % 256, arg2 = (value // 256) % 256
-MIN_HEATER_OFFSET: Final = -10
-MAX_HEATER_OFFSET: Final = 10
+MIN_HEATER_OFFSET: Final = -9
+MAX_HEATER_OFFSET: Final = 9
 
 # Configuration settings commands (from warehog/AirHeaterBLE)
 CMD_SET_LANGUAGE: Final = 14
@@ -175,6 +175,21 @@ ALTITUDE_UNIT_FEET: Final = 1
 # Tank volume range (byte 28)
 MIN_TANK_VOLUME: Final = 1
 MAX_TANK_VOLUME: Final = 99
+
+# Tank volume options (from AirHeaterBLE app - specific values only)
+TANK_VOLUME_OPTIONS: Final = {
+    5: "5 L",
+    10: "10 L",
+    15: "15 L",
+    20: "20 L",
+    25: "25 L",
+    30: "30 L",
+    40: "40 L",
+    50: "50 L",
+    60: "60 L",
+    80: "80 L",
+    99: "99 L",
+}
 
 # Pump type options (byte 29)
 # Values 20/21 indicate RF433 remote status
