@@ -144,6 +144,49 @@ AUTO_OFFSET_THRESHOLD: Final = 1.0  # Only adjust if difference >= 1°C
 MIN_HEATER_OFFSET: Final = -10
 MAX_HEATER_OFFSET: Final = 10
 
+# Configuration settings commands (from warehog/AirHeaterBLE)
+CMD_SET_LANGUAGE: Final = 14
+CMD_SET_TEMP_UNIT: Final = 15
+CMD_SET_ALTITUDE_UNIT: Final = 16
+CMD_SET_TANK_VOLUME: Final = 17
+CMD_SET_PUMP_TYPE: Final = 18
+CMD_SET_OFFSET: Final = 20
+
+# Language options (byte 26)
+LANGUAGE_OPTIONS: Final = {
+    0: "Chinese",
+    1: "English",
+    2: "Russian",
+    3: "German",
+    4: "French",
+    5: "Spanish",
+    6: "Italian",
+    7: "Japanese",
+}
+
+# Temperature unit (byte 27)
+TEMP_UNIT_CELSIUS: Final = 0
+TEMP_UNIT_FAHRENHEIT: Final = 1
+
+# Altitude unit (byte 30)
+ALTITUDE_UNIT_METERS: Final = 0
+ALTITUDE_UNIT_FEET: Final = 1
+
+# Tank volume range (byte 28)
+MIN_TANK_VOLUME: Final = 1
+MAX_TANK_VOLUME: Final = 99
+
+# Pump type options (byte 29)
+# Values 20/21 indicate RF433 remote status
+PUMP_TYPE_OPTIONS: Final = {
+    0: "Type 0",
+    1: "Type 1",
+    2: "Type 2",
+    3: "Type 3",
+    4: "Type 4",
+    5: "Type 5",
+}
+
 # Update interval
 UPDATE_INTERVAL: Final = 30  # seconds
 

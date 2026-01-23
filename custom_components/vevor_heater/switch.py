@@ -5,6 +5,7 @@ from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -25,6 +26,8 @@ async def async_setup_entry(
         VevorHeaterPowerSwitch(coordinator),
         VevorAutoStartStopSwitch(coordinator),
         VevorAutoOffsetSwitch(coordinator),
+        VevorTempUnitSwitch(coordinator),
+        VevorAltitudeUnitSwitch(coordinator),
     ])
 
 
@@ -171,6 +174,96 @@ class VevorAutoOffsetSwitch(CoordinatorEntity[VevorHeaterCoordinator], SwitchEnt
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Disable auto offset."""
         await self.coordinator.async_set_auto_offset_enabled(False)
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+
+class VevorTempUnitSwitch(CoordinatorEntity[VevorHeaterCoordinator], SwitchEntity):
+    """Vevor Heater Temperature Unit switch.
+
+    When ON: Fahrenheit
+    When OFF: Celsius
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Fahrenheit Mode"
+    _attr_icon = "mdi:temperature-fahrenheit"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the switch."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_temp_unit"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, coordinator.address)},
+            "name": "Vevor Diesel Heater",
+            "manufacturer": "Vevor",
+            "model": "Diesel Heater",
+        }
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return true if using Fahrenheit."""
+        temp_unit = self.coordinator.data.get("temp_unit")
+        if temp_unit is not None:
+            return temp_unit == 1  # 1 = Fahrenheit
+        return None
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Switch to Fahrenheit."""
+        await self.coordinator.async_set_temp_unit(use_fahrenheit=True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Switch to Celsius."""
+        await self.coordinator.async_set_temp_unit(use_fahrenheit=False)
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+
+class VevorAltitudeUnitSwitch(CoordinatorEntity[VevorHeaterCoordinator], SwitchEntity):
+    """Vevor Heater Altitude Unit switch.
+
+    When ON: Feet
+    When OFF: Meters
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Feet Mode"
+    _attr_icon = "mdi:altimeter"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the switch."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_altitude_unit"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, coordinator.address)},
+            "name": "Vevor Diesel Heater",
+            "manufacturer": "Vevor",
+            "model": "Diesel Heater",
+        }
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return true if using Feet."""
+        altitude_unit = self.coordinator.data.get("altitude_unit")
+        if altitude_unit is not None:
+            return altitude_unit == 1  # 1 = Feet
+        return None
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Switch to Feet."""
+        await self.coordinator.async_set_altitude_unit(use_feet=True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Switch to Meters."""
+        await self.coordinator.async_set_altitude_unit(use_feet=False)
 
     @callback
     def _handle_coordinator_update(self) -> None:
