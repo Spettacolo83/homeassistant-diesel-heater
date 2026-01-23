@@ -21,19 +21,15 @@ from .const import (
     CONF_PIN,
     CONF_PRESET_AWAY_TEMP,
     CONF_PRESET_COMFORT_TEMP,
-    CONF_TEMPERATURE_OFFSET,
     DEFAULT_AUTO_OFFSET_MAX,
     DEFAULT_PIN,
     DEFAULT_PRESET_AWAY_TEMP,
     DEFAULT_PRESET_COMFORT_TEMP,
-    DEFAULT_TEMPERATURE_OFFSET,
     DOMAIN,
     MAX_AUTO_OFFSET_MAX,
     MAX_PIN,
-    MAX_TEMPERATURE_OFFSET,
     MIN_AUTO_OFFSET_MAX,
     MIN_PIN,
-    MIN_TEMPERATURE_OFFSET,
     SERVICE_UUID,
 )
 
@@ -74,9 +70,6 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 title=f"Vevor Heater {self._discovery_info.address[-5:].replace(':', '')}",
                 data={
                     CONF_ADDRESS: self._discovery_info.address,
-                    CONF_TEMPERATURE_OFFSET: user_input.get(
-                        CONF_TEMPERATURE_OFFSET, DEFAULT_TEMPERATURE_OFFSET
-                    ),
                     CONF_PIN: user_input.get(CONF_PIN, DEFAULT_PIN),
                 },
             )
@@ -86,13 +79,6 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="confirm",
             data_schema=vol.Schema({
-                vol.Optional(
-                    CONF_TEMPERATURE_OFFSET,
-                    default=DEFAULT_TEMPERATURE_OFFSET
-                ): vol.All(
-                    vol.Coerce(float),
-                    vol.Range(min=MIN_TEMPERATURE_OFFSET, max=MAX_TEMPERATURE_OFFSET),
-                ),
                 vol.Optional(
                     CONF_PIN,
                     default=DEFAULT_PIN
@@ -119,9 +105,6 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 title=f"Vevor Heater {address[-5:].replace(':', '')}",
                 data={
                     CONF_ADDRESS: address,
-                    CONF_TEMPERATURE_OFFSET: user_input.get(
-                        CONF_TEMPERATURE_OFFSET, DEFAULT_TEMPERATURE_OFFSET
-                    ),
                     CONF_PIN: user_input.get(CONF_PIN, DEFAULT_PIN),
                 },
             )
@@ -185,13 +168,6 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema({
                 vol.Required(CONF_ADDRESS): vol.In(devices),
                 vol.Optional(
-                    CONF_TEMPERATURE_OFFSET,
-                    default=DEFAULT_TEMPERATURE_OFFSET
-                ): vol.All(
-                    vol.Coerce(float),
-                    vol.Range(min=MIN_TEMPERATURE_OFFSET, max=MAX_TEMPERATURE_OFFSET),
-                ),
-                vol.Optional(
                     CONF_PIN,
                     default=DEFAULT_PIN
                 ): vol.All(
@@ -221,9 +197,6 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     title=f"Vevor Heater {address[-5:].replace(':', '')}",
                     data={
                         CONF_ADDRESS: address,
-                        CONF_TEMPERATURE_OFFSET: user_input.get(
-                            CONF_TEMPERATURE_OFFSET, DEFAULT_TEMPERATURE_OFFSET
-                        ),
                         CONF_PIN: user_input.get(CONF_PIN, DEFAULT_PIN),
                     },
                 )
@@ -232,13 +205,6 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="manual",
             data_schema=vol.Schema({
                 vol.Required(CONF_ADDRESS, description="Bluetooth MAC Address (e.g., A4:C1:37:24:B8:64)"): str,
-                vol.Optional(
-                    CONF_TEMPERATURE_OFFSET,
-                    default=DEFAULT_TEMPERATURE_OFFSET
-                ): vol.All(
-                    vol.Coerce(float),
-                    vol.Range(min=MIN_TEMPERATURE_OFFSET, max=MAX_TEMPERATURE_OFFSET),
-                ),
                 vol.Optional(
                     CONF_PIN,
                     default=DEFAULT_PIN
@@ -270,16 +236,25 @@ class VevorHeaterOptionsFlowHandler(config_entries.OptionsFlow):
     ) -> FlowResult:
         """Manage the options."""
         if user_input is not None:
-            # Handle clearing of external sensor (empty string means cleared)
-            # The EntitySelector returns None when cleared, but we store as empty string
-            if CONF_EXTERNAL_TEMP_SENSOR in user_input:
-                if user_input[CONF_EXTERNAL_TEMP_SENSOR] is None:
-                    user_input[CONF_EXTERNAL_TEMP_SENSOR] = ""
+            # Handle clearing of external sensor
+            # EntitySelector returns None when cleared, store as empty string
+            if CONF_EXTERNAL_TEMP_SENSOR not in user_input or user_input.get(CONF_EXTERNAL_TEMP_SENSOR) is None:
+                user_input[CONF_EXTERNAL_TEMP_SENSOR] = ""
+                # Also clear auto_offset_max when sensor is cleared
+                user_input.pop(CONF_AUTO_OFFSET_MAX, None)
 
             # Update config entry with new settings
+            # Merge with existing data, but remove keys that were cleared
+            new_data = {**self.config_entry.data}
+            for key, value in user_input.items():
+                if value == "" or value is None:
+                    new_data.pop(key, None)
+                else:
+                    new_data[key] = value
+
             self.hass.config_entries.async_update_entry(
                 self.config_entry,
-                data={**self.config_entry.data, **user_input},
+                data=new_data,
             )
             return self.async_create_entry(title="", data={})
 
@@ -289,70 +264,53 @@ class VevorHeaterOptionsFlowHandler(config_entries.OptionsFlow):
         if not current_external_sensor:
             current_external_sensor = None
 
-        # Show current values in options form
+        # Build schema - only show auto_offset_max if external sensor is configured
+        schema_dict = {
+            vol.Optional(
+                CONF_PIN,
+                default=self.config_entry.data.get(CONF_PIN, DEFAULT_PIN)
+            ): vol.All(
+                vol.Coerce(int),
+                vol.Range(min=MIN_PIN, max=MAX_PIN),
+            ),
+            vol.Optional(
+                CONF_PRESET_AWAY_TEMP,
+                default=self.config_entry.data.get(CONF_PRESET_AWAY_TEMP, DEFAULT_PRESET_AWAY_TEMP)
+            ): vol.All(
+                vol.Coerce(int),
+                vol.Range(min=8, max=36),
+            ),
+            vol.Optional(
+                CONF_PRESET_COMFORT_TEMP,
+                default=self.config_entry.data.get(CONF_PRESET_COMFORT_TEMP, DEFAULT_PRESET_COMFORT_TEMP)
+            ): vol.All(
+                vol.Coerce(int),
+                vol.Range(min=8, max=36),
+            ),
+            vol.Optional(
+                CONF_EXTERNAL_TEMP_SENSOR,
+                description={"suggested_value": current_external_sensor}
+            ): selector.EntitySelector(
+                selector.EntitySelectorConfig(
+                    domain="sensor",
+                    device_class="temperature",
+                )
+            ),
+        }
+
+        # Only show auto_offset_max if external sensor is configured
+        if current_external_sensor:
+            schema_dict[vol.Optional(
+                CONF_AUTO_OFFSET_MAX,
+                default=self.config_entry.data.get(CONF_AUTO_OFFSET_MAX, DEFAULT_AUTO_OFFSET_MAX)
+            )] = vol.All(
+                vol.Coerce(int),
+                vol.Range(min=MIN_AUTO_OFFSET_MAX, max=MAX_AUTO_OFFSET_MAX),
+            )
+
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema({
-                vol.Optional(
-                    CONF_TEMPERATURE_OFFSET,
-                    default=self.config_entry.data.get(
-                        CONF_TEMPERATURE_OFFSET,
-                        DEFAULT_TEMPERATURE_OFFSET
-                    )
-                ): vol.All(
-                    vol.Coerce(float),
-                    vol.Range(min=MIN_TEMPERATURE_OFFSET, max=MAX_TEMPERATURE_OFFSET),
-                ),
-                vol.Optional(
-                    CONF_PIN,
-                    default=self.config_entry.data.get(
-                        CONF_PIN,
-                        DEFAULT_PIN
-                    )
-                ): vol.All(
-                    vol.Coerce(int),
-                    vol.Range(min=MIN_PIN, max=MAX_PIN),
-                ),
-                vol.Optional(
-                    CONF_PRESET_AWAY_TEMP,
-                    default=self.config_entry.data.get(
-                        CONF_PRESET_AWAY_TEMP,
-                        DEFAULT_PRESET_AWAY_TEMP
-                    )
-                ): vol.All(
-                    vol.Coerce(int),
-                    vol.Range(min=8, max=36),
-                ),
-                vol.Optional(
-                    CONF_PRESET_COMFORT_TEMP,
-                    default=self.config_entry.data.get(
-                        CONF_PRESET_COMFORT_TEMP,
-                        DEFAULT_PRESET_COMFORT_TEMP
-                    )
-                ): vol.All(
-                    vol.Coerce(int),
-                    vol.Range(min=8, max=36),
-                ),
-                vol.Optional(
-                    CONF_EXTERNAL_TEMP_SENSOR,
-                    description={"suggested_value": current_external_sensor}
-                ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(
-                        domain="sensor",
-                        device_class="temperature",
-                    )
-                ),
-                vol.Optional(
-                    CONF_AUTO_OFFSET_MAX,
-                    default=self.config_entry.data.get(
-                        CONF_AUTO_OFFSET_MAX,
-                        DEFAULT_AUTO_OFFSET_MAX
-                    )
-                ): vol.All(
-                    vol.Coerce(int),
-                    vol.Range(min=MIN_AUTO_OFFSET_MAX, max=MAX_AUTO_OFFSET_MAX),
-                ),
-            }),
+            data_schema=vol.Schema(schema_dict),
             description_placeholders={
                 "note": "To clear the external temperature sensor, leave the field empty."
             }

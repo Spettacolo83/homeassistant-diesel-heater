@@ -23,12 +23,12 @@ _LOGGER = logging.getLogger(__name__)
 SERVICE_SEND_COMMAND = "send_command"
 ATTR_COMMAND = "command"
 ATTR_ARGUMENT = "argument"
-ATTR_ARGUMENT2 = "argument2"
+ATTR_DEVICE_ID = "device_id"
 
 SERVICE_SEND_COMMAND_SCHEMA = vol.Schema({
+    vol.Optional(ATTR_DEVICE_ID): cv.string,
     vol.Required(ATTR_COMMAND): vol.All(vol.Coerce(int), vol.Range(min=0, max=255)),
-    vol.Required(ATTR_ARGUMENT): vol.All(vol.Coerce(int), vol.Range(min=0, max=255)),
-    vol.Optional(ATTR_ARGUMENT2, default=85): vol.All(vol.Coerce(int), vol.Range(min=0, max=255)),
+    vol.Required(ATTR_ARGUMENT): vol.All(vol.Coerce(int), vol.Range(min=-128, max=127)),
 })
 
 PLATFORMS: list[Platform] = [
@@ -105,17 +105,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             """Handle send_command service call for debugging."""
             command = call.data[ATTR_COMMAND]
             argument = call.data[ATTR_ARGUMENT]
-            argument2 = call.data.get(ATTR_ARGUMENT2, 85)
+            device_id = call.data.get(ATTR_DEVICE_ID)
 
             _LOGGER.info(
-                "Service %s.%s called: command=%d, argument=%d, argument2=%d",
-                DOMAIN, SERVICE_SEND_COMMAND, command, argument, argument2
+                "Service %s.%s called: command=%d, argument=%d, device_id=%s",
+                DOMAIN, SERVICE_SEND_COMMAND, command, argument, device_id
             )
 
-            # Send to all configured heaters
+            # Find target heaters
+            target_coords = []
             for entry_id, coord in hass.data[DOMAIN].items():
                 if isinstance(coord, VevorHeaterCoordinator):
-                    await coord.async_send_raw_command(command, argument, argument2)
+                    if device_id:
+                        # Match by MAC address (last 5 chars or full address)
+                        if (device_id.upper() in coord.address.upper() or
+                            coord.address.upper().endswith(device_id.upper().replace(":", ""))):
+                            target_coords.append(coord)
+                    else:
+                        # No device_id specified, send to all
+                        target_coords.append(coord)
+
+            if not target_coords:
+                _LOGGER.warning("No matching heater found for device_id: %s", device_id)
+                return
+
+            for coord in target_coords:
+                _LOGGER.info("Sending command to heater: %s", coord.address)
+                await coord.async_send_raw_command(command, argument)
 
         hass.services.async_register(
             DOMAIN,
