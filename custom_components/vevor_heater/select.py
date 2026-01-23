@@ -5,11 +5,14 @@ import logging
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
     DOMAIN,
+    LANGUAGE_OPTIONS,
+    PUMP_TYPE_OPTIONS,
     RUNNING_MODE_MANUAL,
     RUNNING_MODE_LEVEL,
     RUNNING_MODE_TEMPERATURE,
@@ -27,7 +30,11 @@ async def async_setup_entry(
 ) -> None:
     """Set up Vevor Heater select from config entry."""
     coordinator: VevorHeaterCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([VevorHeaterModeSelect(coordinator)])
+    async_add_entities([
+        VevorHeaterModeSelect(coordinator),
+        VevorHeaterLanguageSelect(coordinator),
+        VevorHeaterPumpTypeSelect(coordinator),
+    ])
 
 
 class VevorHeaterModeSelect(SelectEntity):
@@ -83,6 +90,128 @@ class VevorHeaterModeSelect(SelectEntity):
             await self.coordinator.async_set_mode(mode_value)
         else:
             _LOGGER.error("Unknown running mode: %s", option)
+
+    async def async_added_to_hass(self) -> None:
+        """When entity is added to hass."""
+        self.async_on_remove(
+            self.coordinator.async_add_listener(self._handle_coordinator_update)
+        )
+
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+
+class VevorHeaterLanguageSelect(SelectEntity):
+    """Select entity for Vevor Heater voice notification language."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Language"
+    _attr_icon = "mdi:translate"
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_options = list(LANGUAGE_OPTIONS.values())
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the select entity."""
+        self.coordinator = coordinator
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, coordinator.address)},
+            "name": "Vevor Heater",
+            "manufacturer": "Vevor",
+            "model": "Diesel Heater",
+        }
+        self._attr_unique_id = f"{coordinator.address}_language"
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        return self.coordinator.data.get("connected", False)
+
+    @property
+    def current_option(self) -> str | None:
+        """Return the current language."""
+        language_code = self.coordinator.data.get("language")
+        if language_code is not None:
+            return LANGUAGE_OPTIONS.get(language_code, f"Unknown ({language_code})")
+        return None
+
+    async def async_select_option(self, option: str) -> None:
+        """Change the language."""
+        # Find the language code for the selected option
+        language_code = None
+        for code, name in LANGUAGE_OPTIONS.items():
+            if name == option:
+                language_code = code
+                break
+
+        if language_code is not None:
+            _LOGGER.info("Changing language to: %s (code: %d)", option, language_code)
+            await self.coordinator.async_set_language(language_code)
+        else:
+            _LOGGER.error("Unknown language: %s", option)
+
+    async def async_added_to_hass(self) -> None:
+        """When entity is added to hass."""
+        self.async_on_remove(
+            self.coordinator.async_add_listener(self._handle_coordinator_update)
+        )
+
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+
+class VevorHeaterPumpTypeSelect(SelectEntity):
+    """Select entity for Vevor Heater oil pump type."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Pump Type"
+    _attr_icon = "mdi:pump"
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_options = list(PUMP_TYPE_OPTIONS.values())
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the select entity."""
+        self.coordinator = coordinator
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, coordinator.address)},
+            "name": "Vevor Heater",
+            "manufacturer": "Vevor",
+            "model": "Diesel Heater",
+        }
+        self._attr_unique_id = f"{coordinator.address}_pump_type"
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        # Not available if RF433 mode is active (pump_type will be None)
+        return (
+            self.coordinator.data.get("connected", False)
+            and self.coordinator.data.get("pump_type") is not None
+        )
+
+    @property
+    def current_option(self) -> str | None:
+        """Return the current pump type."""
+        pump_type = self.coordinator.data.get("pump_type")
+        if pump_type is not None:
+            return PUMP_TYPE_OPTIONS.get(pump_type, f"Type {pump_type}")
+        return None
+
+    async def async_select_option(self, option: str) -> None:
+        """Change the pump type."""
+        # Find the pump type code for the selected option
+        pump_code = None
+        for code, name in PUMP_TYPE_OPTIONS.items():
+            if name == option:
+                pump_code = code
+                break
+
+        if pump_code is not None:
+            _LOGGER.info("Changing pump type to: %s (code: %d)", option, pump_code)
+            await self.coordinator.async_set_pump_type(pump_code)
+        else:
+            _LOGGER.error("Unknown pump type: %s", option)
 
     async def async_added_to_hass(self) -> None:
         """When entity is added to hass."""

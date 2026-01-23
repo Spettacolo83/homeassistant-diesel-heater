@@ -156,10 +156,17 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             "case_temperature": None,
             "cab_temperature": None,
             "cab_temperature_raw": None,  # Raw temperature before any offset
-            "heater_offset": 0,  # Current offset sent to heater (cmd 12)
+            "heater_offset": 0,  # Current offset sent to heater (cmd 20)
             "connected": False,
             "auto_start_stop": None,  # Automatic Start/Stop flag (byte 31)
             "auto_offset_enabled": False,  # Auto offset adjustment enabled
+            # Configuration settings (bytes 26-30)
+            "language": None,  # byte 26: Voice notification language
+            "temp_unit": None,  # byte 27: 0=Celsius, 1=Fahrenheit
+            "tank_volume": None,  # byte 28: Tank volume in liters
+            "pump_type": None,  # byte 29: Oil pump type
+            "altitude_unit": None,  # byte 30: 0=Meters, 1=Feet
+            "rf433_enabled": None,  # byte 29 value 20/21 indicates RF433 status
             # Fuel consumption tracking
             "hourly_fuel_consumption": None,
             "daily_fuel_consumed": 0.0,
@@ -1162,6 +1169,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         # 0 = Celsius, 1 = Fahrenheit
         temp_unit_byte = _u8_to_number(data[27])
         self._heater_uses_fahrenheit = (temp_unit_byte == 1)
+        self.data["temp_unit"] = temp_unit_byte  # Store for UI switch
         _LOGGER.debug("🌡️ Temperature unit byte 27: %d (%s)",
                      temp_unit_byte, "Fahrenheit" if self._heater_uses_fahrenheit else "Celsius")
 
@@ -1184,6 +1192,39 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self.data["auto_start_stop"] = (auto_start_stop_byte == 1)
         _LOGGER.debug("🔄 Auto Start/Stop byte 31: %d (%s)",
                      auto_start_stop_byte, "Enabled" if self.data["auto_start_stop"] else "Disabled")
+
+        # Configuration settings (bytes 26, 28, 29, 30)
+        # Byte 26: Language of voice notifications
+        if len(data) > 26:
+            self.data["language"] = _u8_to_number(data[26])
+            _LOGGER.debug("🗣️ Language byte 26: %d", self.data["language"])
+
+        # Byte 28: Tank volume in liters
+        if len(data) > 28:
+            self.data["tank_volume"] = _u8_to_number(data[28])
+            _LOGGER.debug("⛽ Tank volume byte 28: %d L", self.data["tank_volume"])
+
+        # Byte 29: Pump type / RF433 status
+        # Values 20/21 indicate RF433 remote: 20=off, 21=on
+        if len(data) > 29:
+            pump_byte = _u8_to_number(data[29])
+            if pump_byte == 20:
+                self.data["rf433_enabled"] = False
+                self.data["pump_type"] = None  # RF433 mode, no pump type
+            elif pump_byte == 21:
+                self.data["rf433_enabled"] = True
+                self.data["pump_type"] = None  # RF433 mode, no pump type
+            else:
+                self.data["pump_type"] = pump_byte
+                self.data["rf433_enabled"] = None  # Standard mode
+            _LOGGER.debug("🔧 Pump type byte 29: %d (rf433=%s)", pump_byte, self.data["rf433_enabled"])
+
+        # Byte 30: Altitude unit (0=Meters, 1=Feet)
+        if len(data) > 30:
+            self.data["altitude_unit"] = _u8_to_number(data[30])
+            _LOGGER.debug("📏 Altitude unit byte 30: %d (%s)",
+                         self.data["altitude_unit"],
+                         "Feet" if self.data["altitude_unit"] == 1 else "Meters")
 
         self.data["supply_voltage"] = (256 * data[11] + data[12]) / 10
         self.data["case_temperature"] = _unsign_to_sign(256 * data[13] + data[14])
@@ -1656,6 +1697,88 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             await self.async_request_refresh()
         else:
             _LOGGER.warning("❌ Failed to set heater offset")
+
+    async def async_set_language(self, language: int) -> None:
+        """Set voice notification language (cmd 14).
+
+        Args:
+            language: Language code (0=Chinese, 1=English, 2=Russian, etc.)
+        """
+        _LOGGER.info("🗣️ Setting language to %d (cmd 14)", language)
+        success = await self._send_command(14, language)
+        if success:
+            self.data["language"] = language
+            _LOGGER.info("✅ Language set to %d", language)
+            await self.async_request_refresh()
+        else:
+            _LOGGER.warning("❌ Failed to set language")
+
+    async def async_set_temp_unit(self, use_fahrenheit: bool) -> None:
+        """Set temperature unit (cmd 15).
+
+        Args:
+            use_fahrenheit: True for Fahrenheit, False for Celsius
+        """
+        value = 1 if use_fahrenheit else 0
+        unit_name = "Fahrenheit" if use_fahrenheit else "Celsius"
+        _LOGGER.info("🌡️ Setting temperature unit to %s (cmd 15, value=%d)", unit_name, value)
+        success = await self._send_command(15, value)
+        if success:
+            self.data["temp_unit"] = value
+            self._heater_uses_fahrenheit = use_fahrenheit
+            _LOGGER.info("✅ Temperature unit set to %s", unit_name)
+            await self.async_request_refresh()
+        else:
+            _LOGGER.warning("❌ Failed to set temperature unit")
+
+    async def async_set_altitude_unit(self, use_feet: bool) -> None:
+        """Set altitude unit (cmd 16).
+
+        Args:
+            use_feet: True for Feet, False for Meters
+        """
+        value = 1 if use_feet else 0
+        unit_name = "Feet" if use_feet else "Meters"
+        _LOGGER.info("📏 Setting altitude unit to %s (cmd 16, value=%d)", unit_name, value)
+        success = await self._send_command(16, value)
+        if success:
+            self.data["altitude_unit"] = value
+            _LOGGER.info("✅ Altitude unit set to %s", unit_name)
+            await self.async_request_refresh()
+        else:
+            _LOGGER.warning("❌ Failed to set altitude unit")
+
+    async def async_set_tank_volume(self, volume: int) -> None:
+        """Set tank volume in liters (cmd 17).
+
+        Args:
+            volume: Tank volume in liters (1-99)
+        """
+        volume = max(1, min(99, volume))
+        _LOGGER.info("⛽ Setting tank volume to %d L (cmd 17)", volume)
+        success = await self._send_command(17, volume)
+        if success:
+            self.data["tank_volume"] = volume
+            _LOGGER.info("✅ Tank volume set to %d L", volume)
+            await self.async_request_refresh()
+        else:
+            _LOGGER.warning("❌ Failed to set tank volume")
+
+    async def async_set_pump_type(self, pump_type: int) -> None:
+        """Set oil pump type (cmd 18).
+
+        Args:
+            pump_type: Pump type (0-5)
+        """
+        pump_type = max(0, min(5, pump_type))
+        _LOGGER.info("🔧 Setting pump type to %d (cmd 18)", pump_type)
+        success = await self._send_command(18, pump_type)
+        if success:
+            self.data["pump_type"] = pump_type
+            _LOGGER.info("✅ Pump type set to %d", pump_type)
+            await self.async_request_refresh()
+        else:
+            _LOGGER.warning("❌ Failed to set pump type")
 
     async def async_set_auto_offset_enabled(self, enabled: bool) -> None:
         """Enable or disable automatic temperature offset adjustment.
