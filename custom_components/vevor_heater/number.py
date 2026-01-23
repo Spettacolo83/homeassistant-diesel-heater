@@ -119,8 +119,7 @@ class VevorHeaterOffsetNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberE
     via BLE command 20. The heater uses this offset to adjust its internal
     temperature sensor reading for auto-start/stop logic.
 
-    LIMITATION: Only positive offsets (0 to +10) work via BLE.
-    Negative offsets must be set using the phone app.
+    Both positive and negative offsets (-10 to +10) are supported.
     """
 
     _attr_has_entity_name = True

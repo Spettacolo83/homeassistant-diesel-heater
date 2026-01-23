@@ -371,20 +371,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             )
             return
 
-        # Calculate new offset (clamped to 0-max range)
-        # NOTE: Only positive offsets (0-10) work via BLE; negative not supported
+        # Calculate new offset (clamped to -max to +max range)
+        # Both positive and negative offsets now work via BLE
         max_offset = self.config_entry.data.get(CONF_AUTO_OFFSET_MAX, DEFAULT_AUTO_OFFSET_MAX)
         max_offset = min(max_offset, MAX_HEATER_OFFSET)  # Cap at 10
-        new_offset = int(max(0, min(max_offset, difference)))
-
-        # If difference is negative, we can't apply it via BLE
-        if difference < 0:
-            _LOGGER.debug(
-                "Auto offset: would need negative offset (%.1f°C) but only positive "
-                "offsets work via BLE. Setting to 0.",
-                difference
-            )
-            new_offset = 0
+        new_offset = int(max(-max_offset, min(max_offset, difference)))
 
         # Only send command if offset changed
         if new_offset != self._current_heater_offset:
@@ -1413,8 +1404,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         packet[2] = self._passkey // 100
         packet[3] = self._passkey % 100
         packet[4] = command % 256
-        packet[5] = argument % 256
-        packet[6] = argument // 256
+        packet[5] = argument % 256  # For negative: -4 % 256 = 252 (0xfc)
+        packet[6] = (argument // 256) % 256  # For negative: (-4 // 256) % 256 = 255 (0xff)
         packet[7] = (packet[2] + packet[3] + packet[4] + packet[5] + packet[6]) % 256
 
         _LOGGER.debug("Command packet (8 bytes, AA55): %s", packet.hex())
@@ -1641,21 +1632,22 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         The heater will then use this offset for its own temperature readings
         and auto-start/stop logic.
 
-        IMPORTANT: Only positive offsets (0-10) are confirmed working via BLE.
-        Negative offsets must be set via the phone app - the BLE encoding for
-        negative values has not been discovered yet despite extensive testing.
+        Both positive and negative offsets are supported via BLE.
+        Encoding discovered by @Xev:
+        - arg1 (packet[5]) = offset % 256 (value in two's complement)
+        - arg2 (packet[6]) = (offset // 256) % 256 (0x00 for positive, 0xff for negative)
 
         Args:
-            offset: Temperature offset in °C (0 to +10, clamped)
+            offset: Temperature offset in °C (-10 to +10, clamped)
         """
-        # Clamp to valid range (only positive values work via BLE)
+        # Clamp to valid range
         offset = max(MIN_HEATER_OFFSET, min(MAX_HEATER_OFFSET, offset))
 
-        _LOGGER.info("🌡️ Setting heater temperature offset to +%d°C (cmd 20)", offset)
+        _LOGGER.info("🌡️ Setting heater temperature offset to %d°C (cmd 20)", offset)
 
-        # Command 20 for temperature offset (confirmed working via testing)
-        # Only positive values 0-10 work; negative offset encoding unknown
-        success = await self._send_command(20, offset, 0)
+        # Command 20 for temperature offset
+        # Pass offset directly - _build_command_packet handles encoding
+        success = await self._send_command(20, offset)
 
         if success:
             self._current_heater_offset = offset
