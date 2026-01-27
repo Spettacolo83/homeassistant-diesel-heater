@@ -144,24 +144,22 @@ AUTO_OFFSET_THRESHOLD: Final = 1.0  # Only adjust if difference >= 1°C
 MIN_HEATER_OFFSET: Final = -9
 MAX_HEATER_OFFSET: Final = 9
 
-# Configuration settings commands (from warehog/AirHeaterBLE)
+# Configuration settings commands (verified by @Xev testing)
 CMD_SET_LANGUAGE: Final = 14
 CMD_SET_TEMP_UNIT: Final = 15
-CMD_SET_ALTITUDE_UNIT: Final = 16
-CMD_SET_TANK_VOLUME: Final = 17
-CMD_SET_PUMP_TYPE: Final = 18
+CMD_SET_TANK_VOLUME: Final = 16  # Index-based: 0=None, 1=5L, 2=10L, etc.
+CMD_SET_PUMP_TYPE: Final = 17
+CMD_SET_ALTITUDE_UNIT: Final = 19  # Was incorrectly 16
 CMD_SET_OFFSET: Final = 20
 
-# Language options (byte 26)
+# Language options (byte 26) - verified by @Xev testing
+# Note: Values 1, 5, 6 may not be supported by all heaters
 LANGUAGE_OPTIONS: Final = {
-    0: "Chinese",
-    1: "English",
-    2: "Russian",
-    3: "German",
-    4: "French",
-    5: "Spanish",
-    6: "Italian",
-    7: "Japanese",
+    0: "English",
+    1: "Chinese",
+    2: "German",
+    3: "Silent",
+    4: "Russian",
 }
 
 # Temperature unit (byte 27)
@@ -172,34 +170,34 @@ TEMP_UNIT_FAHRENHEIT: Final = 1
 ALTITUDE_UNIT_METERS: Final = 0
 ALTITUDE_UNIT_FEET: Final = 1
 
-# Tank volume range (byte 28)
-MIN_TANK_VOLUME: Final = 1
-MAX_TANK_VOLUME: Final = 99
+# Tank volume range (byte 28) - index-based, not liters!
+MIN_TANK_VOLUME: Final = 0
+MAX_TANK_VOLUME: Final = 10
 
-# Tank volume options (from AirHeaterBLE app - specific values only)
+# Tank volume options - INDEX-BASED (verified by @Xev testing)
+# The heater stores an index (0-10), not the actual volume
+# Index 0 = None/disabled, Index 1 = 5L, Index 2 = 10L, etc.
 TANK_VOLUME_OPTIONS: Final = {
-    5: "5 L",
-    10: "10 L",
-    15: "15 L",
-    20: "20 L",
-    25: "25 L",
-    30: "30 L",
-    40: "40 L",
-    50: "50 L",
-    60: "60 L",
-    80: "80 L",
-    99: "99 L",
+    0: "None",
+    1: "5 L",
+    2: "10 L",
+    3: "15 L",
+    4: "20 L",
+    5: "25 L",
+    6: "30 L",
+    7: "35 L",
+    8: "40 L",
+    9: "45 L",
+    10: "50 L",
 }
 
-# Pump type options (byte 29)
-# Values 20/21 indicate RF433 remote status
+# Pump type options (byte 29) - verified by @Xev testing
+# Values 20/21 indicate RF433 remote status (not pump type)
 PUMP_TYPE_OPTIONS: Final = {
-    0: "Type 0",
-    1: "Type 1",
-    2: "Type 2",
-    3: "Type 3",
-    4: "Type 4",
-    5: "Type 5",
+    0: "16µl",
+    1: "22µl",
+    2: "28µl",
+    3: "32µl",
 }
 
 # Update interval
@@ -231,6 +229,9 @@ STORAGE_KEY_TOTAL_RUNTIME: Final = "total_runtime_seconds"
 STORAGE_KEY_DAILY_RUNTIME: Final = "daily_runtime_seconds"
 STORAGE_KEY_DAILY_RUNTIME_DATE: Final = "daily_runtime_date"
 STORAGE_KEY_DAILY_RUNTIME_HISTORY: Final = "daily_runtime_history"
+
+# Auto offset persistence key
+STORAGE_KEY_AUTO_OFFSET_ENABLED: Final = "auto_offset_enabled"
 
 # History settings
 MAX_HISTORY_DAYS: Final = 30  # Keep last 30 days of daily consumption

@@ -61,6 +61,7 @@ from .const import (
     SENSOR_TEMP_MIN,
     SERVICE_UUID,
     SERVICE_UUID_ALT,
+    STORAGE_KEY_AUTO_OFFSET_ENABLED,
     STORAGE_KEY_DAILY_DATE,
     STORAGE_KEY_DAILY_FUEL,
     STORAGE_KEY_DAILY_HISTORY,
@@ -273,6 +274,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     len(self._daily_runtime_history)
                 )
 
+                # Load auto offset enabled state
+                auto_offset_enabled = data.get(STORAGE_KEY_AUTO_OFFSET_ENABLED, False)
+                self.data["auto_offset_enabled"] = auto_offset_enabled
+                _LOGGER.debug("Loaded auto_offset_enabled: %s", auto_offset_enabled)
+
                 # Import existing history into statistics for native graphing
                 await self._import_all_history_statistics()
                 await self._import_all_runtime_history_statistics()
@@ -400,7 +406,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             await self.async_set_heater_offset(new_offset)
 
     async def async_save_data(self) -> None:
-        """Save persistent fuel consumption and runtime data."""
+        """Save persistent fuel consumption, runtime data, and settings."""
         try:
             data = {
                 # Fuel data
@@ -413,12 +419,15 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 STORAGE_KEY_DAILY_RUNTIME: self._daily_runtime_seconds,
                 STORAGE_KEY_DAILY_RUNTIME_DATE: datetime.now().date().isoformat(),
                 STORAGE_KEY_DAILY_RUNTIME_HISTORY: self._daily_runtime_history,
+                # Settings
+                STORAGE_KEY_AUTO_OFFSET_ENABLED: self.data.get("auto_offset_enabled", False),
             }
             await self._store.async_save(data)
             _LOGGER.debug(
-                "Saved data: fuel history=%d entries, runtime history=%d entries",
+                "Saved data: fuel history=%d entries, runtime history=%d entries, auto_offset=%s",
                 len(self._daily_fuel_history),
-                len(self._daily_runtime_history)
+                len(self._daily_runtime_history),
+                self.data.get("auto_offset_enabled", False)
             )
         except Exception as err:
             _LOGGER.warning("Could not save data: %s", err)
@@ -781,7 +790,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         try:
             # Request status
-            status = await self._send_command(1, 0, 85)
+            status = await self._send_command(1, 0)
 
             if status:
                 self.data["connected"] = True
@@ -1485,13 +1494,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             _LOGGER.warning("ABBA: Unknown command %d, sending status request", command)
             return self._build_abba_command("baab04cc000000")
 
-    async def _send_command(self, command: int, argument: int, n: int = 85, timeout: float = 5.0) -> bool:
+    async def _send_command(self, command: int, argument: int, timeout: float = 5.0) -> bool:
         """Send command to heater with configurable timeout.
 
         Args:
-            command: Command code (1=status, 2=mode, 3=on/off, 4=level/temp)
+            command: Command code (1=status, 2=mode, 3=on/off, 4=level/temp, etc.)
             argument: Command argument
-            n: Legacy parameter (ignored, kept for compatibility)
             timeout: Timeout in seconds for waiting response
         """
         if not self._client or not self._client.is_connected:
@@ -1565,14 +1573,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     async def async_turn_on(self) -> None:
         """Turn heater on."""
         # Command 3, arg=1 for ON (verified with BYD heater)
-        success = await self._send_command(3, 1, 85)
+        success = await self._send_command(3, 1)
         if success:
             await self.async_request_refresh()
 
     async def async_turn_off(self) -> None:
         """Turn heater off."""
         # Command 3, arg=0 for OFF (verified with BYD heater)
-        success = await self._send_command(3, 0, 85)
+        success = await self._send_command(3, 0)
         if success:
             await self.async_request_refresh()
 
@@ -1580,7 +1588,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """Set heater level (1-10)."""
         # Command 4 for level (verified with BYD heater)
         level = max(1, min(10, level))
-        success = await self._send_command(4, level, 85)
+        success = await self._send_command(4, level)
         if success:
             await self.async_request_refresh()
 
@@ -1614,7 +1622,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             )
             command_temp = temperature
 
-        success = await self._send_command(4, command_temp, 85)
+        success = await self._send_command(4, command_temp)
 
         if success:
             await self.async_request_refresh()
@@ -1633,7 +1641,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         # Command 2 for mode (needs verification)
         mode = max(0, min(2, mode))
         _LOGGER.info("Setting running mode to %d", mode)
-        success = await self._send_command(2, mode, 85)
+        success = await self._send_command(2, mode)
         if success:
             await self.async_request_refresh()
 
@@ -1646,7 +1654,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """
         _LOGGER.info("Setting Auto Start/Stop to %s", "enabled" if enabled else "disabled")
         # Command 18, arg=1 for enabled, arg=0 for disabled
-        success = await self._send_command(18, 1 if enabled else 0, 85)
+        success = await self._send_command(18, 1 if enabled else 0)
         if success:
             await self.async_request_refresh()
 
@@ -1660,7 +1668,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         time_value = 60 * now.hour + now.minute
         _LOGGER.info("Syncing heater time to %02d:%02d (value=%d)", now.hour, now.minute, time_value)
         # Command 10 for time sync
-        success = await self._send_command(10, time_value, 85)
+        success = await self._send_command(10, time_value)
         if success:
             _LOGGER.info("✅ Time sync successful")
         else:
@@ -1732,15 +1740,15 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             _LOGGER.warning("❌ Failed to set temperature unit")
 
     async def async_set_altitude_unit(self, use_feet: bool) -> None:
-        """Set altitude unit (cmd 16).
+        """Set altitude unit (cmd 19).
 
         Args:
             use_feet: True for Feet, False for Meters
         """
         value = 1 if use_feet else 0
         unit_name = "Feet" if use_feet else "Meters"
-        _LOGGER.info("📏 Setting altitude unit to %s (cmd 16, value=%d)", unit_name, value)
-        success = await self._send_command(16, value)
+        _LOGGER.info("📏 Setting altitude unit to %s (cmd 19, value=%d)", unit_name, value)
+        success = await self._send_command(19, value)
         if success:
             self.data["altitude_unit"] = value
             _LOGGER.info("✅ Altitude unit set to %s", unit_name)
@@ -1748,31 +1756,36 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         else:
             _LOGGER.warning("❌ Failed to set altitude unit")
 
-    async def async_set_tank_volume(self, volume: int) -> None:
-        """Set tank volume in liters (cmd 17).
+    async def async_set_tank_volume(self, volume_index: int) -> None:
+        """Set tank volume by index (cmd 16).
+
+        The heater uses index-based values, not actual liters:
+        0=None, 1=5L, 2=10L, 3=15L, 4=20L, 5=25L, 6=30L, 7=35L, 8=40L, 9=45L, 10=50L
 
         Args:
-            volume: Tank volume in liters (1-99)
+            volume_index: Tank volume index (0-10)
         """
-        volume = max(1, min(99, volume))
-        _LOGGER.info("⛽ Setting tank volume to %d L (cmd 17)", volume)
-        success = await self._send_command(17, volume)
+        volume_index = max(0, min(10, volume_index))
+        _LOGGER.info("⛽ Setting tank volume to index %d (cmd 16)", volume_index)
+        success = await self._send_command(16, volume_index)
         if success:
-            self.data["tank_volume"] = volume
-            _LOGGER.info("✅ Tank volume set to %d L", volume)
+            self.data["tank_volume"] = volume_index
+            _LOGGER.info("✅ Tank volume set to index %d", volume_index)
             await self.async_request_refresh()
         else:
             _LOGGER.warning("❌ Failed to set tank volume")
 
     async def async_set_pump_type(self, pump_type: int) -> None:
-        """Set oil pump type (cmd 18).
+        """Set oil pump type (cmd 17).
+
+        Pump types: 0=16µl, 1=22µl, 2=28µl, 3=32µl
 
         Args:
-            pump_type: Pump type (0-5)
+            pump_type: Pump type (0-3)
         """
-        pump_type = max(0, min(5, pump_type))
-        _LOGGER.info("🔧 Setting pump type to %d (cmd 18)", pump_type)
-        success = await self._send_command(18, pump_type)
+        pump_type = max(0, min(3, pump_type))
+        _LOGGER.info("🔧 Setting pump type to %d (cmd 17)", pump_type)
+        success = await self._send_command(17, pump_type)
         if success:
             self.data["pump_type"] = pump_type
             _LOGGER.info("✅ Pump type set to %d", pump_type)
@@ -1792,6 +1805,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """
         _LOGGER.info("Setting auto offset to %s", "enabled" if enabled else "disabled")
         self.data["auto_offset_enabled"] = enabled
+
+        # Persist the setting immediately
+        await self.async_save_data()
 
         if enabled:
             # Trigger initial calculation
