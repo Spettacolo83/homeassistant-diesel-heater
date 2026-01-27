@@ -56,7 +56,9 @@ from .const import (
     RUNNING_MODE_LEVEL,
     RUNNING_MODE_MANUAL,
     RUNNING_MODE_TEMPERATURE,
+    RUNNING_STEP_COOLDOWN,
     RUNNING_STEP_RUNNING,
+    RUNNING_STEP_STANDBY,
     SENSOR_TEMP_MAX,
     SENSOR_TEMP_MIN,
     SERVICE_UUID,
@@ -1260,11 +1262,25 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     def _parse_protocol_abba(self, data: bytearray) -> None:
         """Parse ABBA protocol response (HeaterCC heaters).
 
-        ABBA protocol is used by HeaterCC app heaters.
+        ABBA protocol is used by HeaterCC/AirHeaterCC app heaters.
         Header is 0xABBA (notifications) or 0xBAAB (commands).
 
-        Note: This is a basic implementation based on reverse engineering.
-        The exact byte positions may need adjustment based on testing.
+        Byte mapping (verified by @Xev and @postal):
+        - Bytes 0-1: Header (0xABBA)
+        - Bytes 2-3: Packet type (0x11CC for status)
+        - Byte 4: Status (0=Off, 1=Heating, 2=Cooling)
+        - Byte 5: Mode (0=Manual, 1=Thermostat)
+        - Byte 6: Gear/Target temp (Manual → level 1-6, Thermostat → target °C)
+        - Byte 7: Submode/Flag
+        - Byte 8: Auto Start/Stop (0=Off, 1=On)
+        - Byte 9: Voltage (decimal V)
+        - Byte 10: Temperature Unit (0=Celsius, 1=Fahrenheit)
+        - Byte 11: Environment Temperature (subtract 30 for C, 22 for F)
+        - Bytes 12-13: Device Temperature (uint16)
+        - Byte 14: Altitude unit (0=Meters, 1=Feet)
+        - Byte 15: High-altitude mode (0=Normal, 1=High)
+        - Bytes 16-17: Altitude (uint16)
+        - Byte 20: Checksum
         """
         self._protocol_mode = 5
 
@@ -1274,45 +1290,126 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         header = (_u8_to_number(data[0]) << 8) | _u8_to_number(data[1])
         if header != PROTOCOL_HEADER_ABBA:
             _LOGGER.debug("ABBA: Unexpected header 0x%04X, expected 0xABBA", header)
-            # Still try to parse as we detected ABBA device by service UUID
 
-        # Basic parsing - structure needs verification from testing
-        # For now, extract what we can and log for debugging
-        if len(data) >= 20:
-            # Attempt to extract common data (positions may differ from Vevor)
-            # These positions are guesses and need verification
-            try:
-                # Try to extract temperature and state info
-                # The exact format needs to be determined through testing
-                self.data["connected"] = True
+        # Need at least 21 bytes for full status response
+        if len(data) < 21:
+            _LOGGER.warning("ABBA: Response too short (%d bytes), need 21", len(data))
+            self.data["connected"] = True
+            self._notification_data = data
+            return
 
-                # Log all bytes for debugging
-                _LOGGER.debug("ABBA bytes: %s", [hex(b) for b in data])
+        try:
+            self.data["connected"] = True
 
-                # Attempt some basic parsing based on common patterns
-                # Byte 2 might be command type
-                cmd_type = data[2] if len(data) > 2 else 0
-                _LOGGER.debug("ABBA cmd/type byte: 0x%02X", cmd_type)
+            # Byte 4: Status (0=Off, 1=Heating, 2=Cooling)
+            status_byte = _u8_to_number(data[4])
+            self.data["running_state"] = 1 if status_byte in (1, 2) else 0
 
-                # Try to find temperature values (usually 1 byte each)
-                # This is speculative and needs testing
-                if len(data) >= 10:
-                    # Look for reasonable temperature values (8-40°C range)
-                    for i, b in enumerate(data[3:min(len(data), 15)]):
-                        if 8 <= b <= 45:
-                            _LOGGER.debug("ABBA potential temp at byte %d: %d", i + 3, b)
+            # Map ABBA status to running_step
+            # 0=Off → Standby, 1=Heating → Running, 2=Cooling → Cooldown
+            if status_byte == 0:
+                self.data["running_step"] = RUNNING_STEP_STANDBY
+            elif status_byte == 1:
+                self.data["running_step"] = RUNNING_STEP_RUNNING
+            elif status_byte == 2:
+                self.data["running_step"] = RUNNING_STEP_COOLDOWN
+            else:
+                self.data["running_step"] = status_byte
 
-                # For now, set basic state to show device is connected
-                # Full parsing will be implemented after testing with real device
-                if self.data.get("running_state") is None:
-                    self.data["running_state"] = 0
-                if self.data.get("running_step") is None:
-                    self.data["running_step"] = 0
-                if self.data.get("error_code") is None:
-                    self.data["error_code"] = 0
+            _LOGGER.debug("ABBA status byte 4: %d → running_state=%d, running_step=%d",
+                         status_byte, self.data["running_state"], self.data["running_step"])
 
-            except Exception as err:
-                _LOGGER.warning("ABBA parse error: %s", err)
+            # Byte 5: Mode (0=Manual, 1=Thermostat)
+            mode_byte = _u8_to_number(data[5])
+            # Map: ABBA 0=Manual → RUNNING_MODE_LEVEL, ABBA 1=Thermostat → RUNNING_MODE_TEMPERATURE
+            if mode_byte == 0:
+                self.data["running_mode"] = RUNNING_MODE_LEVEL
+            elif mode_byte == 1:
+                self.data["running_mode"] = RUNNING_MODE_TEMPERATURE
+            else:
+                self.data["running_mode"] = mode_byte
+            _LOGGER.debug("ABBA mode byte 5: %d → running_mode=%d", mode_byte, self.data["running_mode"])
+
+            # Byte 6: Gear/Target temp (depends on mode)
+            gear_byte = _u8_to_number(data[6])
+            if self.data["running_mode"] == RUNNING_MODE_LEVEL:
+                # Manual mode: gear is power level (1-6 for ABBA, we'll scale to 1-10)
+                # ABBA uses 1-6, Vevor uses 1-10
+                self.data["set_level"] = max(1, min(10, gear_byte))
+                _LOGGER.debug("ABBA gear byte 6: %d → set_level=%d", gear_byte, self.data["set_level"])
+            else:
+                # Thermostat mode: gear is target temperature
+                self.data["set_temp"] = max(8, min(36, gear_byte))
+                _LOGGER.debug("ABBA gear byte 6: %d → set_temp=%d", gear_byte, self.data["set_temp"])
+
+            # Byte 8: Auto Start/Stop
+            auto_byte = _u8_to_number(data[8])
+            self.data["auto_start_stop"] = (auto_byte == 1)
+            _LOGGER.debug("ABBA auto byte 8: %d → auto_start_stop=%s", auto_byte, self.data["auto_start_stop"])
+
+            # Byte 9: Supply voltage (direct decimal value in V)
+            self.data["supply_voltage"] = float(_u8_to_number(data[9]))
+            _LOGGER.debug("ABBA voltage byte 9: %d V", self.data["supply_voltage"])
+
+            # Byte 10: Temperature unit (0=Celsius, 1=Fahrenheit)
+            temp_unit_byte = _u8_to_number(data[10])
+            self.data["temp_unit"] = temp_unit_byte
+            self._heater_uses_fahrenheit = (temp_unit_byte == 1)
+            _LOGGER.debug("ABBA temp_unit byte 10: %d (%s)",
+                         temp_unit_byte, "Fahrenheit" if self._heater_uses_fahrenheit else "Celsius")
+
+            # Byte 11: Environment/Cabin temperature
+            # Need to subtract 30 for Celsius, 22 for Fahrenheit
+            env_temp_raw = _u8_to_number(data[11])
+            if self._heater_uses_fahrenheit:
+                env_temp = env_temp_raw - 22
+            else:
+                env_temp = env_temp_raw - 30
+            self.data["cab_temperature"] = float(env_temp)
+            self.data["cab_temperature_raw"] = float(env_temp)
+            _LOGGER.debug("ABBA env_temp byte 11: raw=%d, converted=%d°%s",
+                         env_temp_raw, env_temp, "F" if self._heater_uses_fahrenheit else "C")
+
+            # Bytes 12-13: Device/Case temperature (uint16, little endian)
+            case_temp = _u8_to_number(data[12]) | (_u8_to_number(data[13]) << 8)
+            self.data["case_temperature"] = float(case_temp)
+            _LOGGER.debug("ABBA case_temp bytes 12-13: %d°C", case_temp)
+
+            # Byte 14: Altitude unit (0=Meters, 1=Feet)
+            altitude_unit_byte = _u8_to_number(data[14])
+            self.data["altitude_unit"] = altitude_unit_byte
+            _LOGGER.debug("ABBA altitude_unit byte 14: %d (%s)",
+                         altitude_unit_byte, "Feet" if altitude_unit_byte == 1 else "Meters")
+
+            # Byte 15: High-altitude mode
+            high_alt_byte = _u8_to_number(data[15])
+            _LOGGER.debug("ABBA high_altitude byte 15: %d", high_alt_byte)
+
+            # Bytes 16-17: Altitude (uint16, little endian)
+            altitude = _u8_to_number(data[16]) | (_u8_to_number(data[17]) << 8)
+            self.data["altitude"] = altitude
+            _LOGGER.debug("ABBA altitude bytes 16-17: %d", altitude)
+
+            # No error code in ABBA protocol status response
+            self.data["error_code"] = 0
+
+            _LOGGER.info(
+                "✅ ABBA parsed: status=%s, mode=%s, level/temp=%s, cab=%d°C, case=%d°C, voltage=%dV",
+                "Heating" if status_byte == 1 else "Off" if status_byte == 0 else "Cooling",
+                "Thermostat" if mode_byte == 1 else "Manual",
+                self.data.get("set_temp") or self.data.get("set_level"),
+                self.data["cab_temperature"],
+                self.data["case_temperature"],
+                self.data["supply_voltage"]
+            )
+
+        except Exception as err:
+            _LOGGER.error("ABBA parse error: %s", err)
+            # Set minimal data to show device is connected
+            self.data["connected"] = True
+            self.data["running_state"] = 0
+            self.data["running_step"] = 0
+            self.data["error_code"] = 0
 
         self._notification_data = data
 
