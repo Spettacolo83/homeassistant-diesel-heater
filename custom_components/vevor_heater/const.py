@@ -86,7 +86,7 @@ ABBA_ERROR_COMMUNICATION: Final = 7
 ABBA_ERROR_FLAMEOUT: Final = 8
 ABBA_ERROR_SENSOR: Final = 9
 ABBA_ERROR_STARTUP: Final = 10
-ABBA_ERROR_CO_ALARM: Final = 11
+ABBA_ERROR_CO_ALARM: Final = 192  # 0xC0 hex - clever pun: looks like "CO" (Carbon Monoxide)
 
 ABBA_ERROR_NAMES: Final = {
     ABBA_ERROR_NONE: "No fault",
@@ -99,7 +99,7 @@ ABBA_ERROR_NAMES: Final = {
     ABBA_ERROR_FLAMEOUT: "E8 - Flameout",
     ABBA_ERROR_SENSOR: "E9 - Sensor fault",
     ABBA_ERROR_STARTUP: "E10 - Startup failure",
-    ABBA_ERROR_CO_ALARM: "ECO - Carbon monoxide alarm",
+    ABBA_ERROR_CO_ALARM: "EC0 - Carbon monoxide alarm",  # 0xC0 = 192 decimal
 }
 
 # Running modes
