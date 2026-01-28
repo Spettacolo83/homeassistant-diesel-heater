@@ -53,12 +53,15 @@ from .const import (
     MIN_HEATER_OFFSET,
     NOTIFY_UUID,
     PROTOCOL_HEADER_ABBA,
+    ABBA_ERROR_NAMES,
+    ABBA_STATUS_MAP,
     RUNNING_MODE_LEVEL,
     RUNNING_MODE_MANUAL,
     RUNNING_MODE_TEMPERATURE,
     RUNNING_STEP_COOLDOWN,
     RUNNING_STEP_RUNNING,
     RUNNING_STEP_STANDBY,
+    RUNNING_STEP_VENTILATION,
     SENSOR_TEMP_MAX,
     SENSOR_TEMP_MIN,
     SERVICE_UUID,
@@ -1301,34 +1304,38 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         try:
             self.data["connected"] = True
 
-            # Byte 4: Status (0=Off, 1=Heating, 2=Cooling)
+            # Byte 4: Status (0x00=Off, 0x01=Running, 0x02=Cooldown, 0x04=Ventilation, 0x06=Standby)
             status_byte = _u8_to_number(data[4])
-            self.data["running_state"] = 1 if status_byte in (1, 2) else 0
+            # Running state: 1 if actively heating (status 0x01), 0 otherwise
+            self.data["running_state"] = 1 if status_byte == 0x01 else 0
 
-            # Map ABBA status to running_step
-            # 0=Off → Standby, 1=Heating → Running, 2=Cooling → Cooldown
-            if status_byte == 0:
-                self.data["running_step"] = RUNNING_STEP_STANDBY
-            elif status_byte == 1:
-                self.data["running_step"] = RUNNING_STEP_RUNNING
-            elif status_byte == 2:
-                self.data["running_step"] = RUNNING_STEP_COOLDOWN
-            else:
-                self.data["running_step"] = status_byte
+            # Map ABBA status to running_step using the status map
+            self.data["running_step"] = ABBA_STATUS_MAP.get(status_byte, status_byte)
 
-            _LOGGER.debug("ABBA status byte 4: %d → running_state=%d, running_step=%d",
+            _LOGGER.debug("ABBA status byte 4: 0x%02X → running_state=%d, running_step=%d",
                          status_byte, self.data["running_state"], self.data["running_step"])
 
-            # Byte 5: Mode (0=Manual, 1=Thermostat)
+            # Byte 5: Mode (0x00=Level, 0x01=Temperature, 0xFF=Error)
             mode_byte = _u8_to_number(data[5])
-            # Map: ABBA 0=Manual → RUNNING_MODE_LEVEL, ABBA 1=Thermostat → RUNNING_MODE_TEMPERATURE
-            if mode_byte == 0:
-                self.data["running_mode"] = RUNNING_MODE_LEVEL
-            elif mode_byte == 1:
-                self.data["running_mode"] = RUNNING_MODE_TEMPERATURE
+
+            # Check for error condition: if byte 5 = 0xFF, byte 6 contains error code
+            if mode_byte == 0xFF:
+                error_code = _u8_to_number(data[6])
+                self.data["error_code"] = error_code
+                error_name = ABBA_ERROR_NAMES.get(error_code, f"E{error_code} - Unknown error")
+                _LOGGER.warning("⚠️ ABBA error detected: byte 5=0xFF, error_code=%d (%s)",
+                               error_code, error_name)
+                # Keep last known mode when in error state
             else:
-                self.data["running_mode"] = mode_byte
-            _LOGGER.debug("ABBA mode byte 5: %d → running_mode=%d", mode_byte, self.data["running_mode"])
+                # Normal mode: 0x00=Level, 0x01=Temperature
+                self.data["error_code"] = 0
+                if mode_byte == 0x00:
+                    self.data["running_mode"] = RUNNING_MODE_LEVEL
+                elif mode_byte == 0x01:
+                    self.data["running_mode"] = RUNNING_MODE_TEMPERATURE
+                else:
+                    self.data["running_mode"] = mode_byte
+                _LOGGER.debug("ABBA mode byte 5: 0x%02X → running_mode=%d", mode_byte, self.data["running_mode"])
 
             # Byte 6: Gear/Target temp (depends on mode)
             gear_byte = _u8_to_number(data[6])
@@ -1390,18 +1397,31 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self.data["altitude"] = altitude
             _LOGGER.debug("ABBA altitude bytes 16-17: %d", altitude)
 
-            # No error code in ABBA protocol status response
-            self.data["error_code"] = 0
+            # Build status name for logging
+            status_names = {0x00: "Off", 0x01: "Heating", 0x02: "Cooldown", 0x04: "Ventilation", 0x06: "Standby"}
+            status_name = status_names.get(status_byte, f"Unknown(0x{status_byte:02X})")
 
-            _LOGGER.info(
-                "✅ ABBA parsed: status=%s, mode=%s, level/temp=%s, cab=%d°C, case=%d°C, voltage=%dV",
-                "Heating" if status_byte == 1 else "Off" if status_byte == 0 else "Cooling",
-                "Thermostat" if mode_byte == 1 else "Manual",
-                self.data.get("set_temp") or self.data.get("set_level"),
-                self.data["cab_temperature"],
-                self.data["case_temperature"],
-                self.data["supply_voltage"]
-            )
+            # Log error if present
+            error_code = self.data.get("error_code", 0)
+            if error_code > 0:
+                error_name = ABBA_ERROR_NAMES.get(error_code, f"E{error_code}")
+                _LOGGER.info(
+                    "⚠️ ABBA parsed: status=%s, ERROR=%s, cab=%d°C, case=%d°C, voltage=%dV",
+                    status_name, error_name,
+                    self.data["cab_temperature"],
+                    self.data["case_temperature"],
+                    self.data["supply_voltage"]
+                )
+            else:
+                mode_name = "Thermostat" if self.data.get("running_mode") == RUNNING_MODE_TEMPERATURE else "Level"
+                _LOGGER.info(
+                    "✅ ABBA parsed: status=%s, mode=%s, level/temp=%s, cab=%d°C, case=%d°C, voltage=%dV",
+                    status_name, mode_name,
+                    self.data.get("set_temp") or self.data.get("set_level"),
+                    self.data["cab_temperature"],
+                    self.data["case_temperature"],
+                    self.data["supply_voltage"]
+                )
 
         except Exception as err:
             _LOGGER.error("ABBA parse error: %s", err)

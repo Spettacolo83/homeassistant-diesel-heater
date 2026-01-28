@@ -47,7 +47,7 @@ ABBA_CMD_STATUS: Final = bytes.fromhex("baab04cc00000035")  # Status/ACK request
 RUNNING_STATE_OFF: Final = 0
 RUNNING_STATE_ON: Final = 1
 
-# Running steps
+# Running steps (AA55 protocol)
 RUNNING_STEP_STANDBY: Final = 0
 RUNNING_STEP_SELF_TEST: Final = 1
 RUNNING_STEP_IGNITION: Final = 2
@@ -62,6 +62,44 @@ RUNNING_STEP_NAMES: Final = {
     RUNNING_STEP_RUNNING: "Running",
     RUNNING_STEP_COOLDOWN: "Cooldown",
     RUNNING_STEP_VENTILATION: "Ventilation",
+}
+
+# ABBA Protocol status mapping (byte 4)
+# Different from AA55 - maps to same RUNNING_STEP values for consistency
+ABBA_STATUS_MAP: Final = {
+    0x00: RUNNING_STEP_STANDBY,      # Powered Off
+    0x01: RUNNING_STEP_RUNNING,      # Running/Heating
+    0x02: RUNNING_STEP_COOLDOWN,     # Cooldown
+    0x04: RUNNING_STEP_VENTILATION,  # Ventilation
+    0x06: RUNNING_STEP_STANDBY,      # Standby
+}
+
+# ABBA Protocol error codes (when byte 5 = 0xFF, byte 6 = error code)
+# Different from AA55 error codes
+ABBA_ERROR_NONE: Final = 0
+ABBA_ERROR_VOLTAGE: Final = 2
+ABBA_ERROR_IGNITER: Final = 3
+ABBA_ERROR_FUEL_PUMP: Final = 4
+ABBA_ERROR_OVER_TEMP: Final = 5
+ABBA_ERROR_FAN: Final = 6
+ABBA_ERROR_COMMUNICATION: Final = 7
+ABBA_ERROR_FLAMEOUT: Final = 8
+ABBA_ERROR_SENSOR: Final = 9
+ABBA_ERROR_STARTUP: Final = 10
+ABBA_ERROR_CO_ALARM: Final = 11
+
+ABBA_ERROR_NAMES: Final = {
+    ABBA_ERROR_NONE: "No fault",
+    ABBA_ERROR_VOLTAGE: "E2 - Voltage fault",
+    ABBA_ERROR_IGNITER: "E3 - Igniter fault",
+    ABBA_ERROR_FUEL_PUMP: "E4 - Fuel pump fault",
+    ABBA_ERROR_OVER_TEMP: "E5 - Over-temperature",
+    ABBA_ERROR_FAN: "E6 - Fan fault",
+    ABBA_ERROR_COMMUNICATION: "E7 - Communication fault",
+    ABBA_ERROR_FLAMEOUT: "E8 - Flameout",
+    ABBA_ERROR_SENSOR: "E9 - Sensor fault",
+    ABBA_ERROR_STARTUP: "E10 - Startup failure",
+    ABBA_ERROR_CO_ALARM: "ECO - Carbon monoxide alarm",
 }
 
 # Running modes
