@@ -16,7 +16,7 @@ Control your Vevor/BYD Diesel Heater from Home Assistant via Bluetooth.
 
 ## Features
 
-- 🌡️ **Climate Entity** - Full thermostat control with target temperature
+- 🌡️ **Climate Entity** - Full thermostat control with target temperature and presets (Away, Comfort)
 - 🔥 **Heater Level Control** - Adjust heating power (1-10) via number entity
 - ⚙️ **Running Mode Selection** - Switch between Level and Temperature modes
 - 📊 **Comprehensive Sensors** - Monitor temperature, voltage, altitude, and heater status
@@ -27,6 +27,12 @@ Control your Vevor/BYD Diesel Heater from Home Assistant via Bluetooth.
 - 🔌 **Bluetooth LE** - Direct local connection, no cloud required
 - ⚡ **Real-time Updates** - 30-second polling interval
 - 💾 **Data Persistence** - Fuel consumption data saved across restarts
+- 🌐 **Multi-Protocol Support** - Works with AA55, AA66, and ABBA protocol heaters
+- 🛠️ **Configuration Settings** - AirHeaterBLE-like settings:
+  - Language, Temperature Unit, Altitude Unit
+  - Tank Volume, Pump Type, Temperature Offset
+- 🌡️ **Auto Temperature Offset** - Automatic offset adjustment using external temperature sensor
+- ⏰ **Time Sync** - Synchronize heater clock with Home Assistant
 
 ## Table of Contents
 
@@ -45,12 +51,29 @@ Control your Vevor/BYD Diesel Heater from Home Assistant via Bluetooth.
 
 ## Supported Devices
 
-This integration has been tested with:
-- Vevor Diesel Heater (BYD variant)
-- Protocol: AA66 (20-byte unencrypted)
-- Bluetooth Service UUID: `0000ffe0-0000-1000-8000-00805f9b34fb`
+This integration supports **multiple protocols** and has been tested with various diesel heaters:
 
-Other Vevor diesel heaters using similar protocols (AA55 encrypted/unencrypted) may also work.
+### Supported Protocols
+
+| Protocol | Status | Apps | Notes |
+|----------|--------|------|-------|
+| AA55 Unencrypted | ✅ Fully Supported | AirHeaterBLE | Original Vevor protocol |
+| AA55 Encrypted | ✅ Fully Supported | AirHeaterBLE | XOR encrypted variant |
+| AA66 Unencrypted | ✅ Fully Supported | AirHeaterBLE | 20-byte variant |
+| AA66 Encrypted | ✅ Fully Supported | AirHeaterBLE | XOR encrypted, Fahrenheit internal |
+| ABBA | ✅ Fully Supported | AirHeaterCC/HeaterCC | Different command structure |
+
+### Bluetooth Service UUIDs
+
+- **FFE0** Service: `0000ffe0-0000-1000-8000-00805f9b34fb` (AA55/AA66 heaters)
+- **FFF0** Service: `0000fff0-0000-1000-8000-00805f9b34fb` (ABBA/HeaterCC heaters)
+
+### Tested Heaters
+
+- Vevor Diesel Heater (various models)
+- BYD Diesel Heaters
+- HeaterCC compatible heaters
+- Generic Chinese diesel heaters using AirHeaterBLE or AirHeaterCC apps
 
 ## Screenshots
 
@@ -441,7 +464,30 @@ This integration communicates via Bluetooth LE using the Vevor/BYD diesel heater
 
 ## Changelog
 
-### Version 1.0.13 (Latest)
+### Version 1.0.26 (Latest)
+- **ABBA Protocol Support**: Full support for HeaterCC/AirHeaterCC app heaters
+  - Status parsing (Heating, Off, Cooldown, Ventilation, Standby)
+  - Temperature readings (cabin and case)
+  - Mode display (Level/Temperature)
+  - Voltage and error code detection
+- **Configuration Settings** (AirHeaterBLE-like):
+  - Language selection (English, Chinese, German, Silent, Russian)
+  - Temperature Unit (Celsius/Fahrenheit)
+  - Altitude Unit (Meters/Feet)
+  - Tank Volume selection (5L-50L)
+  - Pump Type selection (16µl, 22µl, 28µl, 32µl)
+  - Temperature Offset (-9 to +9)
+- **Auto Temperature Offset**: Automatic offset adjustment using external HA temperature sensor
+  - Configure external sensor in integration options
+  - Automatically calculates and sends offset to heater
+  - Configurable maximum offset (1-9)
+- **Climate Presets**: Added Away and Comfort presets with configurable temperatures
+- **Entity Organization**: Diagnostic sensors moved to diagnostic category, configuration entities to config category
+- **Runtime Tracking**: Track daily and total runtime hours with history
+- **Improved Error Handling**: Better error detection and reporting for all protocols
+- **Debug Service**: `vevor_heater.send_command` for protocol debugging
+
+### Version 1.0.13
 - **BLE Connection Resilience**: Improved stability for intermittent Bluetooth connections
   - Added "stale data tolerance" - keeps last valid sensor values for 3 failed cycles instead of immediately showing unavailable
   - Reduced log spam by using debug level for repeated connection failures
