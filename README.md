@@ -12,7 +12,7 @@
 
 > This is a maintained fork of the original [homeassistant-vevor-heater](https://github.com/MSDATDE/homeassistant-vevor-heater) by [@MSDATDE](https://github.com/MSDATDE), enhanced with HACS 2.0+ compatibility and additional improvements.
 
-Control your Vevor/BYD Diesel Heater from Home Assistant via Bluetooth.
+Control your Vevor/BYD/HeaterCC Diesel Heater from Home Assistant via Bluetooth. Supports AirHeaterBLE (AA55/AA66) and AirHeaterCC (ABBA) protocol heaters.
 
 ## Features
 
@@ -205,8 +205,19 @@ Before adding the integration, you need to find your heater's Bluetooth MAC addr
 1. Go to **Settings** → **Devices & Services**
 2. Click **"+ Add Integration"**
 3. Search for **"Vevor Diesel Heater"**
-4. Enter your heater's MAC address (found using the script above)
-5. Click **"Submit"**
+4. The integration will auto-discover nearby heaters, or you can enter the MAC address manually
+5. Enter your heater's **PIN** (default: `1234`, change if you set a custom PIN via the Vevor app)
+6. Click **"Submit"**
+
+### Integration Options
+
+After setup, go to the integration's **Configure** button to access these options:
+
+- **PIN**: Change the heater connection PIN
+- **Preset Away Temperature**: Target temperature for Away preset (default: 16°C)
+- **Preset Comfort Temperature**: Target temperature for Comfort preset (default: 22°C)
+- **External Temperature Sensor**: Select an external HA temperature sensor for auto offset adjustment
+- **Auto Offset Max**: Maximum offset value when using external sensor (1-9, only shown when external sensor is configured)
 
 ### Entities Created
 
@@ -216,37 +227,56 @@ After setup, you'll have these entities:
 - `climate.vevor_heater` - Main thermostat control
   - Set target temperature (8-36°C)
   - Turn heater ON/OFF
+  - Presets: Away, Comfort (configurable temperatures)
   - Works in Temperature Mode
 
 #### Select
-- `select.vevor_heater_running_mode` - Mode selector
-  - Level Mode - Set heating level (1-10) for fixed power operation
-  - Temperature Mode - Automatic temperature control
-  - Note: Manual mode only accessible via physical heater buttons
+- `select.vevor_heater_running_mode` - Mode selector (Off, Level, Temperature)
+- `select.vevor_heater_language` - Heater language (English, Chinese, German, Silent, Russian) *(Config)*
+- `select.vevor_heater_temperature_unit` - Temperature unit (Celsius, Fahrenheit) *(Config)*
+- `select.vevor_heater_altitude_unit` - Altitude unit (Meters, Feet) *(Config)*
+- `select.vevor_heater_tank_volume` - Tank volume (None, 5L-50L) *(Config)*
+- `select.vevor_heater_pump_type` - Pump type (16µl, 22µl, 28µl, 32µl) *(Config)*
 
 #### Number
 - `number.vevor_heater_level` - Set heater power level (1-10)
 - `number.vevor_heater_target_temperature` - Set target temperature (8-36°C)
+- `number.vevor_heater_temperature_offset` - Temperature offset (-9 to +9) *(Config)*
 
 #### Sensors
-- `sensor.vevor_diesel_heater_case_temperature` - Heater case temperature (°C)
+- `sensor.vevor_diesel_heater_case_temperature` - Heater case temperature (°C) *(Diagnostic)*
 - `sensor.vevor_diesel_heater_interior_temperature` - Room/cabin temperature (°C)
-- `sensor.vevor_diesel_heater_supply_voltage` - Power supply voltage (V)
-- `sensor.vevor_diesel_heater_altitude` - Altitude compensation setting (m)
-- `sensor.vevor_diesel_heater_running_step` - Current operation step
-- `sensor.vevor_diesel_heater_error` - Error status
+- `sensor.vevor_diesel_heater_supply_voltage` - Power supply voltage (V) *(Diagnostic)*
+- `sensor.vevor_diesel_heater_altitude` - Altitude compensation setting (m) *(Diagnostic)*
+- `sensor.vevor_diesel_heater_running_step` - Current operation step (Standby, Self-test, Ignition, Running, Cooldown, Ventilation)
+- `sensor.vevor_diesel_heater_error` - Error status *(Diagnostic)*
 - `sensor.vevor_diesel_heater_running_mode` - Current running mode
 - `sensor.vevor_diesel_heater_set_level` - Current set level
 - `sensor.vevor_diesel_heater_hourly_fuel_consumption` - Instantaneous fuel consumption rate (L/h)
 - `sensor.vevor_diesel_heater_daily_fuel_consumed` - Daily fuel consumption (L, resets at midnight)
 - `sensor.vevor_diesel_heater_total_fuel_consumed` - Total fuel consumed since installation (L)
-- `sensor.vevor_diesel_heater_daily_fuel_history` - Historical daily consumption data (stores last 30 days)
+- `sensor.vevor_diesel_heater_daily_fuel_history` - Historical daily fuel consumption (stores last 30 days) *(Diagnostic)*
+- `sensor.vevor_diesel_heater_daily_runtime` - Daily runtime hours (resets at midnight) *(Diagnostic)*
+- `sensor.vevor_diesel_heater_total_runtime` - Total runtime hours *(Diagnostic)*
+- `sensor.vevor_diesel_heater_daily_runtime_history` - Historical daily runtime (stores last 30 days) *(Diagnostic)*
 
 #### Binary Sensors
-- `binary_sensor.vevor_diesel_heater_active` - Heater active status
+- `binary_sensor.vevor_diesel_heater_active` - Heater active status *(Diagnostic)*
+- `binary_sensor.vevor_diesel_heater_problem` - Heater problem/error indicator *(Diagnostic)*
 
 #### Switches
 - `switch.vevor_heater_power` - Simple ON/OFF control
+- `switch.vevor_heater_auto_start_stop` - Auto Start/Stop toggle (heater fully stops at target temp +2°C)
+- `switch.vevor_heater_auto_offset` - Auto Temperature Offset toggle *(Config)*
+
+#### Buttons
+- `button.vevor_heater_sync_time` - Sync heater clock with Home Assistant time *(Config)*
+
+#### Fan
+- `fan.vevor_heater_heater_level` - Heater level control as fan entity (level 1-10)
+
+> Entities marked *(Diagnostic)* appear in the Diagnostic section of the device page.
+> Entities marked *(Config)* appear in the Configuration section.
 
 ## Dashboard Cards
 
@@ -449,18 +479,71 @@ content: |
 
 ## Protocol Details
 
-This integration communicates via Bluetooth LE using the Vevor/BYD diesel heater protocol:
+This integration communicates via Bluetooth LE and supports multiple protocol variants:
 
-- **Service UUID**: `0000ffe0-0000-1000-8000-00805f9b34fb`
-- **Characteristic UUID**: `0000ffe1-0000-1000-8000-00805f9b34fb` (read/write/notify)
-- **Protocol**: AA66 (20-byte unencrypted) or AA55 (encrypted variants)
-- **Default Passkey**: `1234`
+### AA55/AA66 Protocol (AirHeaterBLE heaters)
 
-### Commands
-- Command 1: Status query
-- Command 2: Set running mode
-- Command 3: Turn ON (arg=1) / OFF (arg=0)
-- Command 4: Set level or temperature
+- **Service UUID**: `0000ffe0-0000-1000-8000-00805f9b34fb` or `0000fff0-0000-1000-8000-00805f9b34fb`
+- **Characteristic UUID**: `0000ffe1` / `0000fff1` (read/write/notify)
+- **Variants**: AA55 (18/20-byte), AA66 (20-byte), encrypted and unencrypted
+- **Encryption**: XOR with key "password"
+- **Default Passkey**: `1234` (configurable)
+
+#### AA55/AA66 Commands
+
+| Command | Function | Argument |
+|---------|----------|----------|
+| 1 | Status query | 0 |
+| 2 | Set running mode | 0=Off, 1=Level, 2=Temperature |
+| 3 | Turn ON/OFF | 0=OFF, 1=ON |
+| 4 | Set level or temperature | 1-10 (level) or 8-36 (temp) |
+| 10 | Time sync | 60 * hours + minutes |
+| 14 | Set language | 0=EN, 1=CN, 2=DE, 3=Silent, 4=RU |
+| 15 | Set temp unit | 0=Celsius, 1=Fahrenheit |
+| 16 | Set tank volume | 0-10 (index-based) |
+| 17 | Set pump type | 0-3 (16µl, 22µl, 28µl, 32µl) |
+| 18 | Auto Start/Stop | 0=Off, 1=On |
+| 19 | Set altitude unit | 0=Meters, 1=Feet |
+| 20 | Set temp offset | -9 to +9 |
+
+### ABBA Protocol (HeaterCC/AirHeaterCC heaters)
+
+- **Service UUID**: `0000fff0-0000-1000-8000-00805f9b34fb`
+- **Write UUID**: `0000fff2` / **Notify UUID**: `0000fff1`
+- **Header**: `0xABBA` (notifications) / `0xBAAB` (commands)
+
+#### ABBA Status Response (21 bytes)
+
+| Byte | Field | Values |
+|------|-------|--------|
+| 0-3 | Header | `ABBA11CC` |
+| 4 | Status | 0=Off, 1=Heating, 2=Cooldown, 4=Ventilation, 6=Standby |
+| 5 | Mode | 0=Level, 1=Temperature, 0xFF=Error |
+| 6 | Gear/Temp | Level (1-6) or target temp (°C) |
+| 8 | Auto Start/Stop | 0=Off, 1=On |
+| 9 | Voltage | Decimal value (V) |
+| 10 | Temp Unit | 0=Celsius, 1=Fahrenheit |
+| 11 | Env Temp | Raw - 30 (°C) or Raw - 22 (°F) |
+| 12-13 | Case Temp | uint16 (°C) |
+| 14 | Altitude Unit | 0=Meters, 1=Feet |
+| 15 | High Altitude | 0=Normal, 1=High |
+| 16-17 | Altitude | uint16 |
+| 20 | Checksum | Validation byte |
+
+#### ABBA Error Codes (when byte 5 = 0xFF)
+
+| Code | Error |
+|------|-------|
+| 2 | E2 - Voltage fault |
+| 3 | E3 - Igniter fault |
+| 4 | E4 - Fuel pump fault |
+| 5 | E5 - Over-temperature |
+| 6 | E6 - Fan fault |
+| 7 | E7 - Communication fault |
+| 8 | E8 - Flameout |
+| 9 | E9 - Sensor fault |
+| 10 | E10 - Startup failure |
+| 192 | EC0 - Carbon monoxide alarm |
 
 ## Changelog
 
@@ -469,23 +552,93 @@ This integration communicates via Bluetooth LE using the Vevor/BYD diesel heater
   - Status parsing (Heating, Off, Cooldown, Ventilation, Standby)
   - Temperature readings (cabin and case)
   - Mode display (Level/Temperature)
-  - Voltage and error code detection
+  - Voltage reading and ABBA-specific error code detection (E2-E10, EC0)
 - **Configuration Settings** (AirHeaterBLE-like):
   - Language selection (English, Chinese, German, Silent, Russian)
   - Temperature Unit (Celsius/Fahrenheit)
   - Altitude Unit (Meters/Feet)
-  - Tank Volume selection (5L-50L)
+  - Tank Volume selection (None, 5L-50L) via index-based dropdown
   - Pump Type selection (16µl, 22µl, 28µl, 32µl)
   - Temperature Offset (-9 to +9)
 - **Auto Temperature Offset**: Automatic offset adjustment using external HA temperature sensor
   - Configure external sensor in integration options
   - Automatically calculates and sends offset to heater
   - Configurable maximum offset (1-9)
+  - Persists state across restarts
 - **Climate Presets**: Added Away and Comfort presets with configurable temperatures
 - **Entity Organization**: Diagnostic sensors moved to diagnostic category, configuration entities to config category
-- **Runtime Tracking**: Track daily and total runtime hours with history
 - **Improved Error Handling**: Better error detection and reporting for all protocols
-- **Debug Service**: `vevor_heater.send_command` for protocol debugging
+- **Debug Service**: `vevor_heater.send_command` for raw BLE command debugging
+  - Target specific heaters by MAC address
+  - Supports negative argument values (-128 to 127)
+- Special thanks to @Xev and @postal for extensive testing and ABBA protocol research
+
+### Version 1.0.25
+- **Statistics Graphing Fix**: Fixed `async_add_external_statistics` for HA 2026.11+ compatibility
+  - Fixed timestamp format (now uses midnight instead of end of day)
+  - Added `mean_type` and `unit_class` to StatisticMetaData
+  - Statistics now appear correctly in Developer Tools → Statistics
+- **Preset Mode Fix**: Fixed PRESET_NONE not persisting after page refresh
+  - Added `_user_cleared_preset` flag to prevent auto-detection from overriding "None" selection
+  - Fixed preset_mode to return "none" string instead of Python None
+
+### Version 1.0.22
+- **Statistics Fix**: Fixed "Invalid statistic_id" error preventing statistics graphs from working
+  - `statistic_id` now includes device MAC address for uniqueness
+  - Supports multiple heaters without conflicts
+
+### Version 1.0.21
+- **Custom PIN Support**: Heaters with custom PINs can now be configured
+  - Added PIN option in config flow during setup (default: 1234)
+  - PIN can be changed later in integration options
+  - Users who changed their PIN via the Vevor app can now use this integration
+
+### Version 1.0.20
+- **Auto Start/Stop Switch**: New switch entity to toggle automatic temperature control with full stop
+  - When enabled in Temperature mode, the heater completely stops when room temp reaches 2°C above target
+  - Without this, the heater only reduces power to level 1 but keeps running
+- **Time Sync Button**: Sync heater's internal clock with Home Assistant time
+- **Ventilation Mode Detection**: Now properly detects Ventilation mode (running_step=6)
+- **Better Temperature Unit Detection**: Uses byte 27 to detect Celsius vs Fahrenheit instead of `>50` heuristic
+- **Auto Start/Stop State Parsing**: Reads byte 31 to show current Auto Start/Stop state
+- Based on protocol analysis by @Xev and the [warehog/esphome-diesel-heater-ble](https://github.com/warehog/esphome-diesel-heater-ble) project
+
+### Version 1.0.19
+- **Set Level Statistics**: Added `state_class: measurement` to enable graphing in HA statistics
+- **Level Control Availability Fix**: Level control (fan entity) is now only available in Level Mode
+  - In Manual mode (mode 0), level control shows as unavailable (only Start/Stop allowed)
+  - In Temperature mode (mode 2), level control is unavailable (automatic)
+
+### Version 1.0.18
+- **Temperature Unit Auto-Detection Fix**: Fixed temperature setting on some mode 4 heaters
+  - Auto-detect whether heater uses Celsius or Fahrenheit from its response
+  - Send temperature commands in the same unit the heater expects
+  - Fixes issues on Celsius-based mode 4 heaters (e.g., Vevor XMZ-F-D5)
+
+### Version 1.0.17
+- **Runtime Tracking**: Track how long your heater runs with new sensors
+  - Daily Runtime - Hours of operation today (resets at midnight)
+  - Total Runtime - Cumulative hours of operation
+  - Daily Runtime History - Last 30 days of runtime data
+  - Tracks only when heater is in "Running" step
+  - Persistent storage and native HA Statistics integration for graphing
+
+### Version 1.0.16
+- **18-byte AA55 Protocol Support**: Some heaters send 18-byte AA55 packets instead of 20-byte
+  - Integration now accepts both variants
+  - Fixes "Unknown protocol, length: 18" warnings
+  - Thanks to @zak4206 for identifying this issue
+
+### Version 1.0.15
+- **OptionsFlow Fix**: Fixed crash on Home Assistant 2024.1+
+  - Fixed `AttributeError: property 'config_entry' has no setter`
+  - `OptionsFlow.config_entry` is now automatically set by the framework
+
+### Version 1.0.14
+- **F-variant UUID Support**: Fixed connection for F-variant heaters (e.g., ZM8006)
+  - Integration now automatically tries both UUID variants: `FFE0/FFE1` and `FFF0/FFF1`
+  - Fixes "Could not find heater characteristic" error
+- **Renamed to Auto Temperature Mode**: Better aligns with AirHeaterBLE app terminology
 
 ### Version 1.0.13
 - **BLE Connection Resilience**: Improved stability for intermittent Bluetooth connections
@@ -632,15 +785,25 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - **Original Author**: [@MSDATDE](https://github.com/MSDATDE) - Thank you for creating this excellent integration!
 - **Original Repository**: [MSDATDE/homeassistant-vevor-heater](https://github.com/MSDATDE/homeassistant-vevor-heater)
+- **@Xev** - Extensive testing, protocol research, ABBA protocol analysis, and invaluable feedback throughout development
+- **@postal** - ABBA protocol byte mapping and verification
+- **@triptyx-ux** - ABBA heater testing and confirmation
+- **@zak4206** - 18-byte AA55 protocol identification
+- **@warehog** - [esphome-diesel-heater-ble](https://github.com/warehog/esphome-diesel-heater-ble) protocol documentation and AirHeaterBLE app analysis
 - Based on the [vevor-ble-bridge](https://github.com/andyrak/vevor-ble-bridge) protocol documentation
-- Thanks to the Home Assistant community for support
+- Thanks to the Home Assistant community for support and testing
 
 ## Support
 
 If you encounter issues, please:
 1. Check the [Issues](https://github.com/Spettacolo83/homeassistant-vevor-heater/issues) page
-2. Enable debug logging and include logs in your report
-3. Provide your heater model and protocol type (AA55/AA66)
+2. Enable debug logging and include logs in your report:
+   ```yaml
+   logger:
+     logs:
+       custom_components.vevor_heater: debug
+   ```
+3. Provide your heater model, protocol type (AA55/AA66/ABBA), and which app works with your heater (AirHeaterBLE or AirHeaterCC)
 
 ---
 
