@@ -28,6 +28,7 @@ async def async_setup_entry(
         VevorAutoOffsetSwitch(coordinator),
         VevorTempUnitSwitch(coordinator),
         VevorAltitudeUnitSwitch(coordinator),
+        VevorHighAltitudeSwitch(coordinator),
     ])
 
 
@@ -265,6 +266,58 @@ class VevorAltitudeUnitSwitch(CoordinatorEntity[VevorHeaterCoordinator], SwitchE
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Switch to Meters."""
         await self.coordinator.async_set_altitude_unit(use_feet=False)
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+
+class VevorHighAltitudeSwitch(CoordinatorEntity[VevorHeaterCoordinator], SwitchEntity):
+    """Vevor Heater High Altitude Mode switch (ABBA/HeaterCC only).
+
+    Enables high altitude compensation for heaters operating at
+    high elevations where air density is lower.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "High Altitude Mode"
+    _attr_icon = "mdi:image-filter-hdr"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the switch."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_high_altitude"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, coordinator.address)},
+            "name": "Vevor Diesel Heater",
+            "manufacturer": "Vevor",
+            "model": "Diesel Heater",
+        }
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available (ABBA devices only)."""
+        if not self.coordinator.data.get("connected", False):
+            return False
+        return self.coordinator._is_abba_device
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return true if high altitude mode is enabled."""
+        high_alt = self.coordinator.data.get("high_altitude")
+        if high_alt is not None:
+            return high_alt == 1
+        return None
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Enable high altitude mode."""
+        await self.coordinator.async_set_high_altitude(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Disable high altitude mode."""
+        await self.coordinator.async_set_high_altitude(False)
 
     @callback
     def _handle_coordinator_update(self) -> None:

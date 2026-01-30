@@ -1442,9 +1442,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             _LOGGER.debug("ABBA altitude_unit byte 14: %d (%s)",
                          altitude_unit_byte, "Feet" if altitude_unit_byte == 1 else "Meters")
 
-            # Byte 15: High-altitude mode
+            # Byte 15: High-altitude mode (0=Off, 1=On)
             high_alt_byte = _u8_to_number(data[15])
-            _LOGGER.debug("ABBA high_altitude byte 15: %d", high_alt_byte)
+            self.data["high_altitude"] = high_alt_byte
+            _LOGGER.debug("ABBA high_altitude byte 15: %d (%s)",
+                         high_alt_byte, "On" if high_alt_byte else "Off")
 
             # Bytes 16-17: Altitude (uint16, little endian)
             altitude = _u8_to_number(data[16]) | (_u8_to_number(data[17]) << 8)
@@ -1660,6 +1662,21 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 return self._build_abba_command("baab04bbac0000")  # Const temp mode
             else:
                 return self._build_abba_command("baab04bbad0000")  # Other mode
+        elif command == 15:
+            # Temperature unit
+            if argument == 1:  # Fahrenheit
+                return self._build_abba_command("baab04bba80000")
+            else:  # Celsius
+                return self._build_abba_command("baab04bba70000")
+        elif command == 19:
+            # Altitude unit
+            if argument == 1:  # Feet
+                return self._build_abba_command("baab04bbaa0000")
+            else:  # Meters
+                return self._build_abba_command("baab04bba90000")
+        elif command == 99:
+            # High Altitude Mode toggle (ABBA-only)
+            return self._build_abba_command("baab04bba50000")
         else:
             # Unknown command - send status request as fallback
             _LOGGER.warning("ABBA: Unknown command %d, sending status request", command)
@@ -1926,6 +1943,24 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             await self.async_request_refresh()
         else:
             _LOGGER.warning("❌ Failed to set altitude unit")
+
+    async def async_set_high_altitude(self, enabled: bool) -> None:
+        """Toggle high altitude mode (ABBA-only, cmd 99).
+
+        The ABBA protocol uses a toggle command for high altitude mode.
+        """
+        if not self._is_abba_device:
+            _LOGGER.warning("High altitude mode is only available for ABBA/HeaterCC devices")
+            return
+        state_name = "ON" if enabled else "OFF"
+        _LOGGER.info("🏔️ Setting high altitude mode to %s", state_name)
+        success = await self._send_command(99, 0)
+        if success:
+            self.data["high_altitude"] = 1 if enabled else 0
+            _LOGGER.info("✅ High altitude mode set to %s", state_name)
+            await self.async_request_refresh()
+        else:
+            _LOGGER.warning("❌ Failed to set high altitude mode")
 
     async def async_set_tank_volume(self, volume_index: int) -> None:
         """Set tank volume by index (cmd 16).
