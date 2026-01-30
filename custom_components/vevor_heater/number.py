@@ -7,6 +7,8 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from homeassistant.const import EntityCategory, UnitOfVolume
+
 from .const import (
     DOMAIN,
     MAX_HEATER_OFFSET,
@@ -32,6 +34,7 @@ async def async_setup_entry(
             VevorHeaterLevelNumber(coordinator),
             VevorHeaterTemperatureNumber(coordinator),
             VevorHeaterOffsetNumber(coordinator),
+            VevorTankCapacityNumber(coordinator),
         ]
     )
 
@@ -150,6 +153,49 @@ class VevorHeaterOffsetNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberE
     async def async_set_native_value(self, value: float) -> None:
         """Set new value."""
         await self.coordinator.async_set_heater_offset(int(value))
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+
+class VevorTankCapacityNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberEntity):
+    """Tank capacity number entity for estimated fuel tracking.
+
+    Allows the user to set their actual tank capacity in liters (1-100L).
+    This is independent from the heater's BLE Tank Volume setting and is
+    used locally to calculate the estimated fuel remaining.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Tank Capacity"
+    _attr_icon = "mdi:gas-station"
+    _attr_native_unit_of_measurement = UnitOfVolume.LITERS
+    _attr_native_min_value = 1
+    _attr_native_max_value = 100
+    _attr_native_step = 1
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the number entity."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_tank_capacity"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, coordinator.address)},
+            "name": "Vevor Diesel Heater",
+            "manufacturer": "Vevor",
+            "model": "Diesel Heater",
+        }
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the current value."""
+        return self.coordinator.data.get("tank_capacity")
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Set new value."""
+        await self.coordinator.async_set_tank_capacity(int(value))
 
     @callback
     def _handle_coordinator_update(self) -> None:
