@@ -31,11 +31,10 @@ ABBA_WRITE_UUID: Final = "0000fff2-0000-1000-8000-00805f9b34fb"
 
 # ABBA Protocol commands (without checksum - added at send time)
 ABBA_CMD_HEAT_ON: Final = bytes.fromhex("baab04bba10000")
-ABBA_CMD_HEAT_OFF: Final = bytes.fromhex("baab04bba00000")  # Assumed - needs testing
+ABBA_CMD_HEAT_OFF: Final = bytes.fromhex("baab04bba40000")  # 吹风 (blow air) = cooldown/off
 ABBA_CMD_TEMP_UP: Final = bytes.fromhex("baab04bba20000")
 ABBA_CMD_TEMP_DOWN: Final = bytes.fromhex("baab04bba30000")
-ABBA_CMD_FAN_ONLY: Final = bytes.fromhex("baab04bba40000")
-ABBA_CMD_PLATEAU: Final = bytes.fromhex("baab04bba50000")
+ABBA_CMD_HIGH_ALTITUDE: Final = bytes.fromhex("baab04bba50000")  # 高原 (high altitude mode)
 ABBA_CMD_AUTO: Final = bytes.fromhex("baab04bba60000")
 ABBA_CMD_CONST_TEMP: Final = bytes.fromhex("baab04bbac0000")
 ABBA_CMD_OTHER_MODE: Final = bytes.fromhex("baab04bbad0000")

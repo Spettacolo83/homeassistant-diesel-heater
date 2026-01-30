@@ -1647,7 +1647,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             if argument == 1:
                 return self._build_abba_command("baab04bba10000")  # Heat on
             else:
-                return self._build_abba_command("baab04bba00000")  # Heat off (assumed)
+                return self._build_abba_command("baab04bba40000")  # 吹风 cooldown/off
         elif command == 4:
             # Set temperature/level - depends on mode
             # For temperature mode, use set temp command
