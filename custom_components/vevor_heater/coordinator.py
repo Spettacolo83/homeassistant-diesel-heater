@@ -67,6 +67,7 @@ from .const import (
     SERVICE_UUID,
     SERVICE_UUID_ALT,
     STORAGE_KEY_AUTO_OFFSET_ENABLED,
+    STORAGE_KEY_FUEL_SINCE_RESET,
     STORAGE_KEY_DAILY_DATE,
     STORAGE_KEY_DAILY_FUEL,
     STORAGE_KEY_DAILY_HISTORY,
@@ -180,6 +181,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             # Runtime tracking
             "daily_runtime_hours": 0.0,
             "total_runtime_hours": 0.0,
+            # Fuel level tracking
+            "fuel_remaining": None,
+            "fuel_consumed_since_reset": 0.0,
         }
 
         # Fuel consumption tracking (minimal)
@@ -188,6 +192,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._total_fuel_consumed: float = 0.0
         self._daily_fuel_consumed: float = 0.0
         self._daily_fuel_history: dict[str, float] = {}  # date -> liters consumed
+        self._fuel_consumed_since_reset: float = 0.0  # Fuel since last refuel reset
         self._last_save_time: float = time.time()
         self._last_reset_date: str = datetime.now().date().isoformat()
 
@@ -278,6 +283,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     self._daily_runtime_seconds / 3600.0,
                     len(self._daily_runtime_history)
                 )
+
+                # Load fuel level tracking (fuel consumed since last refuel reset)
+                self._fuel_consumed_since_reset = data.get(STORAGE_KEY_FUEL_SINCE_RESET, 0.0)
+                self.data["fuel_consumed_since_reset"] = round(self._fuel_consumed_since_reset, 2)
+                self._update_fuel_remaining()
+                _LOGGER.debug("Loaded fuel_consumed_since_reset: %.2fL", self._fuel_consumed_since_reset)
 
                 # Load auto offset enabled state
                 auto_offset_enabled = data.get(STORAGE_KEY_AUTO_OFFSET_ENABLED, False)
@@ -424,6 +435,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 STORAGE_KEY_DAILY_RUNTIME: self._daily_runtime_seconds,
                 STORAGE_KEY_DAILY_RUNTIME_DATE: datetime.now().date().isoformat(),
                 STORAGE_KEY_DAILY_RUNTIME_HISTORY: self._daily_runtime_history,
+                # Fuel level tracking
+                STORAGE_KEY_FUEL_SINCE_RESET: self._fuel_consumed_since_reset,
                 # Settings
                 STORAGE_KEY_AUTO_OFFSET_ENABLED: self.data.get("auto_offset_enabled", False),
             }
@@ -626,6 +639,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if fuel_consumed > 0:
             self._total_fuel_consumed += fuel_consumed
             self._daily_fuel_consumed += fuel_consumed
+            self._fuel_consumed_since_reset += fuel_consumed
 
         # Calculate instantaneous consumption rate
         power_level = self.data.get("set_level", 1)
@@ -638,6 +652,29 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self.data["hourly_fuel_consumption"] = round(hourly_consumption, 2)
         self.data["daily_fuel_consumed"] = round(self._daily_fuel_consumed, 2)
         self.data["total_fuel_consumed"] = round(self._total_fuel_consumed, 2)
+        self.data["fuel_consumed_since_reset"] = round(self._fuel_consumed_since_reset, 2)
+        self._update_fuel_remaining()
+
+    def _update_fuel_remaining(self) -> None:
+        """Update estimated fuel remaining based on tank volume and consumption since reset."""
+        tank_index = self.data.get("tank_volume")
+        if tank_index is None or tank_index == 0:
+            # Tank volume not set or "None" — can't estimate
+            self.data["fuel_remaining"] = None
+            return
+
+        tank_capacity_liters = tank_index * 5  # index 1=5L, 2=10L, ... 10=50L
+        remaining = tank_capacity_liters - self._fuel_consumed_since_reset
+        self.data["fuel_remaining"] = round(max(0.0, remaining), 2)
+
+    async def async_reset_fuel_level(self) -> None:
+        """Reset fuel level tracking (called when user refuels)."""
+        self._fuel_consumed_since_reset = 0.0
+        self.data["fuel_consumed_since_reset"] = 0.0
+        self._update_fuel_remaining()
+        await self.async_save_data()
+        _LOGGER.info("⛽ Fuel level reset (tank refueled)")
+        self.async_set_updated_data(self.data)
 
     def _update_runtime_tracking(self, elapsed_seconds: float) -> None:
         """Update runtime tracking."""
