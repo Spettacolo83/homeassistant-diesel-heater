@@ -68,6 +68,7 @@ from .const import (
     SERVICE_UUID_ALT,
     STORAGE_KEY_AUTO_OFFSET_ENABLED,
     STORAGE_KEY_FUEL_SINCE_RESET,
+    STORAGE_KEY_LAST_REFUELED,
     STORAGE_KEY_TANK_CAPACITY,
     STORAGE_KEY_DAILY_DATE,
     STORAGE_KEY_DAILY_FUEL,
@@ -186,6 +187,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             "tank_capacity": None,  # User-defined tank capacity in liters (1-100)
             "fuel_remaining": None,
             "fuel_consumed_since_reset": 0.0,
+            "last_refueled": None,  # ISO timestamp of last refuel reset
         }
 
         # Fuel consumption tracking (minimal)
@@ -292,10 +294,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 tank_capacity = data.get(STORAGE_KEY_TANK_CAPACITY)
                 if tank_capacity is not None:
                     self.data["tank_capacity"] = tank_capacity
+                last_refueled = data.get(STORAGE_KEY_LAST_REFUELED)
+                if last_refueled is not None:
+                    self.data["last_refueled"] = last_refueled
                 self._update_fuel_remaining()
                 _LOGGER.debug(
-                    "Loaded fuel level data: consumed_since_reset=%.2fL, tank_capacity=%s",
-                    self._fuel_consumed_since_reset, self.data.get("tank_capacity")
+                    "Loaded fuel level data: consumed_since_reset=%.2fL, tank_capacity=%s, last_refueled=%s",
+                    self._fuel_consumed_since_reset, self.data.get("tank_capacity"), self.data.get("last_refueled")
                 )
 
                 # Load auto offset enabled state
@@ -446,6 +451,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 # Fuel level tracking
                 STORAGE_KEY_FUEL_SINCE_RESET: self._fuel_consumed_since_reset,
                 STORAGE_KEY_TANK_CAPACITY: self.data.get("tank_capacity"),
+                STORAGE_KEY_LAST_REFUELED: self.data.get("last_refueled"),
                 # Settings
                 STORAGE_KEY_AUTO_OFFSET_ENABLED: self.data.get("auto_offset_enabled", False),
             }
@@ -679,9 +685,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """Reset fuel level tracking (called when user refuels)."""
         self._fuel_consumed_since_reset = 0.0
         self.data["fuel_consumed_since_reset"] = 0.0
+        self.data["last_refueled"] = dt_util.now().isoformat()
         self._update_fuel_remaining()
         await self.async_save_data()
-        _LOGGER.info("⛽ Fuel level reset (tank refueled)")
+        _LOGGER.info("⛽ Fuel level reset (tank refueled at %s)", self.data["last_refueled"])
         self.async_set_updated_data(self.data)
 
     async def async_set_tank_capacity(self, capacity: int) -> None:

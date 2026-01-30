@@ -270,6 +270,7 @@ STORAGE_KEY_DAILY_RUNTIME_HISTORY: Final = "daily_runtime_history"
 # Fuel level tracking persistence keys
 STORAGE_KEY_FUEL_SINCE_RESET: Final = "fuel_consumed_since_reset"
 STORAGE_KEY_TANK_CAPACITY: Final = "tank_capacity_liters"
+STORAGE_KEY_LAST_REFUELED: Final = "last_refueled"
 
 # Auto offset persistence key
 STORAGE_KEY_AUTO_OFFSET_ENABLED: Final = "auto_offset_enabled"

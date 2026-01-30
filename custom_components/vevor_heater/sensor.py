@@ -59,6 +59,7 @@ async def async_setup_entry(
             VevorDailyRuntimeHistorySensor(coordinator),
             # Fuel level tracking
             VevorFuelRemainingSensor(coordinator),
+            VevorLastRefueledSensor(coordinator),
         ]
     )
 
@@ -506,3 +507,28 @@ class VevorFuelRemainingSensor(VevorSensorBase):
                 attrs["fuel_remaining_percent"] = percentage
 
         return attrs
+
+
+class VevorLastRefueledSensor(VevorSensorBase):
+    """Last refueled timestamp sensor.
+
+    Shows when the user last pressed the Reset Estimated Fuel Level button.
+    Persisted across restarts.
+    """
+
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_icon = "mdi:gas-station-outline"
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, "last_refueled", "Last Refueled")
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the state as ISO timestamp."""
+        return self.coordinator.data.get("last_refueled")
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        return self.coordinator.data.get("last_refueled") is not None
