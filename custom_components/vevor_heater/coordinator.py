@@ -68,6 +68,7 @@ from .const import (
     SERVICE_UUID_ALT,
     STORAGE_KEY_AUTO_OFFSET_ENABLED,
     STORAGE_KEY_FUEL_SINCE_RESET,
+    STORAGE_KEY_TANK_CAPACITY,
     STORAGE_KEY_DAILY_DATE,
     STORAGE_KEY_DAILY_FUEL,
     STORAGE_KEY_DAILY_HISTORY,
@@ -182,6 +183,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             "daily_runtime_hours": 0.0,
             "total_runtime_hours": 0.0,
             # Fuel level tracking
+            "tank_capacity": None,  # User-defined tank capacity in liters (1-100)
             "fuel_remaining": None,
             "fuel_consumed_since_reset": 0.0,
         }
@@ -284,11 +286,17 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     len(self._daily_runtime_history)
                 )
 
-                # Load fuel level tracking (fuel consumed since last refuel reset)
+                # Load fuel level tracking
                 self._fuel_consumed_since_reset = data.get(STORAGE_KEY_FUEL_SINCE_RESET, 0.0)
                 self.data["fuel_consumed_since_reset"] = round(self._fuel_consumed_since_reset, 2)
+                tank_capacity = data.get(STORAGE_KEY_TANK_CAPACITY)
+                if tank_capacity is not None:
+                    self.data["tank_capacity"] = tank_capacity
                 self._update_fuel_remaining()
-                _LOGGER.debug("Loaded fuel_consumed_since_reset: %.2fL", self._fuel_consumed_since_reset)
+                _LOGGER.debug(
+                    "Loaded fuel level data: consumed_since_reset=%.2fL, tank_capacity=%s",
+                    self._fuel_consumed_since_reset, self.data.get("tank_capacity")
+                )
 
                 # Load auto offset enabled state
                 auto_offset_enabled = data.get(STORAGE_KEY_AUTO_OFFSET_ENABLED, False)
@@ -437,6 +445,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 STORAGE_KEY_DAILY_RUNTIME_HISTORY: self._daily_runtime_history,
                 # Fuel level tracking
                 STORAGE_KEY_FUEL_SINCE_RESET: self._fuel_consumed_since_reset,
+                STORAGE_KEY_TANK_CAPACITY: self.data.get("tank_capacity"),
                 # Settings
                 STORAGE_KEY_AUTO_OFFSET_ENABLED: self.data.get("auto_offset_enabled", False),
             }
@@ -656,15 +665,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._update_fuel_remaining()
 
     def _update_fuel_remaining(self) -> None:
-        """Update estimated fuel remaining based on tank volume and consumption since reset."""
-        tank_index = self.data.get("tank_volume")
-        if tank_index is None or tank_index == 0:
-            # Tank volume not set or "None" — can't estimate
+        """Update estimated fuel remaining based on tank capacity and consumption since reset."""
+        tank_capacity = self.data.get("tank_capacity")
+        if tank_capacity is None or tank_capacity <= 0:
+            # Tank capacity not set — can't estimate
             self.data["fuel_remaining"] = None
             return
 
-        tank_capacity_liters = tank_index * 5  # index 1=5L, 2=10L, ... 10=50L
-        remaining = tank_capacity_liters - self._fuel_consumed_since_reset
+        remaining = tank_capacity - self._fuel_consumed_since_reset
         self.data["fuel_remaining"] = round(max(0.0, remaining), 2)
 
     async def async_reset_fuel_level(self) -> None:
@@ -674,6 +682,15 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._update_fuel_remaining()
         await self.async_save_data()
         _LOGGER.info("⛽ Fuel level reset (tank refueled)")
+        self.async_set_updated_data(self.data)
+
+    async def async_set_tank_capacity(self, capacity: int) -> None:
+        """Set the user-defined tank capacity in liters (1-100)."""
+        capacity = max(1, min(100, capacity))
+        self.data["tank_capacity"] = capacity
+        self._update_fuel_remaining()
+        await self.async_save_data()
+        _LOGGER.info("⛽ Tank capacity set to %dL", capacity)
         self.async_set_updated_data(self.data)
 
     def _update_runtime_tracking(self, elapsed_seconds: float) -> None:

@@ -482,7 +482,7 @@ class VevorFuelRemainingSensor(VevorSensorBase):
 
     def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator, "fuel_remaining", "Fuel Remaining")
+        super().__init__(coordinator, "fuel_remaining", "Estimated Fuel Remaining")
 
     @property
     def native_value(self) -> float | None:
@@ -492,8 +492,7 @@ class VevorFuelRemainingSensor(VevorSensorBase):
     @property
     def extra_state_attributes(self) -> dict[str, any]:
         """Return additional attributes."""
-        tank_index = self.coordinator.data.get("tank_volume")
-        tank_capacity = (tank_index * 5) if tank_index and tank_index > 0 else None
+        tank_capacity = self.coordinator.data.get("tank_capacity")
         consumed = self.coordinator.data.get("fuel_consumed_since_reset", 0.0)
         remaining = self.coordinator.data.get("fuel_remaining")
 
@@ -502,8 +501,8 @@ class VevorFuelRemainingSensor(VevorSensorBase):
         }
         if tank_capacity is not None:
             attrs["tank_capacity"] = tank_capacity
-            if remaining is not None:
-                percentage = round((remaining / tank_capacity) * 100, 1) if tank_capacity > 0 else 0
+            if remaining is not None and tank_capacity > 0:
+                percentage = round((remaining / tank_capacity) * 100, 1)
                 attrs["fuel_remaining_percent"] = percentage
 
         return attrs

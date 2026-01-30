@@ -60,14 +60,14 @@ class VevorTimeSyncButton(CoordinatorEntity[VevorHeaterCoordinator], ButtonEntit
 
 
 class VevorResetFuelLevelButton(CoordinatorEntity[VevorHeaterCoordinator], ButtonEntity):
-    """Button to reset fuel level after refueling.
+    """Button to reset estimated fuel level after refueling.
 
     Resets the fuel consumed counter so the estimated fuel remaining
     sensor starts counting down from the full tank capacity again.
     """
 
     _attr_has_entity_name = True
-    _attr_name = "Reset Fuel Level"
+    _attr_name = "Reset Estimated Fuel Level"
     _attr_icon = "mdi:gas-station"
     _attr_entity_category = EntityCategory.CONFIG
 
