@@ -195,6 +195,7 @@ CMD_SET_TANK_VOLUME: Final = 16  # Index-based: 0=None, 1=5L, 2=10L, etc.
 CMD_SET_PUMP_TYPE: Final = 17
 CMD_SET_ALTITUDE_UNIT: Final = 19  # Was incorrectly 16
 CMD_SET_OFFSET: Final = 20
+CMD_SET_BACKLIGHT: Final = 21
 
 # Language options (byte 26) - verified by @Xev testing
 # Note: Values 1, 5, 6 may not be supported by all heaters

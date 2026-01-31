@@ -1251,6 +1251,40 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self.data["heater_offset"] = heater_offset
             self._logger.debug("🌡️ Heater offset byte 34: %d", heater_offset)
 
+        # Byte 36: Backlight brightness (0=Off, 1-10, 20-100)
+        if len(data) > 36:
+            brightness = _u8_to_number(data[36])
+            if brightness != 0:
+                self.data["backlight"] = brightness
+            else:
+                self.data["backlight"] = 0
+
+        # Byte 37: CO sensor present (boolean), Bytes 38-39: CO PPM (big endian)
+        if len(data) > 39:
+            co_present = _u8_to_number(data[37])
+            if co_present == 1:
+                co_ppm = (_u8_to_number(data[38]) << 8) | _u8_to_number(data[39])
+                self.data["co_ppm"] = float(co_ppm)
+            else:
+                self.data["co_ppm"] = None
+
+        # Bytes 40-43: Part number (uint32 little endian, stored as hex string)
+        if len(data) > 43:
+            part_number = (
+                _u8_to_number(data[40])
+                | (_u8_to_number(data[41]) << 8)
+                | (_u8_to_number(data[42]) << 16)
+                | (_u8_to_number(data[43]) << 24)
+            )
+            if part_number != 0:
+                self.data["part_number"] = format(part_number, 'x')
+
+        # Byte 44: Motherboard version
+        if len(data) > 44:
+            mb_version = _u8_to_number(data[44])
+            if mb_version != 0:
+                self.data["motherboard_version"] = mb_version
+
         # Apply temperature calibration
         self._apply_temperature_calibration()
 
@@ -1349,6 +1383,40 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 heater_offset = heater_offset_raw
             self.data["heater_offset"] = heater_offset
             self._logger.debug("🌡️ Heater offset byte 34: %d (raw=%d)", heater_offset, heater_offset_raw)
+
+        # Byte 36: Backlight brightness (0=Off, 1-10, 20-100)
+        if len(data) > 36:
+            brightness = _u8_to_number(data[36])
+            if brightness != 0:
+                self.data["backlight"] = brightness
+            else:
+                self.data["backlight"] = 0
+
+        # Byte 37: CO sensor present (boolean), Bytes 38-39: CO PPM (big endian)
+        if len(data) > 39:
+            co_present = _u8_to_number(data[37])
+            if co_present == 1:
+                co_ppm = (_u8_to_number(data[38]) << 8) | _u8_to_number(data[39])
+                self.data["co_ppm"] = float(co_ppm)
+            else:
+                self.data["co_ppm"] = None
+
+        # Bytes 40-43: Part number (uint32 little endian, stored as hex string)
+        if len(data) > 43:
+            part_number = (
+                _u8_to_number(data[40])
+                | (_u8_to_number(data[41]) << 8)
+                | (_u8_to_number(data[42]) << 16)
+                | (_u8_to_number(data[43]) << 24)
+            )
+            if part_number != 0:
+                self.data["part_number"] = format(part_number, 'x')
+
+        # Byte 44: Motherboard version
+        if len(data) > 44:
+            mb_version = _u8_to_number(data[44])
+            if mb_version != 0:
+                self.data["motherboard_version"] = mb_version
 
         # Apply temperature calibration
         self._apply_temperature_calibration()
@@ -2191,6 +2259,25 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             await self.async_request_refresh()
         else:
             self._logger.warning("❌ Failed to set pump type")
+
+    async def async_set_backlight(self, level: int) -> None:
+        """Set display backlight brightness (cmd 21).
+
+        Values: 0=Off, 1-10, 20-100 (in steps of 10).
+        The heater may round to nearest supported value.
+
+        Args:
+            level: Brightness level (0-100)
+        """
+        level = max(0, min(100, level))
+        self._logger.info("Setting backlight to %d (cmd 21)", level)
+        success = await self._send_command(21, level)
+        if success:
+            self.data["backlight"] = level
+            self._logger.info("Backlight set to %d", level)
+            await self.async_request_refresh()
+        else:
+            self._logger.warning("Failed to set backlight")
 
     async def async_set_auto_offset_enabled(self, enabled: bool) -> None:
         """Enable or disable automatic temperature offset adjustment.
