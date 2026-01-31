@@ -472,21 +472,96 @@ class ProtocolCBFF(VevorCommandMixin, HeaterProtocol):
     Heater sends 47-byte CBFF notifications; commands use AA55 format,
     heater ACKs with AA77.
 
+    Some CBFF heaters send encrypted data using double-XOR:
+      key1 = "passwordA2409PW" (15 bytes, hardcoded)
+      key2 = BLE MAC address without colons, uppercased (12 bytes)
+    Discovered by @Xev from the Sunster app source code.
+
     Byte mapping (reverse-engineered from Sunster app by @Xev).
     """
 
     protocol_mode = 6
     name = "CBFF"
 
+    def __init__(self) -> None:
+        self._device_sn: str | None = None
+
+    def set_device_sn(self, sn: str) -> None:
+        """Set the device serial number (BLE MAC without colons, uppercased).
+
+        Used as key2 for CBFF double-XOR decryption.
+        """
+        self._device_sn = sn
+
     def parse(self, data: bytearray) -> dict[str, Any] | None:
         if len(data) < 46:
             return None
 
+        # Try parsing raw data first (unencrypted CBFF)
+        parsed = self._parse_cbff_fields(data)
+        if not self._is_data_suspect(parsed):
+            return parsed
+
+        # Raw data looks wrong — try decryption if device_sn is available
+        if self._device_sn:
+            decrypted = self._decrypt_cbff(data, self._device_sn)
+            parsed_dec = self._parse_cbff_fields(decrypted)
+            if not self._is_data_suspect(parsed_dec):
+                parsed_dec["_cbff_decrypted"] = True
+                return parsed_dec
+
+        # Neither raw nor decrypted data is valid
+        parsed["_cbff_data_suspect"] = True
+        for key in (
+            "cab_temperature", "case_temperature", "supply_voltage",
+            "altitude", "co_ppm", "heater_offset", "error_code",
+            "running_step", "running_mode", "set_level", "set_temp",
+            "temp_unit", "altitude_unit", "language", "tank_volume",
+            "pump_type", "rf433_enabled", "backlight", "startup_temp_diff",
+            "shutdown_temp_diff", "wifi_enabled", "auto_start_stop",
+            "heater_mode", "remain_run_time", "hardware_version",
+            "software_version", "pwr_onoff",
+        ):
+            parsed.pop(key, None)
+        return parsed
+
+    @staticmethod
+    def _is_data_suspect(parsed: dict[str, Any]) -> bool:
+        """Check if parsed CBFF data has physically impossible values."""
+        voltage = parsed.get("supply_voltage", 0)
+        cab_temp = parsed.get("cab_temperature", 0)
+        return voltage > 100 or voltage < 0 or abs(cab_temp) > 500
+
+    @staticmethod
+    def _decrypt_cbff(data: bytearray, device_sn: str) -> bytearray:
+        """Decrypt CBFF data using double-XOR (key1 + key2).
+
+        key1 = "passwordA2409PW" (15 bytes, hardcoded in Sunster app)
+        key2 = device_sn.upper() (BLE MAC without colons)
+        """
+        key1 = bytearray(b"passwordA2409PW")
+        key2 = bytearray(device_sn.upper().encode("ascii"))
+        out = bytearray(data)
+
+        j = 0
+        for i in range(len(out)):
+            out[i] ^= key1[j]
+            j = (j + 1) % len(key1)
+
+        j = 0
+        for i in range(len(out)):
+            out[i] ^= key2[j]
+            j = (j + 1) % len(key2)
+
+        return out
+
+    @staticmethod
+    def _parse_cbff_fields(data: bytearray) -> dict[str, Any]:
+        """Parse CBFF byte fields into a dict."""
         parsed: dict[str, Any] = {"connected": True}
 
         # Byte 2: protocol_version (stored for diagnostics)
-        proto_ver = _u8_to_number(data[2])
-        parsed["cbff_protocol_version"] = proto_ver
+        parsed["cbff_protocol_version"] = _u8_to_number(data[2])
 
         # Byte 10: run_state (2/5/6 = OFF)
         parsed["running_state"] = 0 if _u8_to_number(data[10]) in CBFF_RUN_STATE_OFF else 1
@@ -615,25 +690,5 @@ class ProtocolCBFF(VevorCommandMixin, HeaterProtocol):
         remain = data[44] | (data[45] << 8)
         if remain != 65535:
             parsed["remain_run_time"] = remain
-
-        # Sanity check: if key values are physically impossible, the data
-        # is likely encrypted or from an unsupported CBFF sub-version.
-        # Discard sensor readings but keep connection state.
-        voltage = parsed.get("supply_voltage", 0)
-        cab_temp = parsed.get("cab_temperature", 0)
-        if voltage > 100 or voltage < 0 or abs(cab_temp) > 500:
-            parsed["_cbff_data_suspect"] = True
-            # Keep only safe fields; clear sensor readings
-            for key in (
-                "cab_temperature", "case_temperature", "supply_voltage",
-                "altitude", "co_ppm", "heater_offset", "error_code",
-                "running_step", "running_mode", "set_level", "set_temp",
-                "temp_unit", "altitude_unit", "language", "tank_volume",
-                "pump_type", "rf433_enabled", "backlight", "startup_temp_diff",
-                "shutdown_temp_diff", "wifi_enabled", "auto_start_stop",
-                "heater_mode", "remain_run_time", "hardware_version",
-                "software_version", "pwr_onoff",
-            ):
-                parsed.pop(key, None)
 
         return parsed
