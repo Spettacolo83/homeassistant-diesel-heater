@@ -484,6 +484,10 @@ class ProtocolCBFF(VevorCommandMixin, HeaterProtocol):
 
         parsed: dict[str, Any] = {"connected": True}
 
+        # Byte 2: protocol_version (stored for diagnostics)
+        proto_ver = _u8_to_number(data[2])
+        parsed["cbff_protocol_version"] = proto_ver
+
         # Byte 10: run_state (2/5/6 = OFF)
         parsed["running_state"] = 0 if _u8_to_number(data[10]) in CBFF_RUN_STATE_OFF else 1
 
@@ -611,5 +615,25 @@ class ProtocolCBFF(VevorCommandMixin, HeaterProtocol):
         remain = data[44] | (data[45] << 8)
         if remain != 65535:
             parsed["remain_run_time"] = remain
+
+        # Sanity check: if key values are physically impossible, the data
+        # is likely encrypted or from an unsupported CBFF sub-version.
+        # Discard sensor readings but keep connection state.
+        voltage = parsed.get("supply_voltage", 0)
+        cab_temp = parsed.get("cab_temperature", 0)
+        if voltage > 100 or voltage < 0 or abs(cab_temp) > 500:
+            parsed["_cbff_data_suspect"] = True
+            # Keep only safe fields; clear sensor readings
+            for key in (
+                "cab_temperature", "case_temperature", "supply_voltage",
+                "altitude", "co_ppm", "heater_offset", "error_code",
+                "running_step", "running_mode", "set_level", "set_temp",
+                "temp_unit", "altitude_unit", "language", "tank_volume",
+                "pump_type", "rf433_enabled", "backlight", "startup_temp_diff",
+                "shutdown_temp_diff", "wifi_enabled", "auto_start_stop",
+                "heater_mode", "remain_run_time", "hardware_version",
+                "software_version", "pwr_onoff",
+            ):
+                parsed.pop(key, None)
 
         return parsed

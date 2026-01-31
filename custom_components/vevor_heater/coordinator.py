@@ -1115,6 +1115,16 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._notification_data = data
             return
 
+        # CBFF sanity check: if data looks encrypted/corrupt, log warning
+        if parsed.pop("_cbff_data_suspect", False):
+            proto_ver = parsed.pop("cbff_protocol_version", "?")
+            self._logger.warning(
+                "CBFF data appears encrypted or corrupt (protocol_version=%s, "
+                "raw=%s). Sensor values discarded — only connection state kept. "
+                "Please report this on GitHub Issue #24 with your heater model.",
+                proto_ver, data.hex(),
+            )
+
         self.data.update(parsed)
 
         # Update coordinator state from parsed data
