@@ -125,13 +125,18 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._passkey = config_entry.data.get(CONF_PIN, DEFAULT_PIN)
         self._protocol_mode = 0  # Will be detected from response (1-6)
         self._protocol: HeaterProtocol | None = None  # Active protocol handler
+        cbff = ProtocolCBFF()
+        # CBFF encryption uses BLE MAC (without colons, uppercased) as key2
+        device_sn = ble_device.address.replace(":", "").replace("-", "").upper()
+        cbff.set_device_sn(device_sn)
+
         self._protocols: dict[int, HeaterProtocol] = {
             1: ProtocolAA55(),
             2: ProtocolAA55Encrypted(),
             3: ProtocolAA66(),
             4: ProtocolAA66Encrypted(),
             5: ProtocolABBA(),
-            6: ProtocolCBFF(),
+            6: cbff,
         }
         self._is_abba_device = False  # True if using ABBA/HeaterCC protocol
         self._abba_write_char = None  # ABBA devices use separate write characteristic
@@ -1115,8 +1120,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._notification_data = data
             return
 
-        # CBFF sanity check: if data looks encrypted/corrupt, log warning
-        if parsed.pop("_cbff_data_suspect", False):
+        # CBFF decryption status logging
+        if parsed.pop("_cbff_decrypted", False):
+            self._logger.info(
+                "CBFF data decrypted successfully (device_sn=%s)",
+                self.address.replace(":", "").upper(),
+            )
+        elif parsed.pop("_cbff_data_suspect", False):
             proto_ver = parsed.pop("cbff_protocol_version", "?")
             self._logger.warning(
                 "CBFF data appears encrypted or corrupt (protocol_version=%s, "
