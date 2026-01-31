@@ -8,6 +8,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
+    CONCENTRATION_PARTS_PER_MILLION,
     EntityCategory,
     PERCENTAGE,
     UnitOfElectricPotential,
@@ -60,6 +61,8 @@ async def async_setup_entry(
             # Fuel level tracking
             VevorFuelRemainingSensor(coordinator),
             VevorLastRefueledSensor(coordinator),
+            # CO sensor (CBFF/Sunster protocol only)
+            VevorCOSensor(coordinator),
         ]
     )
 
@@ -532,3 +535,31 @@ class VevorLastRefueledSensor(VevorSensorBase):
     def available(self) -> bool:
         """Return if entity is available."""
         return self.coordinator.data.get("last_refueled") is not None
+
+
+class VevorCOSensor(VevorSensorBase):
+    """Carbon monoxide (CO) sensor.
+
+    Only available on CBFF/Sunster v2.1 protocol heaters that have
+    a built-in CO sensor. Shows CO concentration in PPM.
+    """
+
+    _attr_device_class = SensorDeviceClass.CO
+    _attr_native_unit_of_measurement = CONCENTRATION_PARTS_PER_MILLION
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:molecule-co"
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, "co_ppm", "Carbon Monoxide")
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the state."""
+        return self.coordinator.data.get("co_ppm")
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available (only for CBFF devices with CO sensor)."""
+        return self.coordinator.data.get("co_ppm") is not None

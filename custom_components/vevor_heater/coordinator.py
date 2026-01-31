@@ -53,6 +53,9 @@ from .const import (
     MIN_HEATER_OFFSET,
     NOTIFY_UUID,
     PROTOCOL_HEADER_ABBA,
+    PROTOCOL_HEADER_CBFF,
+    PROTOCOL_HEADER_AA77,
+    CBFF_RUN_STATE_OFF,
     ABBA_ERROR_NAMES,
     ABBA_STATUS_MAP,
     RUNNING_MODE_LEVEL,
@@ -1064,6 +1067,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     def _parse_response(self, data: bytearray) -> None:
         """Parse response from heater."""
         if len(data) < 8:
+            # AA77 ACK is 10 bytes - check before discarding
+            header_short = (_u8_to_number(data[0]) << 8) | _u8_to_number(data[1]) if len(data) >= 2 else 0
+            if header_short == PROTOCOL_HEADER_AA77:
+                self._logger.debug("AA77 ACK received (%d bytes)", len(data))
+                self._notification_data = data
+                return
             self._logger.debug("Response too short: %d bytes", len(data))
             return
 
@@ -1071,9 +1080,21 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         header = (_u8_to_number(data[0]) << 8) | _u8_to_number(data[1])
         old_protocol = self._protocol_mode
 
+        # Check for CBFF protocol (Sunster/v2.1 heaters)
+        if header == PROTOCOL_HEADER_CBFF:
+            self._logger.info("Detected protocol: CBFF/Sunster v2.1 (mode=6, %d bytes)", len(data))
+            self._parse_protocol_cbff(data)
+            return
+
+        # Check for AA77 command ACK (Sunster heaters respond to AA55 with AA77)
+        if header == PROTOCOL_HEADER_AA77:
+            self._logger.debug("AA77 ACK received (%d bytes)", len(data))
+            self._notification_data = data
+            return
+
         # Check for ABBA protocol (HeaterCC heaters)
         if header == PROTOCOL_HEADER_ABBA or self._is_abba_device:
-            self._logger.info("🔍 Detected protocol: ABBA/HeaterCC (mode=5, %d bytes)", len(data))
+            self._logger.info("Detected protocol: ABBA/HeaterCC (mode=5, %d bytes)", len(data))
             self._parse_protocol_abba(data)
             return
 
@@ -1083,11 +1104,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         if header == 0xAA55 and len(data) in (18, 20):
             # Protocol 1: 0xAA 0x55, 18-20 bytes, not encrypted
-            self._logger.info("🔍 Detected protocol: AA55 unencrypted (mode=1, %d bytes)", len(data))
+            self._logger.info("Detected protocol: AA55 unencrypted (mode=1, %d bytes)", len(data))
             self._parse_protocol_aa55(data)
         elif header == 0xAA66 and len(data) == 20:
             # Protocol 3: 0xAA 0x66, 20 bytes, not encrypted
-            self._logger.info("🔍 Detected protocol: AA66 unencrypted (mode=3)")
+            self._logger.info("Detected protocol: AA66 unencrypted (mode=3)")
             self._parse_protocol_aa66(data)
         elif len(data) == 48:
             # Protocol 2/4: 48 bytes, encrypted
@@ -1117,6 +1138,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._logger.info(
                 "📋 Protocol mode changed: %d → %d (commands will now use %s format)",
                 old_protocol, self._protocol_mode,
+                "CBFF/Sunster v2.1" if self._protocol_mode == 6 else
                 "AA66 encrypted" if self._protocol_mode == 4 else
                 "AA66 unencrypted" if self._protocol_mode == 3 else
                 "AA55 encrypted" if self._protocol_mode == 2 else
@@ -1500,6 +1522,184 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         except Exception as err:
             self._logger.error("ABBA parse error: %s", err)
             # Set minimal data to show device is connected
+            self.data["connected"] = True
+            self.data["running_state"] = 0
+            self.data["running_step"] = 0
+            self.data["error_code"] = 0
+
+        self._notification_data = data
+
+    def _parse_protocol_cbff(self, data: bytearray) -> None:
+        """Parse CBFF protocol response (Sunster/v2.1 heaters, 47 bytes).
+
+        This is a newer protocol used by Sunster TB10Pro WiFi and similar heaters.
+        The heater sends 47-byte CBFF notifications with status data.
+        Commands use standard AA55 format, heater ACKs with AA77.
+
+        Byte mapping (reverse-engineered from Sunster app by @Xev):
+        - Byte 2: protocol_version
+        - Byte 8: mainboard_type
+        - Byte 10: run_state (2/5/6=OFF, others=ON)
+        - Byte 11: run_mode (1/3/4=Level, 2=Temperature)
+        - Byte 12: run_param (temp or gear depending on mode)
+        - Byte 13: now_gear (current gear level)
+        - Byte 14: run_step
+        - Byte 15: fault_display
+        - Byte 16: fault_code
+        - Byte 17: temp_unit (0=C, 1=F)
+        - Bytes 18-19: detect_temp (cabin temp, int16 LE)
+        - Byte 20: altitude_unit
+        - Bytes 21-22: altitude (uint16 LE)
+        - Bytes 23-24: voltage (uint16 LE, /10)
+        - Bytes 25-26: skin_temp (case temp, int16 LE, /10)
+        - Bytes 27-28: co (CO sensor PPM, uint16 LE, /10)
+        - Byte 29: pwr_onoff
+        - Byte 34: temp_comp (int8, temperature offset)
+        - Byte 35: broadcast_language
+        - Byte 36: oil_volume (tank volume index)
+        - Byte 37: pump_model
+        - Byte 42: i_stop (auto start/stop)
+        - Byte 43: heater_mode
+        - Bytes 44-45: remain_run_time (uint16 LE)
+        """
+        self._protocol_mode = 6
+
+        self._logger.info("Parsing CBFF/v2.1 protocol response (%d bytes): %s", len(data), data.hex())
+
+        if len(data) < 46:
+            self._logger.warning("CBFF: Response too short (%d bytes), need 46+", len(data))
+            self.data["connected"] = True
+            self._notification_data = data
+            return
+
+        try:
+            self.data["connected"] = True
+
+            # Byte 10: run_state (2/5/6 = OFF, others = ON)
+            run_state = _u8_to_number(data[10])
+            self.data["running_state"] = 0 if run_state in CBFF_RUN_STATE_OFF else 1
+
+            # Byte 14: run_step (direct value, same meaning as AA55)
+            self.data["running_step"] = _u8_to_number(data[14])
+
+            # Byte 11: run_mode (1/3/4 = Level, 2 = Temperature)
+            run_mode = _u8_to_number(data[11])
+            if run_mode in (1, 3, 4):
+                self.data["running_mode"] = RUNNING_MODE_LEVEL
+            elif run_mode == 2:
+                self.data["running_mode"] = RUNNING_MODE_TEMPERATURE
+            else:
+                self.data["running_mode"] = RUNNING_MODE_MANUAL
+
+            # Byte 12: run_param (temp or gear depending on mode)
+            run_param = _u8_to_number(data[12])
+            if self.data["running_mode"] == RUNNING_MODE_LEVEL:
+                self.data["set_level"] = max(1, min(10, run_param))
+            else:
+                self.data["set_temp"] = max(8, min(36, run_param))
+
+            # Byte 13: now_gear (current gear even in temp mode)
+            now_gear = _u8_to_number(data[13])
+            if self.data["running_mode"] == RUNNING_MODE_TEMPERATURE:
+                self.data["set_level"] = max(1, min(10, now_gear))
+
+            # Byte 15-16: fault_display and fault_code
+            fault_display = _u8_to_number(data[15])
+            fault_code = _u8_to_number(data[16])
+            # fault_code >= 128 overrides fault_display
+            if fault_code >= 128:
+                self.data["error_code"] = fault_display & 0x3F
+            else:
+                self.data["error_code"] = fault_display & 0x3F
+
+            # Byte 17: temp_unit
+            temp_unit_byte = _u8_to_number(data[17])
+            # Sunster app uses checkIsFunction nibble logic for temp_unit
+            # Lower nibble = actual value, upper nibble = feature flag
+            temp_unit_value = temp_unit_byte & 0x0F
+            self.data["temp_unit"] = temp_unit_value
+            self._heater_uses_fahrenheit = (temp_unit_value == 1)
+
+            # Bytes 18-19: detect_temp (cabin temperature, int16 LE)
+            cab_temp_raw = data[18] | (data[19] << 8)
+            if cab_temp_raw >= 32768:
+                cab_temp_raw -= 65536
+            self.data["cab_temperature"] = float(cab_temp_raw)
+
+            # Byte 20: altitude_unit
+            altitude_unit_byte = _u8_to_number(data[20])
+            self.data["altitude_unit"] = altitude_unit_byte & 0x0F
+
+            # Bytes 21-22: altitude (uint16 LE)
+            altitude = data[21] | (data[22] << 8)
+            self.data["altitude"] = altitude
+
+            # Bytes 23-24: voltage (uint16 LE, /10)
+            voltage_raw = data[23] | (data[24] << 8)
+            self.data["supply_voltage"] = voltage_raw / 10.0
+
+            # Bytes 25-26: skin_temp / case temperature (int16 LE, /10)
+            case_temp_raw = data[25] | (data[26] << 8)
+            if case_temp_raw >= 32768:
+                case_temp_raw -= 65536
+            self.data["case_temperature"] = case_temp_raw / 10.0
+
+            # Bytes 27-28: CO sensor (uint16 LE, /10, in PPM)
+            co_raw = data[27] | (data[28] << 8)
+            co_ppm = co_raw / 10.0
+            if co_ppm < 6553:  # Valid reading (app checks < 6553)
+                self.data["co_ppm"] = co_ppm
+            else:
+                self.data["co_ppm"] = None  # No CO sensor or invalid
+
+            # Byte 34: temp_comp (temperature offset, int8)
+            temp_comp = data[34]
+            if temp_comp > 127:
+                temp_comp -= 256
+            self.data["heater_offset"] = temp_comp
+
+            # Byte 35: broadcast_language
+            lang_byte = _u8_to_number(data[35])
+            if lang_byte != 255:
+                self.data["language"] = lang_byte
+
+            # Byte 36: oil_volume (tank volume index)
+            tank_vol = _u8_to_number(data[36])
+            if tank_vol != 255:
+                self.data["tank_volume"] = tank_vol
+
+            # Byte 37: pump_model
+            pump_byte = _u8_to_number(data[37])
+            if pump_byte != 255:
+                if pump_byte == 20:
+                    self.data["rf433_enabled"] = False
+                    self.data["pump_type"] = None
+                elif pump_byte == 21:
+                    self.data["rf433_enabled"] = True
+                    self.data["pump_type"] = None
+                else:
+                    self.data["pump_type"] = pump_byte
+                    self.data["rf433_enabled"] = None
+
+            # Byte 42: i_stop (auto start/stop)
+            auto_byte = _u8_to_number(data[42])
+            self.data["auto_start_stop"] = (auto_byte == 1)
+
+            # Apply temperature calibration
+            self._apply_temperature_calibration()
+
+            self._logger.info(
+                "CBFF parsed: run_state=%d, step=%d, mode=%d, temp=%s, level=%s, "
+                "cab=%.1f°C, case=%.1f°C, voltage=%.1fV, co=%s PPM",
+                run_state, self.data["running_step"], run_mode,
+                self.data.get("set_temp"), self.data.get("set_level"),
+                self.data["cab_temperature"], self.data["case_temperature"],
+                self.data["supply_voltage"],
+                self.data.get("co_ppm", "N/A")
+            )
+
+        except Exception as err:
+            self._logger.error("CBFF parse error: %s", err)
             self.data["connected"] = True
             self.data["running_state"] = 0
             self.data["running_step"] = 0
