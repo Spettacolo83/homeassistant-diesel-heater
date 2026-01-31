@@ -29,7 +29,6 @@ from homeassistant.util import dt as dt_util
 from homeassistant.helpers.event import async_track_state_change_event
 
 from .const import (
-    ABBA_CMD_STATUS,
     ABBA_NOTIFY_UUID,
     ABBA_SERVICE_UUID,
     ABBA_WRITE_UUID,
@@ -46,25 +45,14 @@ from .const import (
     DEFAULT_PIN,
     DEFAULT_TEMPERATURE_OFFSET,
     DOMAIN,
-    ENCRYPTION_KEY,
     FUEL_CONSUMPTION_TABLE,
     MAX_HEATER_OFFSET,
     MAX_HISTORY_DAYS,
     MIN_HEATER_OFFSET,
-    NOTIFY_UUID,
     PROTOCOL_HEADER_ABBA,
     PROTOCOL_HEADER_CBFF,
     PROTOCOL_HEADER_AA77,
-    CBFF_RUN_STATE_OFF,
-    ABBA_ERROR_NAMES,
-    ABBA_STATUS_MAP,
-    RUNNING_MODE_LEVEL,
-    RUNNING_MODE_MANUAL,
-    RUNNING_MODE_TEMPERATURE,
-    RUNNING_STEP_COOLDOWN,
     RUNNING_STEP_RUNNING,
-    RUNNING_STEP_STANDBY,
-    RUNNING_STEP_VENTILATION,
     SENSOR_TEMP_MAX,
     SENSOR_TEMP_MIN,
     SERVICE_UUID,
@@ -83,6 +71,17 @@ from .const import (
     STORAGE_KEY_TOTAL_RUNTIME,
     UPDATE_INTERVAL,
 )
+from .protocol import (
+    HeaterProtocol,
+    ProtocolAA55,
+    ProtocolAA55Encrypted,
+    ProtocolAA66,
+    ProtocolAA66Encrypted,
+    ProtocolABBA,
+    ProtocolCBFF,
+    _decrypt_data,
+    _u8_to_number,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -92,38 +91,6 @@ class _HeaterLoggerAdapter(logging.LoggerAdapter):
 
     def process(self, msg, kwargs):
         return f"[{self.extra['heater_id']}] {msg}", kwargs
-
-
-def _u8_to_number(value: int) -> int:
-    """Convert unsigned 8-bit value."""
-    return (value + 256) if (value < 0) else value
-
-
-def _unsign_to_sign(value: int) -> int:
-    """Convert unsigned to signed value."""
-    if value > 32767.5:
-        value = value | -65536
-    return value
-
-
-def _decrypt_data(data: bytearray) -> bytearray:
-    """Decrypt encrypted data using XOR with password key."""
-    decrypted = bytearray(data)
-
-    # Decrypt 6 blocks (each of 8 bytes)
-    for j in range(6):
-        base_index = 8 * j
-        for i in range(8):
-            if base_index + i < len(decrypted):
-                decrypted[base_index + i] = ENCRYPTION_KEY[i] ^ decrypted[base_index + i]
-
-    return decrypted
-
-
-def _encrypt_data(data: bytearray) -> bytearray:
-    """Encrypt data using XOR with password key (same as decrypt since XOR is symmetric)."""
-    # XOR encryption is symmetric, so we use the same algorithm
-    return _decrypt_data(data)
 
 
 class VevorHeaterCoordinator(DataUpdateCoordinator):
@@ -156,7 +123,16 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._notification_data: bytearray | None = None
         # Get passkey from config, default to 1234 (factory default for most heaters)
         self._passkey = config_entry.data.get(CONF_PIN, DEFAULT_PIN)
-        self._protocol_mode = 0  # Will be detected from response (1-4 Vevor, 5 ABBA)
+        self._protocol_mode = 0  # Will be detected from response (1-6)
+        self._protocol: HeaterProtocol | None = None  # Active protocol handler
+        self._protocols: dict[int, HeaterProtocol] = {
+            1: ProtocolAA55(),
+            2: ProtocolAA55Encrypted(),
+            3: ProtocolAA66(),
+            4: ProtocolAA66Encrypted(),
+            5: ProtocolABBA(),
+            6: ProtocolCBFF(),
+        }
         self._is_abba_device = False  # True if using ABBA/HeaterCC protocol
         self._abba_write_char = None  # ABBA devices use separate write characteristic
         self._connection_attempts = 0
@@ -1064,8 +1040,40 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         except Exception as err:
             self._logger.error("Error parsing notification: %s", err)
 
+    def _detect_protocol(
+        self, data: bytearray, header: int
+    ) -> tuple[HeaterProtocol | None, bytearray | None]:
+        """Detect protocol from BLE data and return (protocol, data_to_parse).
+
+        For encrypted protocols, data_to_parse is already decrypted.
+        """
+        if header == PROTOCOL_HEADER_CBFF:
+            return self._protocols[6], data
+
+        if header == PROTOCOL_HEADER_ABBA or self._is_abba_device:
+            return self._protocols[5], data
+
+        if len(data) < 17:
+            return None, None
+
+        if header == 0xAA55 and len(data) in (18, 20):
+            return self._protocols[1], data
+
+        if header == 0xAA66 and len(data) == 20:
+            return self._protocols[3], data
+
+        if len(data) == 48:
+            decrypted = _decrypt_data(data)
+            inner = (_u8_to_number(decrypted[0]) << 8) | _u8_to_number(decrypted[1])
+            if inner == 0xAA55:
+                return self._protocols[2], decrypted
+            if inner == 0xAA66:
+                return self._protocols[4], decrypted
+
+        return None, None
+
     def _parse_response(self, data: bytearray) -> None:
-        """Parse response from heater."""
+        """Parse response from heater using protocol handler classes."""
         if len(data) < 8:
             # AA77 ACK is 10 bytes - check before discarding
             header_short = (_u8_to_number(data[0]) << 8) | _u8_to_number(data[1]) if len(data) >= 2 else 0
@@ -1076,15 +1084,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._logger.debug("Response too short: %d bytes", len(data))
             return
 
-        # Check protocol type
         header = (_u8_to_number(data[0]) << 8) | _u8_to_number(data[1])
-        old_protocol = self._protocol_mode
-
-        # Check for CBFF protocol (Sunster/v2.1 heaters)
-        if header == PROTOCOL_HEADER_CBFF:
-            self._logger.info("Detected protocol: CBFF/Sunster v2.1 (mode=6, %d bytes)", len(data))
-            self._parse_protocol_cbff(data)
-            return
 
         # Check for AA77 command ACK (Sunster heaters respond to AA55 with AA77)
         if header == PROTOCOL_HEADER_AA77:
@@ -1092,549 +1092,57 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._notification_data = data
             return
 
-        # Check for ABBA protocol (HeaterCC heaters)
-        if header == PROTOCOL_HEADER_ABBA or self._is_abba_device:
-            self._logger.info("Detected protocol: ABBA/HeaterCC (mode=5, %d bytes)", len(data))
-            self._parse_protocol_abba(data)
-            return
+        old_mode = self._protocol_mode
 
-        if len(data) < 17:
-            self._logger.debug("Response too short for Vevor protocol: %d bytes", len(data))
-            return
-
-        if header == 0xAA55 and len(data) in (18, 20):
-            # Protocol 1: 0xAA 0x55, 18-20 bytes, not encrypted
-            self._logger.info("Detected protocol: AA55 unencrypted (mode=1, %d bytes)", len(data))
-            self._parse_protocol_aa55(data)
-        elif header == 0xAA66 and len(data) == 20:
-            # Protocol 3: 0xAA 0x66, 20 bytes, not encrypted
-            self._logger.info("Detected protocol: AA66 unencrypted (mode=3)")
-            self._parse_protocol_aa66(data)
-        elif len(data) == 48:
-            # Protocol 2/4: 48 bytes, encrypted
-            decrypted = _decrypt_data(data)
-            header = (_u8_to_number(decrypted[0]) << 8) | _u8_to_number(decrypted[1])
-            self._logger.debug("Decrypted header: 0x%04X", header)
-
-            if header == 0xAA55:
-                self._logger.info("🔍 Detected protocol: AA55 encrypted (mode=2)")
-                self._parse_protocol_aa55_encrypted(decrypted)
-            elif header == 0xAA66:
-                self._logger.info("🔍 Detected protocol: AA66 encrypted (mode=4)")
-                self._parse_protocol_aa66_encrypted(decrypted)
-            else:
-                self._logger.warning(
-                    "🔍 Unknown encrypted protocol, decrypted header: 0x%04X",
-                    header
-                )
-        else:
+        # Detect protocol and get data to parse (may be decrypted)
+        protocol, parse_data = self._detect_protocol(data, header)
+        if not protocol:
             self._logger.warning(
-                "🔍 Unknown protocol, length: %d, header: 0x%04X",
-                len(data), header
+                "Unknown protocol, length: %d, header: 0x%04X", len(data), header
             )
-
-        # Log protocol change
-        if old_protocol != self._protocol_mode:
-            self._logger.info(
-                "📋 Protocol mode changed: %d → %d (commands will now use %s format)",
-                old_protocol, self._protocol_mode,
-                "CBFF/Sunster v2.1" if self._protocol_mode == 6 else
-                "AA66 encrypted" if self._protocol_mode == 4 else
-                "AA66 unencrypted" if self._protocol_mode == 3 else
-                "AA55 encrypted" if self._protocol_mode == 2 else
-                "AA55 unencrypted"
-            )
-
-    def _parse_protocol_aa55(self, data: bytearray) -> None:
-        """Parse protocol AA55 (18-20 bytes, unencrypted)."""
-        self._protocol_mode = 1
-        parsed: dict[str, Any] = {}
-
-        parsed["running_state"] = _u8_to_number(data[3])
-        parsed["error_code"] = _u8_to_number(data[4])
-        parsed["running_step"] = _u8_to_number(data[5])
-        parsed["altitude"] = _u8_to_number(data[6]) + 256 * _u8_to_number(data[7])
-        parsed["running_mode"] = _u8_to_number(data[8])
-
-        if parsed["running_mode"] == RUNNING_MODE_LEVEL:
-            parsed["set_level"] = _u8_to_number(data[9])
-        elif parsed["running_mode"] == RUNNING_MODE_TEMPERATURE:
-            parsed["set_temp"] = _u8_to_number(data[9])
-            parsed["set_level"] = _u8_to_number(data[10]) + 1
-        elif parsed["running_mode"] == RUNNING_MODE_MANUAL:
-            parsed["set_level"] = _u8_to_number(data[10]) + 1
-
-        parsed["supply_voltage"] = (
-            (256 * _u8_to_number(data[12]) + _u8_to_number(data[11])) / 10
-        )
-        parsed["case_temperature"] = _unsign_to_sign(256 * data[14] + data[13])
-        parsed["cab_temperature"] = _unsign_to_sign(256 * data[16] + data[15])
-
-        self.data.update(parsed)
-        self._apply_temperature_calibration()
-
-        self._logger.debug("Parsed AA55: %s", parsed)
-        self._notification_data = data
-
-    def _parse_protocol_aa66(self, data: bytearray) -> None:
-        """Parse protocol AA66 (20 bytes, unencrypted) - BYD/Vevor variant."""
-        self._protocol_mode = 3
-        parsed: dict[str, Any] = {}
-
-        parsed["running_state"] = _u8_to_number(data[3])
-        parsed["error_code"] = _u8_to_number(data[4])
-        parsed["running_step"] = _u8_to_number(data[5])
-        parsed["altitude"] = _u8_to_number(data[6])
-        parsed["running_mode"] = _u8_to_number(data[8])
-
-        if parsed["running_mode"] == RUNNING_MODE_LEVEL:
-            parsed["set_level"] = max(1, min(10, _u8_to_number(data[9])))
-        elif parsed["running_mode"] == RUNNING_MODE_TEMPERATURE:
-            parsed["set_temp"] = max(8, min(36, _u8_to_number(data[9])))
-
-        # Bytes 11-12: Supply voltage in 0.1V (little endian)
-        voltage_raw = _u8_to_number(data[11]) | (_u8_to_number(data[12]) << 8)
-        parsed["supply_voltage"] = voltage_raw / 10.0
-
-        # Bytes 13-14: Case temperature (little endian)
-        # Auto-detect: if raw > 350, definitely 0.1°C format (350°C case is impossible)
-        case_temp_raw = _u8_to_number(data[13]) | (_u8_to_number(data[14]) << 8)
-        if case_temp_raw > 350:
-            parsed["case_temperature"] = case_temp_raw / 10.0
-        else:
-            parsed["case_temperature"] = float(case_temp_raw)
-
-        parsed["cab_temperature"] = _u8_to_number(data[15])
-
-        self.data.update(parsed)
-        self._apply_temperature_calibration()
-
-        self._logger.debug("Parsed AA66: %s", parsed)
-        self._notification_data = data
-
-    def _parse_protocol_aa55_encrypted(self, data: bytearray) -> None:
-        """Parse encrypted protocol AA55 (48 bytes)."""
-        self._protocol_mode = 2
-        parsed: dict[str, Any] = {}
-
-        parsed["running_state"] = _u8_to_number(data[3])
-        parsed["error_code"] = _u8_to_number(data[4])
-        parsed["running_step"] = _u8_to_number(data[5])
-        parsed["altitude"] = (_u8_to_number(data[7]) + 256 * _u8_to_number(data[6])) / 10
-        parsed["running_mode"] = _u8_to_number(data[8])
-        parsed["set_level"] = max(1, min(10, _u8_to_number(data[10])))
-        parsed["set_temp"] = max(8, min(36, _u8_to_number(data[9])))
-
-        parsed["supply_voltage"] = (256 * data[11] + data[12]) / 10
-        parsed["case_temperature"] = _unsign_to_sign(256 * data[13] + data[14])
-        parsed["cab_temperature"] = _unsign_to_sign(256 * data[32] + data[33]) / 10
-
-        # Byte 34: Temperature offset reported by heater
-        if len(data) > 34:
-            heater_offset_raw = data[34]
-            parsed["heater_offset"] = (heater_offset_raw - 256) if heater_offset_raw > 127 else heater_offset_raw
-
-        # Byte 36: Backlight brightness (0=Off, 1-10, 20-100)
-        if len(data) > 36:
-            parsed["backlight"] = _u8_to_number(data[36])
-
-        # Byte 37: CO sensor present (boolean), Bytes 38-39: CO PPM (big endian)
-        if len(data) > 39:
-            co_present = _u8_to_number(data[37])
-            if co_present == 1:
-                co_ppm = (_u8_to_number(data[38]) << 8) | _u8_to_number(data[39])
-                parsed["co_ppm"] = float(co_ppm)
-            else:
-                parsed["co_ppm"] = None
-
-        # Bytes 40-43: Part number (uint32 little endian, stored as hex string)
-        if len(data) > 43:
-            part_number = (
-                _u8_to_number(data[40])
-                | (_u8_to_number(data[41]) << 8)
-                | (_u8_to_number(data[42]) << 16)
-                | (_u8_to_number(data[43]) << 24)
-            )
-            if part_number != 0:
-                parsed["part_number"] = format(part_number, 'x')
-
-        # Byte 44: Motherboard version
-        if len(data) > 44:
-            mb_version = _u8_to_number(data[44])
-            if mb_version != 0:
-                parsed["motherboard_version"] = mb_version
-
-        self.data.update(parsed)
-        self._apply_temperature_calibration()
-
-        self._logger.debug("Parsed AA55 encrypted: %s", parsed)
-        self._notification_data = data
-
-    def _parse_protocol_aa66_encrypted(self, data: bytearray) -> None:
-        """Parse encrypted protocol AA66 (48 bytes).
-
-        Protocol byte mapping (from warehog/esphome-diesel-heater-ble):
-        - Byte 27: Temperature unit (0=Celsius, 1=Fahrenheit)
-        - Byte 31: Automatic Start/Stop flag (0=disabled, 1=enabled)
-        """
-        self._protocol_mode = 4
-        parsed: dict[str, Any] = {}
-
-        parsed["running_state"] = _u8_to_number(data[3])
-        parsed["error_code"] = _u8_to_number(data[35])  # Different position!
-        parsed["running_step"] = _u8_to_number(data[5])
-        parsed["altitude"] = (_u8_to_number(data[7]) + 256 * _u8_to_number(data[6])) / 10
-        parsed["running_mode"] = _u8_to_number(data[8])
-        parsed["set_level"] = max(1, min(10, _u8_to_number(data[10])))
-
-        # Byte 27: Temperature unit (0=Celsius, 1=Fahrenheit)
-        temp_unit_byte = _u8_to_number(data[27])
-        self._heater_uses_fahrenheit = (temp_unit_byte == 1)
-        parsed["temp_unit"] = temp_unit_byte
-
-        # Byte 9: Set temperature (convert from F to C if needed)
-        raw_set_temp = _u8_to_number(data[9])
-        if self._heater_uses_fahrenheit:
-            set_temp_celsius = round((raw_set_temp - 32) * 5 / 9)
-            parsed["set_temp"] = max(8, min(36, set_temp_celsius))
-        else:
-            parsed["set_temp"] = max(8, min(36, raw_set_temp))
-
-        # Byte 31: Automatic Start/Stop flag
-        parsed["auto_start_stop"] = (_u8_to_number(data[31]) == 1)
-
-        # Configuration settings (bytes 26, 28, 29, 30)
-        if len(data) > 26:
-            parsed["language"] = _u8_to_number(data[26])
-
-        if len(data) > 28:
-            parsed["tank_volume"] = _u8_to_number(data[28])
-
-        # Byte 29: Pump type / RF433 status (20=off, 21=on)
-        if len(data) > 29:
-            pump_byte = _u8_to_number(data[29])
-            if pump_byte == 20:
-                parsed["rf433_enabled"] = False
-                parsed["pump_type"] = None
-            elif pump_byte == 21:
-                parsed["rf433_enabled"] = True
-                parsed["pump_type"] = None
-            else:
-                parsed["pump_type"] = pump_byte
-                parsed["rf433_enabled"] = None
-
-        if len(data) > 30:
-            parsed["altitude_unit"] = _u8_to_number(data[30])
-
-        parsed["supply_voltage"] = (256 * data[11] + data[12]) / 10
-        parsed["case_temperature"] = _unsign_to_sign(256 * data[13] + data[14])
-        parsed["cab_temperature"] = _unsign_to_sign(256 * data[32] + data[33]) / 10
-
-        # Byte 34: Temperature offset reported by heater (signed)
-        if len(data) > 34:
-            heater_offset_raw = data[34]
-            parsed["heater_offset"] = (heater_offset_raw - 256) if heater_offset_raw > 127 else heater_offset_raw
-
-        # Byte 36: Backlight brightness (0=Off, 1-10, 20-100)
-        if len(data) > 36:
-            parsed["backlight"] = _u8_to_number(data[36])
-
-        # Byte 37: CO sensor present (boolean), Bytes 38-39: CO PPM (big endian)
-        if len(data) > 39:
-            co_present = _u8_to_number(data[37])
-            if co_present == 1:
-                co_ppm = (_u8_to_number(data[38]) << 8) | _u8_to_number(data[39])
-                parsed["co_ppm"] = float(co_ppm)
-            else:
-                parsed["co_ppm"] = None
-
-        # Bytes 40-43: Part number (uint32 little endian, stored as hex string)
-        if len(data) > 43:
-            part_number = (
-                _u8_to_number(data[40])
-                | (_u8_to_number(data[41]) << 8)
-                | (_u8_to_number(data[42]) << 16)
-                | (_u8_to_number(data[43]) << 24)
-            )
-            if part_number != 0:
-                parsed["part_number"] = format(part_number, 'x')
-
-        # Byte 44: Motherboard version
-        if len(data) > 44:
-            mb_version = _u8_to_number(data[44])
-            if mb_version != 0:
-                parsed["motherboard_version"] = mb_version
-
-        self.data.update(parsed)
-        self._apply_temperature_calibration()
-
-        self._logger.debug("Parsed AA66 encrypted: %s", parsed)
-        self._notification_data = data
-
-    def _parse_protocol_abba(self, data: bytearray) -> None:
-        """Parse ABBA protocol response (HeaterCC heaters).
-
-        ABBA protocol is used by HeaterCC/AirHeaterCC app heaters.
-        Header is 0xABBA (notifications) or 0xBAAB (commands).
-
-        Byte mapping (verified by @Xev and @postal):
-        - Bytes 0-1: Header (0xABBA)
-        - Bytes 2-3: Packet type (0x11CC for status)
-        - Byte 4: Status (0=Off, 1=Heating, 2=Cooling)
-        - Byte 5: Mode (0=Manual, 1=Thermostat, 0xFF=Error)
-        - Byte 6: Gear/Target temp (Manual: level 1-6, Thermostat: target C)
-        - Byte 7: Submode/Flag
-        - Byte 8: Auto Start/Stop (0=Off, 1=On)
-        - Byte 9: Voltage (decimal V)
-        - Byte 10: Temperature Unit (0=Celsius, 1=Fahrenheit)
-        - Byte 11: Environment Temperature (subtract 30 for C, 22 for F)
-        - Bytes 12-13: Device Temperature (uint16)
-        - Byte 14: Altitude unit (0=Meters, 1=Feet)
-        - Byte 15: High-altitude mode (0=Normal, 1=High)
-        - Bytes 16-17: Altitude (uint16)
-        - Byte 20: Checksum
-        """
-        self._protocol_mode = 5
-        parsed: dict[str, Any] = {}
-
-        # ABBA responses have header 0xABBA
-        header = (_u8_to_number(data[0]) << 8) | _u8_to_number(data[1])
-        if header != PROTOCOL_HEADER_ABBA:
-            self._logger.debug("ABBA: Unexpected header 0x%04X, expected 0xABBA", header)
-
-        if len(data) < 21:
-            self._logger.warning("ABBA: Response too short (%d bytes), need 21", len(data))
-            self.data["connected"] = True
-            self._notification_data = data
             return
 
+        self._protocol_mode = protocol.protocol_mode
+        self._protocol = protocol
+
+        # Parse
         try:
-            parsed["connected"] = True
-
-            # Byte 4: Status
-            status_byte = _u8_to_number(data[4])
-            parsed["running_state"] = 1 if status_byte == 0x01 else 0
-            parsed["running_step"] = ABBA_STATUS_MAP.get(status_byte, status_byte)
-
-            # Byte 5: Mode (0x00=Level, 0x01=Temperature, 0xFF=Error)
-            mode_byte = _u8_to_number(data[5])
-            if mode_byte == 0xFF:
-                error_code = _u8_to_number(data[6])
-                parsed["error_code"] = error_code
-                error_name = ABBA_ERROR_NAMES.get(error_code, f"E{error_code} - Unknown error")
-                self._logger.warning("ABBA error detected: error_code=%d (%s)", error_code, error_name)
-                # Keep last known mode when in error state
-            else:
-                parsed["error_code"] = 0
-                if mode_byte == 0x00:
-                    parsed["running_mode"] = RUNNING_MODE_LEVEL
-                elif mode_byte == 0x01:
-                    parsed["running_mode"] = RUNNING_MODE_TEMPERATURE
-                else:
-                    parsed["running_mode"] = mode_byte
-
-            # Byte 6: Gear/Target temp (depends on mode)
-            gear_byte = _u8_to_number(data[6])
-            running_mode = parsed.get("running_mode", self.data.get("running_mode"))
-            if running_mode == RUNNING_MODE_LEVEL:
-                parsed["set_level"] = max(1, min(10, gear_byte))
-            else:
-                parsed["set_temp"] = max(8, min(36, gear_byte))
-
-            # Byte 8: Auto Start/Stop
-            parsed["auto_start_stop"] = (_u8_to_number(data[8]) == 1)
-
-            # Byte 9: Supply voltage (direct decimal value in V)
-            parsed["supply_voltage"] = float(_u8_to_number(data[9]))
-
-            # Byte 10: Temperature unit (0=Celsius, 1=Fahrenheit)
-            temp_unit_byte = _u8_to_number(data[10])
-            parsed["temp_unit"] = temp_unit_byte
-            self._heater_uses_fahrenheit = (temp_unit_byte == 1)
-
-            # Byte 11: Environment/Cabin temperature
-            env_temp_raw = _u8_to_number(data[11])
-            env_temp = env_temp_raw - (22 if self._heater_uses_fahrenheit else 30)
-            parsed["cab_temperature"] = float(env_temp)
-            parsed["cab_temperature_raw"] = float(env_temp)
-
-            # Bytes 12-13: Device/Case temperature (uint16, little endian)
-            case_temp = _u8_to_number(data[12]) | (_u8_to_number(data[13]) << 8)
-            parsed["case_temperature"] = float(case_temp)
-
-            # Byte 14: Altitude unit
-            parsed["altitude_unit"] = _u8_to_number(data[14])
-
-            # Byte 15: High-altitude mode
-            parsed["high_altitude"] = _u8_to_number(data[15])
-
-            # Bytes 16-17: Altitude (uint16, little endian)
-            parsed["altitude"] = _u8_to_number(data[16]) | (_u8_to_number(data[17]) << 8)
-
-            self.data.update(parsed)
-            self._logger.debug("Parsed ABBA: %s", parsed)
-
+            parsed = protocol.parse(parse_data)
         except Exception as err:
-            self._logger.error("ABBA parse error: %s", err)
-            self.data["connected"] = True
-            self.data["running_state"] = 0
-            self.data["running_step"] = 0
-            self.data["error_code"] = 0
+            self._logger.error("%s parse error: %s", protocol.name, err)
+            self.data.update({
+                "connected": True,
+                "running_state": 0,
+                "running_step": 0,
+                "error_code": 0,
+            })
+            self._notification_data = data
+            return
 
-        self._notification_data = data
-
-    def _parse_protocol_cbff(self, data: bytearray) -> None:
-        """Parse CBFF protocol response (Sunster/v2.1 heaters, 47 bytes).
-
-        This is a newer protocol used by Sunster TB10Pro WiFi and similar heaters.
-        The heater sends 47-byte CBFF notifications with status data.
-        Commands use standard AA55 format, heater ACKs with AA77.
-
-        Byte mapping (reverse-engineered from Sunster app by @Xev):
-        - Byte 10: run_state (2/5/6=OFF, others=ON)
-        - Byte 11: run_mode (1/3/4=Level, 2=Temperature)
-        - Byte 12: run_param (temp or gear depending on mode)
-        - Byte 13: now_gear (current gear level)
-        - Byte 14: run_step
-        - Byte 15-16: fault_display / fault_code
-        - Byte 17: temp_unit (0=C, 1=F)
-        - Bytes 18-19: detect_temp (cabin temp, int16 LE)
-        - Byte 20: altitude_unit
-        - Bytes 21-22: altitude (uint16 LE)
-        - Bytes 23-24: voltage (uint16 LE, /10)
-        - Bytes 25-26: skin_temp (case temp, int16 LE, /10)
-        - Bytes 27-28: co (CO sensor PPM, uint16 LE, /10)
-        - Byte 34: temp_comp (int8, temperature offset)
-        - Byte 35: broadcast_language
-        - Byte 36: oil_volume (tank volume index)
-        - Byte 37: pump_model
-        - Byte 42: i_stop (auto start/stop)
-        """
-        self._protocol_mode = 6
-        parsed: dict[str, Any] = {}
-
-        if len(data) < 46:
-            self._logger.warning("CBFF: Response too short (%d bytes), need 46+", len(data))
+        if parsed is None:
             self.data["connected"] = True
             self._notification_data = data
             return
 
-        try:
-            parsed["connected"] = True
+        self.data.update(parsed)
 
-            # Byte 10: run_state (2/5/6 = OFF, others = ON)
-            run_state = _u8_to_number(data[10])
-            parsed["running_state"] = 0 if run_state in CBFF_RUN_STATE_OFF else 1
+        # Update coordinator state from parsed data
+        if "temp_unit" in parsed:
+            self._heater_uses_fahrenheit = (parsed["temp_unit"] == 1)
 
-            # Byte 14: run_step
-            parsed["running_step"] = _u8_to_number(data[14])
-
-            # Byte 11: run_mode (1/3/4 = Level, 2 = Temperature)
-            run_mode = _u8_to_number(data[11])
-            if run_mode in (1, 3, 4):
-                parsed["running_mode"] = RUNNING_MODE_LEVEL
-            elif run_mode == 2:
-                parsed["running_mode"] = RUNNING_MODE_TEMPERATURE
-            else:
-                parsed["running_mode"] = RUNNING_MODE_MANUAL
-
-            # Byte 12: run_param (temp or gear depending on mode)
-            run_param = _u8_to_number(data[12])
-            if parsed["running_mode"] == RUNNING_MODE_LEVEL:
-                parsed["set_level"] = max(1, min(10, run_param))
-            else:
-                parsed["set_temp"] = max(8, min(36, run_param))
-
-            # Byte 13: now_gear (current gear even in temp mode)
-            now_gear = _u8_to_number(data[13])
-            if parsed["running_mode"] == RUNNING_MODE_TEMPERATURE:
-                parsed["set_level"] = max(1, min(10, now_gear))
-
-            # Byte 15-16: fault_display and fault_code
-            fault_display = _u8_to_number(data[15])
-            parsed["error_code"] = fault_display & 0x3F
-
-            # Byte 17: temp_unit (lower nibble = value, upper nibble = feature flag)
-            temp_unit_byte = _u8_to_number(data[17])
-            temp_unit_value = temp_unit_byte & 0x0F
-            parsed["temp_unit"] = temp_unit_value
-            self._heater_uses_fahrenheit = (temp_unit_value == 1)
-
-            # Bytes 18-19: detect_temp (cabin temperature, int16 LE)
-            cab_temp_raw = data[18] | (data[19] << 8)
-            if cab_temp_raw >= 32768:
-                cab_temp_raw -= 65536
-            parsed["cab_temperature"] = float(cab_temp_raw)
-
-            # Byte 20: altitude_unit
-            parsed["altitude_unit"] = _u8_to_number(data[20]) & 0x0F
-
-            # Bytes 21-22: altitude (uint16 LE)
-            parsed["altitude"] = data[21] | (data[22] << 8)
-
-            # Bytes 23-24: voltage (uint16 LE, /10)
-            voltage_raw = data[23] | (data[24] << 8)
-            parsed["supply_voltage"] = voltage_raw / 10.0
-
-            # Bytes 25-26: skin_temp / case temperature (int16 LE, /10)
-            case_temp_raw = data[25] | (data[26] << 8)
-            if case_temp_raw >= 32768:
-                case_temp_raw -= 65536
-            parsed["case_temperature"] = case_temp_raw / 10.0
-
-            # Bytes 27-28: CO sensor (uint16 LE, /10, in PPM)
-            co_raw = data[27] | (data[28] << 8)
-            co_ppm = co_raw / 10.0
-            if co_ppm < 6553:
-                parsed["co_ppm"] = co_ppm
-            else:
-                parsed["co_ppm"] = None
-
-            # Byte 34: temp_comp (temperature offset, int8)
-            temp_comp = data[34]
-            if temp_comp > 127:
-                temp_comp -= 256
-            parsed["heater_offset"] = temp_comp
-
-            # Byte 35: broadcast_language
-            lang_byte = _u8_to_number(data[35])
-            if lang_byte != 255:
-                parsed["language"] = lang_byte
-
-            # Byte 36: oil_volume (tank volume index)
-            tank_vol = _u8_to_number(data[36])
-            if tank_vol != 255:
-                parsed["tank_volume"] = tank_vol
-
-            # Byte 37: pump_model
-            pump_byte = _u8_to_number(data[37])
-            if pump_byte != 255:
-                if pump_byte == 20:
-                    parsed["rf433_enabled"] = False
-                    parsed["pump_type"] = None
-                elif pump_byte == 21:
-                    parsed["rf433_enabled"] = True
-                    parsed["pump_type"] = None
-                else:
-                    parsed["pump_type"] = pump_byte
-                    parsed["rf433_enabled"] = None
-
-            # Byte 42: i_stop (auto start/stop)
-            parsed["auto_start_stop"] = (_u8_to_number(data[42]) == 1)
-
-            self.data.update(parsed)
+        # Apply temperature calibration (ABBA handles it internally)
+        if protocol.needs_calibration:
             self._apply_temperature_calibration()
 
-            self._logger.debug("Parsed CBFF: %s", parsed)
-
-        except Exception as err:
-            self._logger.error("CBFF parse error: %s", err)
-            self.data["connected"] = True
-            self.data["running_state"] = 0
-            self.data["running_step"] = 0
-            self.data["error_code"] = 0
-
+        self._logger.debug("Parsed %s: %s", protocol.name, parsed)
         self._notification_data = data
+
+        # Log protocol change
+        if old_mode != self._protocol_mode:
+            self._logger.info(
+                "Protocol mode changed: %d -> %d (%s)",
+                old_mode, self._protocol_mode, protocol.name
+            )
 
     def _apply_temperature_calibration(self) -> None:
         """Store raw temperature and apply manual HA-side offset calibration.
@@ -1739,91 +1247,18 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         except Exception as err:
             self._logger.debug("Wake-up ping failed (non-critical): %s", err)
 
-    def _build_abba_command(self, cmd_hex: str) -> bytearray:
-        """Build ABBA protocol command packet.
-
-        ABBA commands have format: baab + length + cmd + data + checksum
-        Checksum is (sum of all bytes) & 0xFF
-        """
-        # Convert hex string to bytes
-        cmd_bytes = bytes.fromhex(cmd_hex.replace(" ", ""))
-
-        # Calculate checksum (sum of all bytes & 0xFF)
-        checksum = sum(cmd_bytes) & 0xFF
-        packet = bytearray(cmd_bytes) + bytearray([checksum])
-
-        self._logger.debug("ABBA command packet: %s", packet.hex())
-        return packet
-
     def _build_command_packet(self, command: int, argument: int = 0) -> bytearray:
         """Build command packet for the heater.
 
-        For Vevor heaters: Always use AA55 protocol (heater only accepts AA55).
-        For ABBA/HeaterCC heaters: Use ABBA protocol with BAAB header.
-        Argument is optional (defaults to 0).
+        Delegates to the active protocol's command builder.
+        Falls back to AA55 if protocol not yet detected.
         """
-        # ABBA/HeaterCC protocol
-        if self._is_abba_device:
-            return self._build_abba_command_for_vevor_cmd(command, argument)
-
-        # Build 8-byte command packet (ALWAYS unencrypted AA55)
-        packet = bytearray([0xAA, 0x55, 0, 0, 0, 0, 0, 0])
-        packet[2] = self._passkey // 100
-        packet[3] = self._passkey % 100
-        packet[4] = command % 256
-        packet[5] = argument % 256  # For negative: -4 % 256 = 252 (0xfc)
-        packet[6] = (argument // 256) % 256  # For negative: (-4 // 256) % 256 = 255 (0xff)
-        packet[7] = (packet[2] + packet[3] + packet[4] + packet[5] + packet[6]) % 256
-
-        self._logger.debug("Command packet (8 bytes, AA55): %s", packet.hex())
+        protocol = self._protocol or self._protocols[1]
+        packet = protocol.build_command(command, argument, self._passkey)
+        self._logger.debug(
+            "Command packet (%d bytes, %s): %s", len(packet), protocol.name, packet.hex()
+        )
         return packet
-
-    def _build_abba_command_for_vevor_cmd(self, command: int, argument: int) -> bytearray:
-        """Translate Vevor-style command to ABBA protocol.
-
-        Maps Vevor command codes to ABBA hex commands.
-        """
-        # Map Vevor commands to ABBA commands
-        if command == 1:
-            # Status request
-            return self._build_abba_command("baab04cc000000")
-        elif command == 3:
-            # Power on/off
-            if argument == 1:
-                return self._build_abba_command("baab04bba10000")  # Heat on
-            else:
-                return self._build_abba_command("baab04bba40000")  # 吹风 cooldown/off
-        elif command == 4:
-            # Set temperature/level - depends on mode
-            # For temperature mode, use set temp command
-            temp_hex = format(argument, '02x')
-            # baab04db + temp + 00 + unit (00=Celsius)
-            return self._build_abba_command(f"baab04db{temp_hex}0000")
-        elif command == 2:
-            # Running mode
-            if argument == 2:  # Temperature mode
-                return self._build_abba_command("baab04bbac0000")  # Const temp mode
-            else:
-                return self._build_abba_command("baab04bbad0000")  # Other mode
-        elif command == 15:
-            # Temperature unit
-            if argument == 1:  # Fahrenheit
-                return self._build_abba_command("baab04bba80000")
-            else:  # Celsius
-                return self._build_abba_command("baab04bba70000")
-        elif command == 19:
-            # Altitude unit
-            if argument == 1:  # Feet
-                return self._build_abba_command("baab04bbaa0000")
-            else:  # Meters
-                return self._build_abba_command("baab04bba90000")
-        elif command == 99:
-            # High Altitude Mode toggle (ABBA-only)
-            return self._build_abba_command("baab04bba50000")
-        else:
-            # Unknown command - send status request as fallback
-            self._logger.warning("ABBA: Unknown command %d, sending status request", command)
-            return self._build_abba_command("baab04cc000000")
 
     async def _send_command(self, command: int, argument: int, timeout: float = 5.0) -> bool:
         """Send command to heater with configurable timeout.
@@ -1860,13 +1295,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
             await self._write_gatt(packet)
 
-            # For ABBA devices, send a follow-up status request after commands
-            # (as per HeaterCC app behavior)
-            if self._is_abba_device and command != 1:  # Don't loop on status request
+            # For protocols that need it (e.g. ABBA), send a follow-up status request
+            if self._protocol and self._protocol.needs_post_status and command != 1:
                 await asyncio.sleep(0.5)
-                status_packet = self._build_abba_command("baab04cc000000")
+                status_packet = self._protocol.build_command(1, 0, self._passkey)
                 await self._write_gatt(status_packet)
-                self._logger.debug("ABBA: Sent follow-up status request")
+                self._logger.debug("%s: Sent follow-up status request", self._protocol.name)
 
             # Wait for notification with configurable timeout
             # Increased from 2s to 5s default to handle slow BLE responses
