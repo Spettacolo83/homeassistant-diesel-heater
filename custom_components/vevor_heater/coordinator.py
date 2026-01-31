@@ -1132,7 +1132,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         # Apply temperature calibration (ABBA handles it internally)
         if protocol.needs_calibration:
-            self._apply_temperature_calibration()
+            self._apply_ui_temperature_offset()
 
         self._logger.debug("Parsed %s: %s", protocol.name, parsed)
         self._notification_data = data
@@ -1144,20 +1144,20 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 old_mode, self._protocol_mode, protocol.name
             )
 
-    def _apply_temperature_calibration(self) -> None:
-        """Store raw temperature and apply manual HA-side offset calibration.
+    def _apply_ui_temperature_offset(self) -> None:
+        """Apply HA-side UI temperature offset (display only, not sent to heater).
 
         Two purposes:
-        1. Calculate cab_temperature_raw (true sensor value before heater's
-           internal offset) — needed by _async_calculate_auto_offset().
+        1. Calculate cab_temperature_raw — the true sensor value before the
+           heater's BLE offset. Needed by _async_calculate_auto_offset().
         2. Apply the manual HA-side display offset (CONF_TEMPERATURE_OFFSET)
-           from the integration config, if set.
+           from the integration config. This only affects what HA displays,
+           it does NOT send anything to the heater.
 
-        The heater's BLE offset (cmd 20) is handled separately by the heater
+        Note: The heater's own BLE offset (cmd 20) is handled by the heater
         itself; we only read it from byte 34 of the response.
 
-        Note: ABBA protocol sets cab_temperature_raw directly and does not
-        call this method, since ABBA heaters don't have a heater_offset byte.
+        Not called for ABBA protocol (sets cab_temperature_raw directly).
         """
         # Get reported temperature (already set by protocol parser)
         # This is AFTER the heater's internal offset has been applied

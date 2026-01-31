@@ -62,7 +62,7 @@ class HeaterProtocol(ABC):
 
     protocol_mode: int = 0
     name: str = "Unknown"
-    needs_calibration: bool = True   # Call _apply_temperature_calibration after parse
+    needs_calibration: bool = True   # Call _apply_ui_temperature_offset after parse
     needs_post_status: bool = False  # Send follow-up status request after commands
 
     @abstractmethod
