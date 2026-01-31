@@ -63,6 +63,12 @@ async def async_setup_entry(
             VevorLastRefueledSensor(coordinator),
             # CO sensor (CBFF/Sunster protocol only)
             VevorCOSensor(coordinator),
+            # CBFF extended info
+            VevorHardwareVersionSensor(coordinator),
+            VevorSoftwareVersionSensor(coordinator),
+            VevorRemainingRunTimeSensor(coordinator),
+            VevorStartupTempDiffSensor(coordinator),
+            VevorShutdownTempDiffSensor(coordinator),
         ]
     )
 
@@ -563,3 +569,125 @@ class VevorCOSensor(VevorSensorBase):
     def available(self) -> bool:
         """Return if entity is available (only for CBFF devices with CO sensor)."""
         return self.coordinator.data.get("co_ppm") is not None
+
+
+# CBFF extended info sensors
+
+class VevorHardwareVersionSensor(VevorSensorBase):
+    """Hardware version sensor (CBFF protocol only)."""
+
+    _attr_icon = "mdi:chip"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, "hardware_version", "Hardware Version")
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the state."""
+        return self.coordinator.data.get("hardware_version")
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        return self.coordinator.data.get("hardware_version") is not None
+
+
+class VevorSoftwareVersionSensor(VevorSensorBase):
+    """Software version sensor (CBFF protocol only)."""
+
+    _attr_icon = "mdi:tag"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, "software_version", "Software Version")
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the state."""
+        return self.coordinator.data.get("software_version")
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        return self.coordinator.data.get("software_version") is not None
+
+
+class VevorRemainingRunTimeSensor(VevorSensorBase):
+    """Remaining run time sensor (CBFF protocol only).
+
+    Shows the heater's remaining run time countdown in minutes.
+    """
+
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_native_unit_of_measurement = UnitOfTime.MINUTES
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:timer-sand"
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, "remain_run_time", "Remaining Run Time")
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the state."""
+        return self.coordinator.data.get("remain_run_time")
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        return self.coordinator.data.get("remain_run_time") is not None
+
+
+class VevorStartupTempDiffSensor(VevorSensorBase):
+    """Startup temperature difference sensor (CBFF protocol only).
+
+    The temperature difference threshold at which the heater will auto-start.
+    """
+
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_icon = "mdi:thermometer-chevron-up"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, "startup_temp_diff", "Startup Temp Difference")
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the state."""
+        return self.coordinator.data.get("startup_temp_diff")
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        return self.coordinator.data.get("startup_temp_diff") is not None
+
+
+class VevorShutdownTempDiffSensor(VevorSensorBase):
+    """Shutdown temperature difference sensor (CBFF protocol only).
+
+    The temperature difference threshold at which the heater will auto-stop.
+    """
+
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_icon = "mdi:thermometer-chevron-down"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, "shutdown_temp_diff", "Shutdown Temp Difference")
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the state."""
+        return self.coordinator.data.get("shutdown_temp_diff")
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        return self.coordinator.data.get("shutdown_temp_diff") is not None
