@@ -84,6 +84,13 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 
+class _HeaterLoggerAdapter(logging.LoggerAdapter):
+    """Logger adapter that prefixes messages with heater ID."""
+
+    def process(self, msg, kwargs):
+        return f"[{self.extra['heater_id']}] {msg}", kwargs
+
+
 def _u8_to_number(value: int) -> int:
     """Convert unsigned 8-bit value."""
     return (value + 256) if (value < 0) else value
@@ -136,6 +143,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self.address = ble_device.address
         self._ble_device = ble_device
         self.config_entry = config_entry
+        # Per-instance logger with heater ID prefix for multi-heater support
+        self._logger = _HeaterLoggerAdapter(
+            _LOGGER, {"heater_id": ble_device.address[-5:]}
+        )
         self._client: BleakClient | None = None
         self._characteristic = None
         self._active_char_uuid: str | None = None  # Track which UUID variant is active
@@ -235,11 +246,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 if saved_date:
                     today = datetime.now().date().isoformat()
                     if saved_date != today:
-                        _LOGGER.info("New day detected at startup, resetting daily fuel counter")
+                        self._logger.info("New day detected at startup, resetting daily fuel counter")
                         # Save yesterday's consumption to history before resetting
                         if self._daily_fuel_consumed > 0:
                             self._daily_fuel_history[saved_date] = round(self._daily_fuel_consumed, 2)
-                            _LOGGER.info("Saved %s: %.2fL to history", saved_date, self._daily_fuel_consumed)
+                            self._logger.info("Saved %s: %.2fL to history", saved_date, self._daily_fuel_consumed)
                         self._daily_fuel_consumed = 0.0
                         self._last_reset_date = today
                     else:
@@ -253,12 +264,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 if saved_runtime_date:
                     today = datetime.now().date().isoformat()
                     if saved_runtime_date != today:
-                        _LOGGER.info("New day detected at startup, resetting daily runtime counter")
+                        self._logger.info("New day detected at startup, resetting daily runtime counter")
                         # Save yesterday's runtime to history before resetting
                         if self._daily_runtime_seconds > 0:
                             hours = round(self._daily_runtime_seconds / 3600.0, 2)
                             self._daily_runtime_history[saved_runtime_date] = hours
-                            _LOGGER.info("Saved %s: %.2fh to runtime history", saved_runtime_date, hours)
+                            self._logger.info("Saved %s: %.2fh to runtime history", saved_runtime_date, hours)
                         self._daily_runtime_seconds = 0.0
                         self._last_runtime_reset_date = today
                     else:
@@ -275,13 +286,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 self.data["total_runtime_hours"] = round(self._total_runtime_seconds / 3600.0, 2)
                 self.data["daily_runtime_history"] = self._daily_runtime_history
 
-                _LOGGER.debug(
+                self._logger.debug(
                     "Loaded fuel data: total=%.2fL, daily=%.2fL, history entries=%d",
                     self._total_fuel_consumed,
                     self._daily_fuel_consumed,
                     len(self._daily_fuel_history)
                 )
-                _LOGGER.debug(
+                self._logger.debug(
                     "Loaded runtime data: total=%.2fh, daily=%.2fh, history entries=%d",
                     self._total_runtime_seconds / 3600.0,
                     self._daily_runtime_seconds / 3600.0,
@@ -298,7 +309,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 if last_refueled is not None:
                     self.data["last_refueled"] = last_refueled
                 self._update_fuel_remaining()
-                _LOGGER.debug(
+                self._logger.debug(
                     "Loaded fuel level data: consumed_since_reset=%.2fL, tank_capacity=%s, last_refueled=%s",
                     self._fuel_consumed_since_reset, self.data.get("tank_capacity"), self.data.get("last_refueled")
                 )
@@ -306,13 +317,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 # Load auto offset enabled state
                 auto_offset_enabled = data.get(STORAGE_KEY_AUTO_OFFSET_ENABLED, False)
                 self.data["auto_offset_enabled"] = auto_offset_enabled
-                _LOGGER.debug("Loaded auto_offset_enabled: %s", auto_offset_enabled)
+                self._logger.debug("Loaded auto_offset_enabled: %s", auto_offset_enabled)
 
                 # Import existing history into statistics for native graphing
                 await self._import_all_history_statistics()
                 await self._import_all_runtime_history_statistics()
         except Exception as err:
-            _LOGGER.warning("Could not load data: %s", err)
+            self._logger.warning("Could not load data: %s", err)
 
         # Set up external temperature sensor listener for auto offset
         await self._setup_external_temp_listener()
@@ -327,10 +338,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         # Get external sensor entity_id from config
         external_sensor = self.config_entry.data.get(CONF_EXTERNAL_TEMP_SENSOR, "")
         if not external_sensor:
-            _LOGGER.debug("No external temperature sensor configured")
+            self._logger.debug("No external temperature sensor configured")
             return
 
-        _LOGGER.info(
+        self._logger.info(
             "Setting up auto offset from external sensor: %s (max offset: %d°C)",
             external_sensor,
             self.config_entry.data.get(CONF_AUTO_OFFSET_MAX, DEFAULT_AUTO_OFFSET_MAX)
@@ -365,37 +376,37 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """
         # Check if auto offset is enabled
         if not self.data.get("auto_offset_enabled", False):
-            _LOGGER.debug("Auto offset disabled")
+            self._logger.debug("Auto offset disabled")
             return
 
         external_sensor = self.config_entry.data.get(CONF_EXTERNAL_TEMP_SENSOR, "")
         if not external_sensor:
-            _LOGGER.debug("No external temperature sensor configured")
+            self._logger.debug("No external temperature sensor configured")
             return
 
         # Throttle offset updates to avoid too many BLE commands
         current_time = time.time()
         if current_time - self._last_auto_offset_time < AUTO_OFFSET_THROTTLE_SECONDS:
-            _LOGGER.debug("Auto offset throttled (last update %.0fs ago)",
+            self._logger.debug("Auto offset throttled (last update %.0fs ago)",
                          current_time - self._last_auto_offset_time)
             return
 
         # Get external sensor state
         state = self.hass.states.get(external_sensor)
         if state is None or state.state in ("unknown", "unavailable"):
-            _LOGGER.debug("External sensor %s unavailable", external_sensor)
+            self._logger.debug("External sensor %s unavailable", external_sensor)
             return
 
         try:
             external_temp = float(state.state)
         except (ValueError, TypeError):
-            _LOGGER.warning("Invalid external sensor value: %s", state.state)
+            self._logger.warning("Invalid external sensor value: %s", state.state)
             return
 
         # Get heater's raw cab temperature (before any offset)
         raw_heater_temp = self.data.get("cab_temperature_raw")
         if raw_heater_temp is None:
-            _LOGGER.debug("Heater raw temperature not available yet")
+            self._logger.debug("Heater raw temperature not available yet")
             return
 
         # Round external temp to nearest integer (heater only accepts integer offset)
@@ -407,7 +418,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         # Only adjust if difference is significant (>= 1°C)
         if abs(difference) < AUTO_OFFSET_THRESHOLD:
-            _LOGGER.debug(
+            self._logger.debug(
                 "Auto offset: difference (%.1f°C) below threshold (%.1f°C), no adjustment",
                 difference, AUTO_OFFSET_THRESHOLD
             )
@@ -424,7 +435,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             old_offset = self._current_heater_offset
             self._last_auto_offset_time = current_time
 
-            _LOGGER.info(
+            self._logger.info(
                 "Auto offset: external=%.1f°C (rounded=%d), heater_raw=%.1f°C, "
                 "difference=%.1f°C, sending offset: %d → +%d°C",
                 external_temp, external_temp_rounded, raw_heater_temp,
@@ -456,14 +467,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 STORAGE_KEY_AUTO_OFFSET_ENABLED: self.data.get("auto_offset_enabled", False),
             }
             await self._store.async_save(data)
-            _LOGGER.debug(
+            self._logger.debug(
                 "Saved data: fuel history=%d entries, runtime history=%d entries, auto_offset=%s",
                 len(self._daily_fuel_history),
                 len(self._daily_runtime_history),
                 self.data.get("auto_offset_enabled", False)
             )
         except Exception as err:
-            _LOGGER.warning("Could not save data: %s", err)
+            self._logger.warning("Could not save data: %s", err)
 
     def _clean_old_history(self) -> None:
         """Remove history entries older than MAX_HISTORY_DAYS."""
@@ -477,7 +488,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             del self._daily_fuel_history[date]
 
         if old_keys:
-            _LOGGER.debug("Removed %d old fuel history entries (before %s)", len(old_keys), cutoff_date)
+            self._logger.debug("Removed %d old fuel history entries (before %s)", len(old_keys), cutoff_date)
 
     def _clean_old_runtime_history(self) -> None:
         """Remove runtime history entries older than MAX_HISTORY_DAYS."""
@@ -491,13 +502,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             del self._daily_runtime_history[date]
 
         if old_keys:
-            _LOGGER.debug("Removed %d old runtime history entries (before %s)", len(old_keys), cutoff_date)
+            self._logger.debug("Removed %d old runtime history entries (before %s)", len(old_keys), cutoff_date)
 
     async def _import_statistics(self, date_str: str, liters: float) -> None:
         """Import daily fuel consumption into Home Assistant statistics for graphing."""
         # Skip if recorder is not available
         if not (recorder := get_instance(self.hass)):
-            _LOGGER.debug("Recorder not available, skipping statistics import")
+            self._logger.debug("Recorder not available, skipping statistics import")
             return
 
         # Define statistic metadata
@@ -523,7 +534,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             # Make it timezone-aware
             timestamp = dt_util.as_utc(midnight)
         except (ValueError, TypeError) as err:
-            _LOGGER.error("Failed to parse date %s: %s", date_str, err)
+            self._logger.error("Failed to parse date %s: %s", date_str, err)
             return
 
         # Create statistic data point
@@ -535,15 +546,15 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         # Import the statistic (wrapped in try-except to prevent crashes)
         # Use async_add_external_statistics for external statistics (uses : delimiter)
-        _LOGGER.info(
+        self._logger.info(
             "Importing fuel statistic: id=%s, date=%s, value=%.2fL",
             statistic_id, date_str, liters
         )
         try:
             async_add_external_statistics(self.hass, metadata, [statistic])
-            _LOGGER.debug("Successfully imported fuel statistic for %s", date_str)
+            self._logger.debug("Successfully imported fuel statistic for %s", date_str)
         except Exception as err:
-            _LOGGER.warning(
+            self._logger.warning(
                 "Could not import fuel statistic for %s: %s (statistic_id=%s)",
                 date_str, err, statistic_id
             )
@@ -551,21 +562,21 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     async def _import_all_history_statistics(self) -> None:
         """Import all existing history data into statistics (called at startup)."""
         if not self._daily_fuel_history:
-            _LOGGER.debug("No history to import into statistics")
+            self._logger.debug("No history to import into statistics")
             return
 
-        _LOGGER.info("Importing %d days of fuel history into statistics", len(self._daily_fuel_history))
+        self._logger.info("Importing %d days of fuel history into statistics", len(self._daily_fuel_history))
 
         for date_str, liters in sorted(self._daily_fuel_history.items()):
             await self._import_statistics(date_str, liters)
 
-        _LOGGER.info("Completed import of fuel history into statistics")
+        self._logger.info("Completed import of fuel history into statistics")
 
     async def _import_runtime_statistics(self, date_str: str, hours: float) -> None:
         """Import daily runtime into Home Assistant statistics for graphing."""
         # Skip if recorder is not available
         if not (recorder := get_instance(self.hass)):
-            _LOGGER.debug("Recorder not available, skipping runtime statistics import")
+            self._logger.debug("Recorder not available, skipping runtime statistics import")
             return
 
         # Define statistic metadata
@@ -591,7 +602,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             # Make it timezone-aware
             timestamp = dt_util.as_utc(midnight)
         except (ValueError, TypeError) as err:
-            _LOGGER.error("Failed to parse date %s: %s", date_str, err)
+            self._logger.error("Failed to parse date %s: %s", date_str, err)
             return
 
         # Create statistic data point
@@ -603,15 +614,15 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         # Import the statistic (wrapped in try-except to prevent crashes)
         # Use async_add_external_statistics for external statistics (uses : delimiter)
-        _LOGGER.info(
+        self._logger.info(
             "Importing runtime statistic: id=%s, date=%s, value=%.2fh",
             statistic_id, date_str, hours
         )
         try:
             async_add_external_statistics(self.hass, metadata, [statistic])
-            _LOGGER.debug("Successfully imported runtime statistic for %s", date_str)
+            self._logger.debug("Successfully imported runtime statistic for %s", date_str)
         except Exception as err:
-            _LOGGER.warning(
+            self._logger.warning(
                 "Could not import runtime statistic for %s: %s (statistic_id=%s)",
                 date_str, err, statistic_id
             )
@@ -619,15 +630,15 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     async def _import_all_runtime_history_statistics(self) -> None:
         """Import all existing runtime history data into statistics (called at startup)."""
         if not self._daily_runtime_history:
-            _LOGGER.debug("No runtime history to import into statistics")
+            self._logger.debug("No runtime history to import into statistics")
             return
 
-        _LOGGER.info("Importing %d days of runtime history into statistics", len(self._daily_runtime_history))
+        self._logger.info("Importing %d days of runtime history into statistics", len(self._daily_runtime_history))
 
         for date_str, hours in sorted(self._daily_runtime_history.items()):
             await self._import_runtime_statistics(date_str, hours)
 
-        _LOGGER.info("Completed import of runtime history into statistics")
+        self._logger.info("Completed import of runtime history into statistics")
 
     def _calculate_fuel_consumption(self, elapsed_seconds: float) -> float:
         """Calculate fuel consumed based on power level and elapsed time.
@@ -688,7 +699,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self.data["last_refueled"] = dt_util.now().isoformat()
         self._update_fuel_remaining()
         await self.async_save_data()
-        _LOGGER.info("⛽ Fuel level reset (tank refueled at %s)", self.data["last_refueled"])
+        self._logger.info("⛽ Fuel level reset (tank refueled at %s)", self.data["last_refueled"])
         self.async_set_updated_data(self.data)
 
     async def async_set_tank_capacity(self, capacity: int) -> None:
@@ -697,7 +708,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self.data["tank_capacity"] = capacity
         self._update_fuel_remaining()
         await self.async_save_data()
-        _LOGGER.info("⛽ Tank capacity set to %dL", capacity)
+        self._logger.info("⛽ Tank capacity set to %dL", capacity)
         self.async_set_updated_data(self.data)
 
     def _update_runtime_tracking(self, elapsed_seconds: float) -> None:
@@ -719,7 +730,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             if self._daily_fuel_consumed > 0:
                 liters_consumed = round(self._daily_fuel_consumed, 2)
                 self._daily_fuel_history[self._last_reset_date] = liters_consumed
-                _LOGGER.info(
+                self._logger.info(
                     "New day detected: saved %s consumption (%.2fL) to history",
                     self._last_reset_date,
                     liters_consumed
@@ -728,7 +739,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 # Import into statistics for native graphing
                 await self._import_statistics(self._last_reset_date, liters_consumed)
 
-            _LOGGER.info(
+            self._logger.info(
                 "Resetting daily fuel counter from %.2fL to 0.0L (was %s, now %s)",
                 self._daily_fuel_consumed,
                 self._last_reset_date,
@@ -754,7 +765,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             if self._daily_runtime_seconds > 0:
                 hours_running = round(self._daily_runtime_seconds / 3600.0, 2)
                 self._daily_runtime_history[self._last_runtime_reset_date] = hours_running
-                _LOGGER.info(
+                self._logger.info(
                     "New day detected: saved %s runtime (%.2fh) to history",
                     self._last_runtime_reset_date,
                     hours_running
@@ -763,7 +774,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 # Import into statistics for native graphing
                 await self._import_runtime_statistics(self._last_runtime_reset_date, hours_running)
 
-            _LOGGER.info(
+            self._logger.info(
                 "Resetting daily runtime counter from %.2fh to 0.0h (was %s, now %s)",
                 self._daily_runtime_seconds / 3600.0,
                 self._last_runtime_reset_date,
@@ -824,7 +835,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if self._consecutive_failures <= self._max_stale_cycles:
             # Keep last valid values for a few cycles
             self._restore_stale_data()
-            _LOGGER.debug(
+            self._logger.debug(
                 "Connection failed (attempt %d/%d), keeping last values: %s",
                 self._consecutive_failures,
                 self._max_stale_cycles,
@@ -834,7 +845,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             # Too many failures, clear values
             self._clear_sensor_values()
             if self._consecutive_failures == self._max_stale_cycles + 1:
-                _LOGGER.warning(
+                self._logger.warning(
                     "Vevor Heater offline after %d attempts: %s",
                     self._consecutive_failures,
                     err
@@ -885,7 +896,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         except UpdateFailed:
             raise
         except Exception as err:
-            _LOGGER.debug("Error updating data: %s", err)
+            self._logger.debug("Error updating data: %s", err)
             self._handle_connection_failure(err)
             raise UpdateFailed(f"Error updating data: {err}")
 
@@ -909,7 +920,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
             if time_since_last < required_delay:
                 remaining = required_delay - time_since_last
-                _LOGGER.debug(
+                self._logger.debug(
                     "Waiting %.1fs before reconnection attempt %d",
                     remaining,
                     self._connection_attempts + 1
@@ -919,7 +930,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._connection_attempts += 1
         self._last_connection_attempt = time.time()
 
-        _LOGGER.debug(
+        self._logger.debug(
             "Connecting to Vevor Heater at %s (attempt %d)",
             self._ble_device.address,
             self._connection_attempts
@@ -937,7 +948,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
             # Verify services are available
             if not self._client.services:
-                _LOGGER.warning("No services discovered, triggering service refresh")
+                self._logger.warning("No services discovered, triggering service refresh")
                 # Services might not be cached, disconnect and let next attempt retry
                 await self._cleanup_connection()
                 raise BleakError("No services available")
@@ -951,27 +962,27 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             # First, check for ABBA/HeaterCC device (service fff0)
             for service in self._client.services:
                 if service.uuid.lower() == ABBA_SERVICE_UUID.lower():
-                    _LOGGER.info("🔍 Detected ABBA/HeaterCC heater (service fff0)")
+                    self._logger.info("🔍 Detected ABBA/HeaterCC heater (service fff0)")
                     self._is_abba_device = True
                     self._protocol_mode = 5  # ABBA protocol
 
                     # Log all characteristics in this service for debugging
                     char_list = [f"{c.uuid} (props: {c.properties})" for c in service.characteristics]
-                    _LOGGER.info("📋 ABBA service characteristics: %s", char_list)
+                    self._logger.info("📋 ABBA service characteristics: %s", char_list)
 
                     # Find notify and write characteristics
                     for char in service.characteristics:
                         if char.uuid.lower() == ABBA_NOTIFY_UUID.lower():
                             self._characteristic = char
                             self._active_char_uuid = ABBA_NOTIFY_UUID
-                            _LOGGER.info("✅ Found ABBA notify characteristic (fff1): %s", char.uuid)
+                            self._logger.info("✅ Found ABBA notify characteristic (fff1): %s", char.uuid)
                         elif char.uuid.lower() == ABBA_WRITE_UUID.lower():
                             self._abba_write_char = char
-                            _LOGGER.info("✅ Found ABBA write characteristic (fff2): %s", char.uuid)
+                            self._logger.info("✅ Found ABBA write characteristic (fff2): %s", char.uuid)
 
                     # Warning if write characteristic not found
                     if not self._abba_write_char:
-                        _LOGGER.warning(
+                        self._logger.warning(
                             "⚠️ ABBA device but fff2 write characteristic not found! "
                             "Will try writing to fff1 as fallback."
                         )
@@ -994,7 +1005,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                                 if char.uuid.lower() == char_uuid.lower():
                                     self._characteristic = char
                                     self._active_char_uuid = char_uuid
-                                    _LOGGER.info(
+                                    self._logger.info(
                                         "Found Vevor heater characteristic: %s (service: %s)",
                                         char_uuid, service_uuid
                                     )
@@ -1007,7 +1018,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             if not self._characteristic:
                 # Log available services for debugging
                 available_services = [s.uuid for s in self._client.services]
-                _LOGGER.error(
+                self._logger.error(
                     "Could not find heater characteristic. Available services: %s",
                     available_services
                 )
@@ -1019,17 +1030,17 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 await self._client.start_notify(
                     self._active_char_uuid, self._notification_callback
                 )
-                _LOGGER.debug("Started notifications on %s", self._active_char_uuid)
+                self._logger.debug("Started notifications on %s", self._active_char_uuid)
             else:
-                _LOGGER.warning("Characteristic does not support notify")
+                self._logger.warning("Characteristic does not support notify")
 
             # Send a wake-up ping to ensure device is responsive
             # Some heaters go into deep sleep and need a nudge
-            _LOGGER.debug("Sending wake-up ping to device")
+            self._logger.debug("Sending wake-up ping to device")
             await self._send_wake_up_ping()
 
             self._connection_attempts = 0  # Reset on successful connection
-            _LOGGER.info("Successfully connected to Vevor Heater")
+            self._logger.info("Successfully connected to Vevor Heater")
 
         except Exception as err:
             # Clean up on any connection failure
@@ -1040,7 +1051,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     def _notification_callback(self, _sender: int, data: bytearray) -> None:
         """Handle notification from heater."""
         # Log ALL received data for debugging
-        _LOGGER.info(
+        self._logger.info(
             "📩 Received BLE data (%d bytes): %s",
             len(data),
             data.hex()
@@ -1048,12 +1059,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         try:
             self._parse_response(data)
         except Exception as err:
-            _LOGGER.error("Error parsing notification: %s", err)
+            self._logger.error("Error parsing notification: %s", err)
 
     def _parse_response(self, data: bytearray) -> None:
         """Parse response from heater."""
         if len(data) < 8:
-            _LOGGER.debug("Response too short: %d bytes", len(data))
+            self._logger.debug("Response too short: %d bytes", len(data))
             return
 
         # Check protocol type
@@ -1062,48 +1073,48 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         # Check for ABBA protocol (HeaterCC heaters)
         if header == PROTOCOL_HEADER_ABBA or self._is_abba_device:
-            _LOGGER.info("🔍 Detected protocol: ABBA/HeaterCC (mode=5, %d bytes)", len(data))
+            self._logger.info("🔍 Detected protocol: ABBA/HeaterCC (mode=5, %d bytes)", len(data))
             self._parse_protocol_abba(data)
             return
 
         if len(data) < 17:
-            _LOGGER.debug("Response too short for Vevor protocol: %d bytes", len(data))
+            self._logger.debug("Response too short for Vevor protocol: %d bytes", len(data))
             return
 
         if header == 0xAA55 and len(data) in (18, 20):
             # Protocol 1: 0xAA 0x55, 18-20 bytes, not encrypted
-            _LOGGER.info("🔍 Detected protocol: AA55 unencrypted (mode=1, %d bytes)", len(data))
+            self._logger.info("🔍 Detected protocol: AA55 unencrypted (mode=1, %d bytes)", len(data))
             self._parse_protocol_aa55(data)
         elif header == 0xAA66 and len(data) == 20:
             # Protocol 3: 0xAA 0x66, 20 bytes, not encrypted
-            _LOGGER.info("🔍 Detected protocol: AA66 unencrypted (mode=3)")
+            self._logger.info("🔍 Detected protocol: AA66 unencrypted (mode=3)")
             self._parse_protocol_aa66(data)
         elif len(data) == 48:
             # Protocol 2/4: 48 bytes, encrypted
             decrypted = _decrypt_data(data)
             header = (_u8_to_number(decrypted[0]) << 8) | _u8_to_number(decrypted[1])
-            _LOGGER.debug("Decrypted header: 0x%04X", header)
+            self._logger.debug("Decrypted header: 0x%04X", header)
 
             if header == 0xAA55:
-                _LOGGER.info("🔍 Detected protocol: AA55 encrypted (mode=2)")
+                self._logger.info("🔍 Detected protocol: AA55 encrypted (mode=2)")
                 self._parse_protocol_aa55_encrypted(decrypted)
             elif header == 0xAA66:
-                _LOGGER.info("🔍 Detected protocol: AA66 encrypted (mode=4)")
+                self._logger.info("🔍 Detected protocol: AA66 encrypted (mode=4)")
                 self._parse_protocol_aa66_encrypted(decrypted)
             else:
-                _LOGGER.warning(
+                self._logger.warning(
                     "🔍 Unknown encrypted protocol, decrypted header: 0x%04X",
                     header
                 )
         else:
-            _LOGGER.warning(
+            self._logger.warning(
                 "🔍 Unknown protocol, length: %d, header: 0x%04X",
                 len(data), header
             )
 
         # Log protocol change
         if old_protocol != self._protocol_mode:
-            _LOGGER.info(
+            self._logger.info(
                 "📋 Protocol mode changed: %d → %d (commands will now use %s format)",
                 old_protocol, self._protocol_mode,
                 "AA66 encrypted" if self._protocol_mode == 4 else
@@ -1139,7 +1150,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         # Apply temperature calibration
         self._apply_temperature_calibration()
 
-        _LOGGER.debug("Parsed AA55: %s", self.data)
+        self._logger.debug("Parsed AA55: %s", self.data)
         self._notification_data = data
 
     def _parse_protocol_aa66(self, data: bytearray) -> None:
@@ -1189,7 +1200,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         # Apply temperature calibration
         self._apply_temperature_calibration()
 
-        _LOGGER.debug("Parsed AA66: %s", self.data)
+        self._logger.debug("Parsed AA66: %s", self.data)
         self._notification_data = data
 
     def _parse_protocol_aa55_encrypted(self, data: bytearray) -> None:
@@ -1216,12 +1227,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             else:
                 heater_offset = heater_offset_raw
             self.data["heater_offset"] = heater_offset
-            _LOGGER.debug("🌡️ Heater offset byte 34: %d", heater_offset)
+            self._logger.debug("🌡️ Heater offset byte 34: %d", heater_offset)
 
         # Apply temperature calibration
         self._apply_temperature_calibration()
 
-        _LOGGER.debug("Parsed AA55 encrypted: %s", self.data)
+        self._logger.debug("Parsed AA55 encrypted: %s", self.data)
         self._notification_data = data
 
     def _parse_protocol_aa66_encrypted(self, data: bytearray) -> None:
@@ -1245,39 +1256,39 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         temp_unit_byte = _u8_to_number(data[27])
         self._heater_uses_fahrenheit = (temp_unit_byte == 1)
         self.data["temp_unit"] = temp_unit_byte  # Store for UI switch
-        _LOGGER.debug("🌡️ Temperature unit byte 27: %d (%s)",
+        self._logger.debug("🌡️ Temperature unit byte 27: %d (%s)",
                      temp_unit_byte, "Fahrenheit" if self._heater_uses_fahrenheit else "Celsius")
 
         # Read raw set_temp value
         raw_set_temp = _u8_to_number(data[9])
-        _LOGGER.debug("🌡️ Raw set_temp from heater: %d (byte 9)", raw_set_temp)
+        self._logger.debug("🌡️ Raw set_temp from heater: %d (byte 9)", raw_set_temp)
 
         # Convert to Celsius if heater uses Fahrenheit
         if self._heater_uses_fahrenheit:
             set_temp_celsius = round((raw_set_temp - 32) * 5 / 9)
-            _LOGGER.debug("🌡️ Converted from Fahrenheit: %d°F → %d°C", raw_set_temp, set_temp_celsius)
+            self._logger.debug("🌡️ Converted from Fahrenheit: %d°F → %d°C", raw_set_temp, set_temp_celsius)
             self.data["set_temp"] = max(8, min(36, set_temp_celsius))
         else:
-            _LOGGER.debug("🌡️ Heater uses Celsius: %d°C", raw_set_temp)
+            self._logger.debug("🌡️ Heater uses Celsius: %d°C", raw_set_temp)
             self.data["set_temp"] = max(8, min(36, raw_set_temp))
 
         # Byte 31: Automatic Start/Stop flag
         # When enabled in Temperature mode, heater will stop when room reaches target temp
         auto_start_stop_byte = _u8_to_number(data[31])
         self.data["auto_start_stop"] = (auto_start_stop_byte == 1)
-        _LOGGER.debug("🔄 Auto Start/Stop byte 31: %d (%s)",
+        self._logger.debug("🔄 Auto Start/Stop byte 31: %d (%s)",
                      auto_start_stop_byte, "Enabled" if self.data["auto_start_stop"] else "Disabled")
 
         # Configuration settings (bytes 26, 28, 29, 30)
         # Byte 26: Language of voice notifications
         if len(data) > 26:
             self.data["language"] = _u8_to_number(data[26])
-            _LOGGER.debug("🗣️ Language byte 26: %d", self.data["language"])
+            self._logger.debug("🗣️ Language byte 26: %d", self.data["language"])
 
         # Byte 28: Tank volume in liters
         if len(data) > 28:
             self.data["tank_volume"] = _u8_to_number(data[28])
-            _LOGGER.debug("⛽ Tank volume byte 28: %d L", self.data["tank_volume"])
+            self._logger.debug("⛽ Tank volume byte 28: %d L", self.data["tank_volume"])
 
         # Byte 29: Pump type / RF433 status
         # Values 20/21 indicate RF433 remote: 20=off, 21=on
@@ -1292,12 +1303,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             else:
                 self.data["pump_type"] = pump_byte
                 self.data["rf433_enabled"] = None  # Standard mode
-            _LOGGER.debug("🔧 Pump type byte 29: %d (rf433=%s)", pump_byte, self.data["rf433_enabled"])
+            self._logger.debug("🔧 Pump type byte 29: %d (rf433=%s)", pump_byte, self.data["rf433_enabled"])
 
         # Byte 30: Altitude unit (0=Meters, 1=Feet)
         if len(data) > 30:
             self.data["altitude_unit"] = _u8_to_number(data[30])
-            _LOGGER.debug("📏 Altitude unit byte 30: %d (%s)",
+            self._logger.debug("📏 Altitude unit byte 30: %d (%s)",
                          self.data["altitude_unit"],
                          "Feet" if self.data["altitude_unit"] == 1 else "Meters")
 
@@ -1315,12 +1326,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             else:
                 heater_offset = heater_offset_raw
             self.data["heater_offset"] = heater_offset
-            _LOGGER.debug("🌡️ Heater offset byte 34: %d (raw=%d)", heater_offset, heater_offset_raw)
+            self._logger.debug("🌡️ Heater offset byte 34: %d (raw=%d)", heater_offset, heater_offset_raw)
 
         # Apply temperature calibration
         self._apply_temperature_calibration()
 
-        _LOGGER.debug("Parsed AA66 encrypted: %s", self.data)
+        self._logger.debug("Parsed AA66 encrypted: %s", self.data)
         self._notification_data = data
 
     def _parse_protocol_abba(self, data: bytearray) -> None:
@@ -1348,16 +1359,16 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """
         self._protocol_mode = 5
 
-        _LOGGER.info("🔍 Parsing ABBA protocol response (%d bytes): %s", len(data), data.hex())
+        self._logger.info("🔍 Parsing ABBA protocol response (%d bytes): %s", len(data), data.hex())
 
         # ABBA responses have header 0xABBA
         header = (_u8_to_number(data[0]) << 8) | _u8_to_number(data[1])
         if header != PROTOCOL_HEADER_ABBA:
-            _LOGGER.debug("ABBA: Unexpected header 0x%04X, expected 0xABBA", header)
+            self._logger.debug("ABBA: Unexpected header 0x%04X, expected 0xABBA", header)
 
         # Need at least 21 bytes for full status response
         if len(data) < 21:
-            _LOGGER.warning("ABBA: Response too short (%d bytes), need 21", len(data))
+            self._logger.warning("ABBA: Response too short (%d bytes), need 21", len(data))
             self.data["connected"] = True
             self._notification_data = data
             return
@@ -1373,7 +1384,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             # Map ABBA status to running_step using the status map
             self.data["running_step"] = ABBA_STATUS_MAP.get(status_byte, status_byte)
 
-            _LOGGER.debug("ABBA status byte 4: 0x%02X → running_state=%d, running_step=%d",
+            self._logger.debug("ABBA status byte 4: 0x%02X → running_state=%d, running_step=%d",
                          status_byte, self.data["running_state"], self.data["running_step"])
 
             # Byte 5: Mode (0x00=Level, 0x01=Temperature, 0xFF=Error)
@@ -1384,7 +1395,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 error_code = _u8_to_number(data[6])
                 self.data["error_code"] = error_code
                 error_name = ABBA_ERROR_NAMES.get(error_code, f"E{error_code} - Unknown error")
-                _LOGGER.warning("⚠️ ABBA error detected: byte 5=0xFF, error_code=%d (%s)",
+                self._logger.warning("⚠️ ABBA error detected: byte 5=0xFF, error_code=%d (%s)",
                                error_code, error_name)
                 # Keep last known mode when in error state
             else:
@@ -1396,7 +1407,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     self.data["running_mode"] = RUNNING_MODE_TEMPERATURE
                 else:
                     self.data["running_mode"] = mode_byte
-                _LOGGER.debug("ABBA mode byte 5: 0x%02X → running_mode=%d", mode_byte, self.data["running_mode"])
+                self._logger.debug("ABBA mode byte 5: 0x%02X → running_mode=%d", mode_byte, self.data["running_mode"])
 
             # Byte 6: Gear/Target temp (depends on mode)
             gear_byte = _u8_to_number(data[6])
@@ -1404,26 +1415,26 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 # Manual mode: gear is power level (1-6 for ABBA, we'll scale to 1-10)
                 # ABBA uses 1-6, Vevor uses 1-10
                 self.data["set_level"] = max(1, min(10, gear_byte))
-                _LOGGER.debug("ABBA gear byte 6: %d → set_level=%d", gear_byte, self.data["set_level"])
+                self._logger.debug("ABBA gear byte 6: %d → set_level=%d", gear_byte, self.data["set_level"])
             else:
                 # Thermostat mode: gear is target temperature
                 self.data["set_temp"] = max(8, min(36, gear_byte))
-                _LOGGER.debug("ABBA gear byte 6: %d → set_temp=%d", gear_byte, self.data["set_temp"])
+                self._logger.debug("ABBA gear byte 6: %d → set_temp=%d", gear_byte, self.data["set_temp"])
 
             # Byte 8: Auto Start/Stop
             auto_byte = _u8_to_number(data[8])
             self.data["auto_start_stop"] = (auto_byte == 1)
-            _LOGGER.debug("ABBA auto byte 8: %d → auto_start_stop=%s", auto_byte, self.data["auto_start_stop"])
+            self._logger.debug("ABBA auto byte 8: %d → auto_start_stop=%s", auto_byte, self.data["auto_start_stop"])
 
             # Byte 9: Supply voltage (direct decimal value in V)
             self.data["supply_voltage"] = float(_u8_to_number(data[9]))
-            _LOGGER.debug("ABBA voltage byte 9: %d V", self.data["supply_voltage"])
+            self._logger.debug("ABBA voltage byte 9: %d V", self.data["supply_voltage"])
 
             # Byte 10: Temperature unit (0=Celsius, 1=Fahrenheit)
             temp_unit_byte = _u8_to_number(data[10])
             self.data["temp_unit"] = temp_unit_byte
             self._heater_uses_fahrenheit = (temp_unit_byte == 1)
-            _LOGGER.debug("ABBA temp_unit byte 10: %d (%s)",
+            self._logger.debug("ABBA temp_unit byte 10: %d (%s)",
                          temp_unit_byte, "Fahrenheit" if self._heater_uses_fahrenheit else "Celsius")
 
             # Byte 11: Environment/Cabin temperature
@@ -1435,30 +1446,30 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 env_temp = env_temp_raw - 30
             self.data["cab_temperature"] = float(env_temp)
             self.data["cab_temperature_raw"] = float(env_temp)
-            _LOGGER.debug("ABBA env_temp byte 11: raw=%d, converted=%d°%s",
+            self._logger.debug("ABBA env_temp byte 11: raw=%d, converted=%d°%s",
                          env_temp_raw, env_temp, "F" if self._heater_uses_fahrenheit else "C")
 
             # Bytes 12-13: Device/Case temperature (uint16, little endian)
             case_temp = _u8_to_number(data[12]) | (_u8_to_number(data[13]) << 8)
             self.data["case_temperature"] = float(case_temp)
-            _LOGGER.debug("ABBA case_temp bytes 12-13: %d°C", case_temp)
+            self._logger.debug("ABBA case_temp bytes 12-13: %d°C", case_temp)
 
             # Byte 14: Altitude unit (0=Meters, 1=Feet)
             altitude_unit_byte = _u8_to_number(data[14])
             self.data["altitude_unit"] = altitude_unit_byte
-            _LOGGER.debug("ABBA altitude_unit byte 14: %d (%s)",
+            self._logger.debug("ABBA altitude_unit byte 14: %d (%s)",
                          altitude_unit_byte, "Feet" if altitude_unit_byte == 1 else "Meters")
 
             # Byte 15: High-altitude mode (0=Off, 1=On)
             high_alt_byte = _u8_to_number(data[15])
             self.data["high_altitude"] = high_alt_byte
-            _LOGGER.debug("ABBA high_altitude byte 15: %d (%s)",
+            self._logger.debug("ABBA high_altitude byte 15: %d (%s)",
                          high_alt_byte, "On" if high_alt_byte else "Off")
 
             # Bytes 16-17: Altitude (uint16, little endian)
             altitude = _u8_to_number(data[16]) | (_u8_to_number(data[17]) << 8)
             self.data["altitude"] = altitude
-            _LOGGER.debug("ABBA altitude bytes 16-17: %d", altitude)
+            self._logger.debug("ABBA altitude bytes 16-17: %d", altitude)
 
             # Build status name for logging
             status_names = {0x00: "Off", 0x01: "Heating", 0x02: "Cooldown", 0x04: "Ventilation", 0x06: "Standby"}
@@ -1468,7 +1479,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             error_code = self.data.get("error_code", 0)
             if error_code > 0:
                 error_name = ABBA_ERROR_NAMES.get(error_code, f"E{error_code}")
-                _LOGGER.info(
+                self._logger.info(
                     "⚠️ ABBA parsed: status=%s, ERROR=%s, cab=%d°C, case=%d°C, voltage=%dV",
                     status_name, error_name,
                     self.data["cab_temperature"],
@@ -1477,7 +1488,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 )
             else:
                 mode_name = "Thermostat" if self.data.get("running_mode") == RUNNING_MODE_TEMPERATURE else "Level"
-                _LOGGER.info(
+                self._logger.info(
                     "✅ ABBA parsed: status=%s, mode=%s, level/temp=%s, cab=%d°C, case=%d°C, voltage=%dV",
                     status_name, mode_name,
                     self.data.get("set_temp") or self.data.get("set_level"),
@@ -1487,7 +1498,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 )
 
         except Exception as err:
-            _LOGGER.error("ABBA parse error: %s", err)
+            self._logger.error("ABBA parse error: %s", err)
             # Set minimal data to show device is connected
             self.data["connected"] = True
             self.data["running_state"] = 0
@@ -1532,7 +1543,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             # Update data with calibrated value
             self.data["cab_temperature"] = calibrated_temp
 
-            _LOGGER.debug(
+            self._logger.debug(
                 "Applied HA display offset: reported=%s°C, ha_offset=%s°C, display=%s°C, raw_sensor=%s°C (heater_offset=%s°C)",
                 reported_temp, manual_offset, calibrated_temp, raw_sensor_temp, heater_offset
             )
@@ -1549,49 +1560,46 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     if self._characteristic and self._active_char_uuid and "notify" in self._characteristic.properties:
                         try:
                             await self._client.stop_notify(self._active_char_uuid)
-                            _LOGGER.debug("Stopped notifications on %s", self._active_char_uuid)
+                            self._logger.debug("Stopped notifications on %s", self._active_char_uuid)
                         except Exception as err:
-                            _LOGGER.debug("Could not stop notifications: %s", err)
+                            self._logger.debug("Could not stop notifications: %s", err)
 
                     # Disconnect
                     await self._client.disconnect()
-                    _LOGGER.debug("Disconnected from heater")
+                    self._logger.debug("Disconnected from heater")
             except Exception as err:
-                _LOGGER.debug("Error during cleanup: %s", err)
+                self._logger.debug("Error during cleanup: %s", err)
             finally:
                 self._client = None
                 self._characteristic = None
                 self._active_char_uuid = None
 
+    async def _write_gatt(self, packet: bytearray) -> None:
+        """Write a packet to the appropriate BLE characteristic.
+
+        Uses response=False to avoid authorization issues with BLE
+        proxies (e.g., ESPHome BLE proxy). The heater sends a notification as response.
+        """
+        if self._is_abba_device and self._abba_write_char:
+            write_char = self._abba_write_char
+            protocol_name = "ABBA"
+        else:
+            write_char = self._characteristic
+            protocol_name = "AAXX"
+
+        await self._client.write_gatt_char(write_char, packet, response=False)
+        self._logger.debug("Packet %s written to %s BLE characteristic", packet.hex(), protocol_name)
+
     async def _send_wake_up_ping(self) -> None:
         """Send a wake-up ping to the device to ensure it's responsive."""
         try:
-            # For ABBA devices, use ABBA protocol and write to fff2
-            if self._is_abba_device:
-                if self._client and self._abba_write_char:
-                    # Send ABBA status request: baab04cc000000 + checksum
-                    packet = self._build_abba_command("baab04cc000000")
-                    await self._client.write_gatt_char(self._abba_write_char, packet, response=False)
-                    await asyncio.sleep(0.5)
-                    _LOGGER.debug("ABBA wake-up ping sent to fff2: %s", packet.hex())
-                else:
-                    _LOGGER.warning("ABBA device but no write characteristic found")
-            else:
-                # Standard Vevor protocol wake-up
-                packet = bytearray([0xAA, 85, 0, 0, 0, 0, 0, 0])
-                packet[2] = self._passkey // 100
-                packet[3] = self._passkey % 100
-                packet[4] = 1  # Status command
-                packet[5] = 0
-                packet[6] = 0
-                packet[7] = (packet[2] + packet[3] + packet[4] + packet[5] + packet[6]) % 256
-
-                if self._client and self._characteristic:
-                    await self._client.write_gatt_char(self._characteristic, packet, response=False)
-                    await asyncio.sleep(0.5)
-                    _LOGGER.debug("Wake-up ping sent")
+            if self._client and (self._characteristic or self._abba_write_char):
+                packet = self._build_command_packet(1)
+                await self._write_gatt(packet)
+                await asyncio.sleep(0.5)
+                self._logger.debug("Wake-up ping sent")
         except Exception as err:
-            _LOGGER.debug("Wake-up ping failed (non-critical): %s", err)
+            self._logger.debug("Wake-up ping failed (non-critical): %s", err)
 
     def _build_abba_command(self, cmd_hex: str) -> bytearray:
         """Build ABBA protocol command packet.
@@ -1606,31 +1614,22 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         checksum = sum(cmd_bytes) & 0xFF
         packet = bytearray(cmd_bytes) + bytearray([checksum])
 
-        _LOGGER.debug("ABBA command packet: %s", packet.hex())
+        self._logger.debug("ABBA command packet: %s", packet.hex())
         return packet
 
-    def _build_command_packet(self, command: int, argument: int) -> bytearray:
+    def _build_command_packet(self, command: int, argument: int = 0) -> bytearray:
         """Build command packet for the heater.
 
-        For Vevor heaters: Always use AA55 protocol.
+        For Vevor heaters: Always use AA55 protocol (heater only accepts AA55).
         For ABBA/HeaterCC heaters: Use ABBA protocol with BAAB header.
+        Argument is optional (defaults to 0).
         """
-        _LOGGER.info(
-            "🔧 Building command packet: protocol_mode=%d, cmd=%d, arg=%d, is_abba=%s",
-            self._protocol_mode, command, argument, self._is_abba_device
-        )
-
         # ABBA/HeaterCC protocol
         if self._is_abba_device:
             return self._build_abba_command_for_vevor_cmd(command, argument)
 
-        # Vevor protocol - ALWAYS use AA55 header for commands
-        # The heater only accepts AA55, regardless of response protocol
-        header_byte = 0x55
-        _LOGGER.debug("Using AA55 protocol header (heater only accepts AA55 commands)")
-
         # Build 8-byte command packet (ALWAYS unencrypted AA55)
-        packet = bytearray([0xAA, header_byte, 0, 0, 0, 0, 0, 0])
+        packet = bytearray([0xAA, 0x55, 0, 0, 0, 0, 0, 0])
         packet[2] = self._passkey // 100
         packet[3] = self._passkey % 100
         packet[4] = command % 256
@@ -1638,8 +1637,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         packet[6] = (argument // 256) % 256  # For negative: (-4 // 256) % 256 = 255 (0xff)
         packet[7] = (packet[2] + packet[3] + packet[4] + packet[5] + packet[6]) % 256
 
-        _LOGGER.debug("Command packet (8 bytes, AA55): %s", packet.hex())
-
+        self._logger.debug("Command packet (8 bytes, AA55): %s", packet.hex())
         return packet
 
     def _build_abba_command_for_vevor_cmd(self, command: int, argument: int) -> bytearray:
@@ -1686,7 +1684,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             return self._build_abba_command("baab04bba50000")
         else:
             # Unknown command - send status request as fallback
-            _LOGGER.warning("ABBA: Unknown command %d, sending status request", command)
+            self._logger.warning("ABBA: Unknown command %d, sending status request", command)
             return self._build_abba_command("baab04cc000000")
 
     async def _send_command(self, command: int, argument: int, timeout: float = 5.0) -> bool:
@@ -1698,14 +1696,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             timeout: Timeout in seconds for waiting response
         """
         if not self._client or not self._client.is_connected:
-            _LOGGER.error(
+            self._logger.error(
                 "Cannot send command: heater not connected. "
                 "The integration will attempt to reconnect automatically."
             )
             return False
 
         if not self._characteristic:
-            _LOGGER.error(
+            self._logger.error(
                 "Cannot send command: BLE characteristic not found. "
                 "Try reloading the integration."
             )
@@ -1714,7 +1712,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         # Build protocol-aware command packet
         packet = self._build_command_packet(command, argument)
 
-        _LOGGER.info(
+        self._logger.info(
             "📤 Sending command: %s (cmd=%d, arg=%d, protocol=%d, len=%d)",
             packet.hex(), command, argument, self._protocol_mode, len(packet)
         )
@@ -1722,27 +1720,15 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         try:
             self._notification_data = None
 
-            # For ABBA devices, write to fff2 characteristic
-            # For Vevor devices, write to the main characteristic (ffe1 or fff1)
-            if self._is_abba_device and self._abba_write_char:
-                write_char = self._abba_write_char
-                _LOGGER.debug("Using ABBA write characteristic (fff2)")
-            else:
-                write_char = self._characteristic
-                _LOGGER.debug("Using standard write characteristic")
-
-            # Use response=False to avoid authorization issues with BLE proxies
-            # (e.g., ESPHome BLE proxy). The heater sends a notification as response.
-            await self._client.write_gatt_char(write_char, packet, response=False)
-            _LOGGER.debug("Command written to BLE characteristic")
+            await self._write_gatt(packet)
 
             # For ABBA devices, send a follow-up status request after commands
             # (as per HeaterCC app behavior)
             if self._is_abba_device and command != 1:  # Don't loop on status request
                 await asyncio.sleep(0.5)
                 status_packet = self._build_abba_command("baab04cc000000")
-                await self._client.write_gatt_char(write_char, status_packet, response=False)
-                _LOGGER.debug("ABBA: Sent follow-up status request")
+                await self._write_gatt(status_packet)
+                self._logger.debug("ABBA: Sent follow-up status request")
 
             # Wait for notification with configurable timeout
             # Increased from 2s to 5s default to handle slow BLE responses
@@ -1750,17 +1736,17 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             for i in range(iterations):
                 await asyncio.sleep(0.1)
                 if self._notification_data:
-                    _LOGGER.info(
+                    self._logger.info(
                         "✅ Received response after %.1fs (protocol=%d)",
                         i * 0.1, self._protocol_mode
                     )
                     return True
 
-            _LOGGER.warning("⚠️ No response received after %.1fs", timeout)
+            self._logger.warning("⚠️ No response received after %.1fs", timeout)
             return False
 
         except Exception as err:
-            _LOGGER.error("❌ Error sending command: %s", err)
+            self._logger.error("❌ Error sending command: %s", err)
             # On write error, the connection might be dead
             await self._cleanup_connection()
             return False
@@ -1805,13 +1791,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         # Some mode 4 heaters use Fahrenheit, others use Celsius
         if self._heater_uses_fahrenheit:
             temp_fahrenheit = round(temperature * 9 / 5 + 32)
-            _LOGGER.info(
+            self._logger.info(
                 "🌡️ SET TEMPERATURE REQUEST: target=%d°C (%d°F), current=%s, mode=%s, protocol=%d (heater uses Fahrenheit)",
                 temperature, temp_fahrenheit, current_temp, current_mode, self._protocol_mode
             )
             command_temp = temp_fahrenheit
         else:
-            _LOGGER.info(
+            self._logger.info(
                 "🌡️ SET TEMPERATURE REQUEST: target=%d°C, current=%s, mode=%s, protocol=%d (heater uses Celsius)",
                 temperature, current_temp, current_mode, self._protocol_mode
             )
@@ -1823,19 +1809,19 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             await self.async_request_refresh()
             # Log result after refresh
             new_temp = self.data.get("set_temp", "unknown")
-            _LOGGER.info(
+            self._logger.info(
                 "🌡️ SET TEMPERATURE RESULT: requested=%d°C, heater_reports=%s°C, %s",
                 temperature, new_temp,
                 "✅ SUCCESS" if new_temp == temperature else "❌ FAILED - heater did not accept"
             )
         else:
-            _LOGGER.warning("🌡️ SET TEMPERATURE FAILED: command not sent successfully")
+            self._logger.warning("🌡️ SET TEMPERATURE FAILED: command not sent successfully")
 
     async def async_set_mode(self, mode: int) -> None:
         """Set running mode (0=Manual, 1=Level, 2=Temperature)."""
         # Command 2 for mode (needs verification)
         mode = max(0, min(2, mode))
-        _LOGGER.info("Setting running mode to %d", mode)
+        self._logger.info("Setting running mode to %d", mode)
         success = await self._send_command(2, mode)
         if success:
             await self.async_request_refresh()
@@ -1847,7 +1833,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         when the room temperature reaches 2°C above the target, and restart
         when it drops 2°C below the target.
         """
-        _LOGGER.info("Setting Auto Start/Stop to %s", "enabled" if enabled else "disabled")
+        self._logger.info("Setting Auto Start/Stop to %s", "enabled" if enabled else "disabled")
         # Command 18, arg=1 for enabled, arg=0 for disabled
         success = await self._send_command(18, 1 if enabled else 0)
         if success:
@@ -1861,13 +1847,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """
         now = datetime.now()
         time_value = 60 * now.hour + now.minute
-        _LOGGER.info("Syncing heater time to %02d:%02d (value=%d)", now.hour, now.minute, time_value)
+        self._logger.info("Syncing heater time to %02d:%02d (value=%d)", now.hour, now.minute, time_value)
         # Command 10 for time sync
         success = await self._send_command(10, time_value)
         if success:
-            _LOGGER.info("✅ Time sync successful")
+            self._logger.info("✅ Time sync successful")
         else:
-            _LOGGER.warning("❌ Time sync failed")
+            self._logger.warning("❌ Time sync failed")
 
     async def async_set_heater_offset(self, offset: int) -> None:
         """Set temperature offset on the heater (cmd 20).
@@ -1887,7 +1873,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         # Clamp to valid range
         offset = max(MIN_HEATER_OFFSET, min(MAX_HEATER_OFFSET, offset))
 
-        _LOGGER.info("🌡️ Setting heater temperature offset to %d°C (cmd 20)", offset)
+        self._logger.info("🌡️ Setting heater temperature offset to %d°C (cmd 20)", offset)
 
         # Command 20 for temperature offset
         # Pass offset directly - _build_command_packet handles encoding
@@ -1896,10 +1882,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if success:
             self._current_heater_offset = offset
             self.data["heater_offset"] = offset
-            _LOGGER.info("✅ Heater offset set to %d°C", offset)
+            self._logger.info("✅ Heater offset set to %d°C", offset)
             await self.async_request_refresh()
         else:
-            _LOGGER.warning("❌ Failed to set heater offset")
+            self._logger.warning("❌ Failed to set heater offset")
 
     async def async_set_language(self, language: int) -> None:
         """Set voice notification language (cmd 14).
@@ -1907,14 +1893,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         Args:
             language: Language code (0=Chinese, 1=English, 2=Russian, etc.)
         """
-        _LOGGER.info("🗣️ Setting language to %d (cmd 14)", language)
+        self._logger.info("🗣️ Setting language to %d (cmd 14)", language)
         success = await self._send_command(14, language)
         if success:
             self.data["language"] = language
-            _LOGGER.info("✅ Language set to %d", language)
+            self._logger.info("✅ Language set to %d", language)
             await self.async_request_refresh()
         else:
-            _LOGGER.warning("❌ Failed to set language")
+            self._logger.warning("❌ Failed to set language")
 
     async def async_set_temp_unit(self, use_fahrenheit: bool) -> None:
         """Set temperature unit (cmd 15).
@@ -1924,15 +1910,15 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """
         value = 1 if use_fahrenheit else 0
         unit_name = "Fahrenheit" if use_fahrenheit else "Celsius"
-        _LOGGER.info("🌡️ Setting temperature unit to %s (cmd 15, value=%d)", unit_name, value)
+        self._logger.info("🌡️ Setting temperature unit to %s (cmd 15, value=%d)", unit_name, value)
         success = await self._send_command(15, value)
         if success:
             self.data["temp_unit"] = value
             self._heater_uses_fahrenheit = use_fahrenheit
-            _LOGGER.info("✅ Temperature unit set to %s", unit_name)
+            self._logger.info("✅ Temperature unit set to %s", unit_name)
             await self.async_request_refresh()
         else:
-            _LOGGER.warning("❌ Failed to set temperature unit")
+            self._logger.warning("❌ Failed to set temperature unit")
 
     async def async_set_altitude_unit(self, use_feet: bool) -> None:
         """Set altitude unit (cmd 19).
@@ -1942,14 +1928,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """
         value = 1 if use_feet else 0
         unit_name = "Feet" if use_feet else "Meters"
-        _LOGGER.info("📏 Setting altitude unit to %s (cmd 19, value=%d)", unit_name, value)
+        self._logger.info("📏 Setting altitude unit to %s (cmd 19, value=%d)", unit_name, value)
         success = await self._send_command(19, value)
         if success:
             self.data["altitude_unit"] = value
-            _LOGGER.info("✅ Altitude unit set to %s", unit_name)
+            self._logger.info("✅ Altitude unit set to %s", unit_name)
             await self.async_request_refresh()
         else:
-            _LOGGER.warning("❌ Failed to set altitude unit")
+            self._logger.warning("❌ Failed to set altitude unit")
 
     async def async_set_high_altitude(self, enabled: bool) -> None:
         """Toggle high altitude mode (ABBA-only, cmd 99).
@@ -1957,17 +1943,17 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         The ABBA protocol uses a toggle command for high altitude mode.
         """
         if not self._is_abba_device:
-            _LOGGER.warning("High altitude mode is only available for ABBA/HeaterCC devices")
+            self._logger.warning("High altitude mode is only available for ABBA/HeaterCC devices")
             return
         state_name = "ON" if enabled else "OFF"
-        _LOGGER.info("🏔️ Setting high altitude mode to %s", state_name)
+        self._logger.info("🏔️ Setting high altitude mode to %s", state_name)
         success = await self._send_command(99, 0)
         if success:
             self.data["high_altitude"] = 1 if enabled else 0
-            _LOGGER.info("✅ High altitude mode set to %s", state_name)
+            self._logger.info("✅ High altitude mode set to %s", state_name)
             await self.async_request_refresh()
         else:
-            _LOGGER.warning("❌ Failed to set high altitude mode")
+            self._logger.warning("❌ Failed to set high altitude mode")
 
     async def async_set_tank_volume(self, volume_index: int) -> None:
         """Set tank volume by index (cmd 16).
@@ -1979,14 +1965,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             volume_index: Tank volume index (0-10)
         """
         volume_index = max(0, min(10, volume_index))
-        _LOGGER.info("⛽ Setting tank volume to index %d (cmd 16)", volume_index)
+        self._logger.info("⛽ Setting tank volume to index %d (cmd 16)", volume_index)
         success = await self._send_command(16, volume_index)
         if success:
             self.data["tank_volume"] = volume_index
-            _LOGGER.info("✅ Tank volume set to index %d", volume_index)
+            self._logger.info("✅ Tank volume set to index %d", volume_index)
             await self.async_request_refresh()
         else:
-            _LOGGER.warning("❌ Failed to set tank volume")
+            self._logger.warning("❌ Failed to set tank volume")
 
     async def async_set_pump_type(self, pump_type: int) -> None:
         """Set oil pump type (cmd 17).
@@ -1997,14 +1983,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             pump_type: Pump type (0-3)
         """
         pump_type = max(0, min(3, pump_type))
-        _LOGGER.info("🔧 Setting pump type to %d (cmd 17)", pump_type)
+        self._logger.info("🔧 Setting pump type to %d (cmd 17)", pump_type)
         success = await self._send_command(17, pump_type)
         if success:
             self.data["pump_type"] = pump_type
-            _LOGGER.info("✅ Pump type set to %d", pump_type)
+            self._logger.info("✅ Pump type set to %d", pump_type)
             await self.async_request_refresh()
         else:
-            _LOGGER.warning("❌ Failed to set pump type")
+            self._logger.warning("❌ Failed to set pump type")
 
     async def async_set_auto_offset_enabled(self, enabled: bool) -> None:
         """Enable or disable automatic temperature offset adjustment.
@@ -2016,7 +2002,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         Args:
             enabled: True to enable, False to disable
         """
-        _LOGGER.info("Setting auto offset to %s", "enabled" if enabled else "disabled")
+        self._logger.info("Setting auto offset to %s", "enabled" if enabled else "disabled")
         self.data["auto_offset_enabled"] = enabled
 
         # Persist the setting immediately
@@ -2028,7 +2014,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         else:
             # Reset heater offset to 0 when disabling
             if self._current_heater_offset != 0:
-                _LOGGER.info("Resetting heater offset to 0")
+                self._logger.info("Resetting heater offset to 0")
                 await self.async_set_heater_offset(0)
 
     async def async_send_raw_command(self, command: int, argument: int) -> bool:
@@ -2044,7 +2030,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         Returns:
             True if command was sent successfully
         """
-        _LOGGER.info(
+        self._logger.info(
             "🔧 DEBUG: Sending raw command: cmd=%d, arg=%d",
             command, argument
         )
@@ -2052,16 +2038,16 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         success = await self._send_command(command, argument)
 
         if success:
-            _LOGGER.info("✅ DEBUG: Raw command sent successfully")
+            self._logger.info("✅ DEBUG: Raw command sent successfully")
             await self.async_request_refresh()
         else:
-            _LOGGER.warning("❌ DEBUG: Failed to send raw command")
+            self._logger.warning("❌ DEBUG: Failed to send raw command")
 
         return success
 
     async def async_shutdown(self) -> None:
         """Shutdown coordinator."""
-        _LOGGER.debug("Shutting down Vevor Heater coordinator")
+        self._logger.debug("Shutting down Vevor Heater coordinator")
 
         # Clean up external sensor listener
         if self._auto_offset_unsub:
