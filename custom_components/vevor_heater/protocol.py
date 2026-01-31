@@ -429,10 +429,12 @@ class ProtocolABBA(HeaterProtocol):
         if command == 1:
             return self._build_abba("baab04cc000000")
         elif command == 3:
-            if argument == 1:
-                return self._build_abba("baab04bba10000")  # Heat on
-            else:
-                return self._build_abba("baab04bba40000")  # Cooldown/off
+            # ABBA uses openOnHeat (0xA1) as a toggle: same command for
+            # both ON and OFF.  The AirHeaterCC app has no explicit "off"
+            # function — the Heat button toggles between heating and
+            # cooldown.  The old 0xA4 (openOnBlow/ventilation) was ignored
+            # by the heater while actively heating.
+            return self._build_abba("baab04bba10000")
         elif command == 4:
             temp_hex = format(argument, '02x')
             return self._build_abba(f"baab04db{temp_hex}0000")

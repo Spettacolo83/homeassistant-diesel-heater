@@ -1336,14 +1336,22 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
     async def async_turn_on(self) -> None:
         """Turn heater on."""
-        # Command 3, arg=1 for ON (verified with BYD heater)
+        # ABBA uses a toggle command (0xA1) for both ON and OFF.
+        # Guard against accidental toggle: skip if already heating.
+        if self._protocol_mode == 5 and self.data.get("running_state", 0) == 1:
+            self._logger.info("ABBA: Heater already on, skipping toggle command")
+            return
         success = await self._send_command(3, 1)
         if success:
             await self.async_request_refresh()
 
     async def async_turn_off(self) -> None:
         """Turn heater off."""
-        # Command 3, arg=0 for OFF (verified with BYD heater)
+        # ABBA uses a toggle command (0xA1) for both ON and OFF.
+        # Guard against accidental toggle: skip if already off.
+        if self._protocol_mode == 5 and self.data.get("running_state", 0) == 0:
+            self._logger.info("ABBA: Heater already off, skipping toggle command")
+            return
         success = await self._send_command(3, 0)
         if success:
             await self.async_request_refresh()
