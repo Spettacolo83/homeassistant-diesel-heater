@@ -44,7 +44,11 @@ class VevorHeaterFan(FanEntity):
     _attr_has_entity_name = True
     _attr_name = "Heater Level"
     _attr_icon = "mdi:fire"
-    _attr_supported_features = FanEntityFeature.SET_SPEED
+    _attr_supported_features = (
+        FanEntityFeature.SET_SPEED
+        | FanEntityFeature.TURN_ON
+        | FanEntityFeature.TURN_OFF
+    )
     _attr_speed_count = MAX_LEVEL
 
     def __init__(self, coordinator: VevorHeaterCoordinator) -> None:

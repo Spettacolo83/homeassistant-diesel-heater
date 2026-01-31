@@ -407,9 +407,9 @@ class ProtocolABBA(HeaterProtocol):
         parsed["cab_temperature"] = float(env_temp)
         parsed["cab_temperature_raw"] = float(env_temp)
 
-        # Bytes 12-13: Case temperature (uint16 LE)
+        # Bytes 12-13: Case temperature (uint16 BE)
         parsed["case_temperature"] = float(
-            _u8_to_number(data[12]) | (_u8_to_number(data[13]) << 8)
+            (_u8_to_number(data[12]) << 8) | _u8_to_number(data[13])
         )
 
         # Byte 14: Altitude unit
