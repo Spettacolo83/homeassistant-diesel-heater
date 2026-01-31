@@ -771,39 +771,30 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             # Save immediately after reset to persist the new day and history
             await self.async_save_data()
 
+    # Fields that represent volatile heater state (cleared on disconnect)
+    _VOLATILE_FIELDS = (
+        "case_temperature", "cab_temperature", "cab_temperature_raw",
+        "supply_voltage", "running_state", "running_step", "running_mode",
+        "set_level", "set_temp", "altitude", "error_code",
+        "hourly_fuel_consumption", "co_ppm", "remain_run_time",
+    )
+
     def _clear_sensor_values(self) -> None:
-        """Clear sensor values to show as unavailable."""
-        self.data["case_temperature"] = None
-        self.data["cab_temperature"] = None
-        self.data["supply_voltage"] = None
-        self.data["running_step"] = None
-        self.data["running_mode"] = None
-        self.data["set_level"] = None
-        self.data["altitude"] = None
-        self.data["error_code"] = None
-        self.data["hourly_fuel_consumption"] = None
+        """Clear volatile sensor values to show as unavailable."""
+        for key in self._VOLATILE_FIELDS:
+            self.data[key] = None
 
     def _restore_stale_data(self) -> None:
         """Restore last valid sensor values during temporary connection issues."""
         if self._last_valid_data:
-            for key in ["case_temperature", "cab_temperature", "supply_voltage",
-                       "running_step", "running_mode", "set_level", "altitude",
-                       "error_code", "hourly_fuel_consumption"]:
+            for key in self._VOLATILE_FIELDS:
                 if key in self._last_valid_data:
                     self.data[key] = self._last_valid_data[key]
 
     def _save_valid_data(self) -> None:
         """Save current sensor values as last valid data."""
         self._last_valid_data = {
-            "case_temperature": self.data.get("case_temperature"),
-            "cab_temperature": self.data.get("cab_temperature"),
-            "supply_voltage": self.data.get("supply_voltage"),
-            "running_step": self.data.get("running_step"),
-            "running_mode": self.data.get("running_mode"),
-            "set_level": self.data.get("set_level"),
-            "altitude": self.data.get("altitude"),
-            "error_code": self.data.get("error_code"),
-            "hourly_fuel_consumption": self.data.get("hourly_fuel_consumption"),
+            key: self.data.get(key) for key in self._VOLATILE_FIELDS
         }
 
     def _handle_connection_failure(self, err: Exception) -> None:

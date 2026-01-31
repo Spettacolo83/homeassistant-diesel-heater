@@ -1,6 +1,8 @@
 """Sensor platform for Vevor Diesel Heater."""
 from __future__ import annotations
 
+from datetime import datetime
+
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -487,7 +489,7 @@ class VevorFuelRemainingSensor(VevorSensorBase):
 
     _attr_device_class = SensorDeviceClass.VOLUME
     _attr_native_unit_of_measurement = UnitOfVolume.LITERS
-    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_state_class = SensorStateClass.TOTAL
     _attr_icon = "mdi:fuel"
 
     def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
@@ -533,9 +535,15 @@ class VevorLastRefueledSensor(VevorSensorBase):
         super().__init__(coordinator, "last_refueled", "Last Refueled")
 
     @property
-    def native_value(self) -> str | None:
-        """Return the state as ISO timestamp."""
-        return self.coordinator.data.get("last_refueled")
+    def native_value(self) -> datetime | None:
+        """Return the state as datetime object."""
+        ts = self.coordinator.data.get("last_refueled")
+        if ts is None:
+            return None
+        try:
+            return datetime.fromisoformat(ts)
+        except (ValueError, TypeError):
+            return None
 
     @property
     def available(self) -> bool:
