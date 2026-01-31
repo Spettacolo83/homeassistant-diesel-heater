@@ -568,7 +568,48 @@ class ProtocolCBFF(VevorCommandMixin, HeaterProtocol):
                 parsed["pump_type"] = pump
                 parsed["rf433_enabled"] = None
 
+        # Byte 29: pwr_onoff
+        parsed["pwr_onoff"] = _u8_to_number(data[29])
+
+        # Bytes 30-31: hardware_version (uint16 LE)
+        hw_ver = data[30] | (data[31] << 8)
+        if hw_ver != 0:
+            parsed["hardware_version"] = hw_ver
+
+        # Bytes 32-33: software_version (uint16 LE)
+        sw_ver = data[32] | (data[33] << 8)
+        if sw_ver != 0:
+            parsed["software_version"] = sw_ver
+
+        # Byte 38: back_light (255=not available)
+        backlight = _u8_to_number(data[38])
+        if backlight != 255:
+            parsed["backlight"] = backlight
+
+        # Byte 39: startup_temp_difference (255=not available)
+        startup_diff = _u8_to_number(data[39])
+        if startup_diff != 255:
+            parsed["startup_temp_diff"] = startup_diff
+
+        # Byte 40: shutdown_temp_difference (255=not available)
+        shutdown_diff = _u8_to_number(data[40])
+        if shutdown_diff != 255:
+            parsed["shutdown_temp_diff"] = shutdown_diff
+
+        # Byte 41: wifi (255=not available)
+        wifi = _u8_to_number(data[41])
+        if wifi != 255:
+            parsed["wifi_enabled"] = (wifi == 1)
+
         # Byte 42: auto start/stop
         parsed["auto_start_stop"] = (_u8_to_number(data[42]) == 1)
+
+        # Byte 43: heater_mode
+        parsed["heater_mode"] = _u8_to_number(data[43])
+
+        # Bytes 44-45: remain_run_time (uint16 LE, 65535=not available)
+        remain = data[44] | (data[45] << 8)
+        if remain != 65535:
+            parsed["remain_run_time"] = remain
 
         return parsed
