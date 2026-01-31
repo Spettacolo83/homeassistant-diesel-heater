@@ -19,6 +19,8 @@ PROTOCOL_HEADER_AA55: Final = 0xAA55  # Protocol type 1 (Vevor)
 PROTOCOL_HEADER_AA66: Final = 0xAA66  # Protocol type 2 (Vevor encrypted)
 PROTOCOL_HEADER_ABBA: Final = 0xABBA  # Protocol type 5 (HeaterCC/ABBA)
 PROTOCOL_HEADER_BAAB: Final = 0xBAAB  # ABBA command header (reversed)
+PROTOCOL_HEADER_CBFF: Final = 0xCBFF  # Protocol type 6 (Sunster/v2.1)
+PROTOCOL_HEADER_AA77: Final = 0xAA77  # Sunster command ACK header
 
 # XOR encryption key for encrypted protocols
 ENCRYPTION_KEY: Final = [112, 97, 115, 115, 119, 111, 114, 100]  # "password"
@@ -72,6 +74,11 @@ ABBA_STATUS_MAP: Final = {
     0x04: RUNNING_STEP_VENTILATION,  # Ventilation
     0x06: RUNNING_STEP_STANDBY,      # Standby
 }
+
+# CBFF Protocol (Sunster/v2.1) run_state mapping (byte 10)
+# From Sunster app: run_state 2/5/6 = OFF, others = ON
+# run_step is directly at byte 14
+CBFF_RUN_STATE_OFF: Final = {2, 5, 6}  # States that indicate heater is OFF
 
 # ABBA Protocol error codes (when byte 5 = 0xFF, byte 6 = error code)
 # Different from AA55 error codes
