@@ -805,19 +805,19 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     def _handle_connection_failure(self, err: Exception) -> None:
         """Handle connection failure with stale data tolerance."""
         self._consecutive_failures += 1
-        self.data["connected"] = False
 
         if self._consecutive_failures <= self._max_stale_cycles:
-            # Keep last valid values for a few cycles
+            # Keep last valid values and stay "connected" during tolerance window
             self._restore_stale_data()
             self._logger.debug(
-                "Connection failed (attempt %d/%d), keeping last values: %s",
+                "Update failed (attempt %d/%d), keeping last values: %s",
                 self._consecutive_failures,
                 self._max_stale_cycles,
                 err
             )
         else:
-            # Too many failures, clear values
+            # Too many failures, mark disconnected and clear values
+            self.data["connected"] = False
             self._clear_sensor_values()
             if self._consecutive_failures == self._max_stale_cycles + 1:
                 self._logger.warning(
@@ -841,8 +841,19 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 raise UpdateFailed(f"Failed to connect: {err}")
 
         try:
-            # Request status
-            status = await self._send_command(1, 0)
+            # Request status with retries (up to 3 attempts)
+            max_retries = 3
+            status = False
+            for attempt in range(max_retries):
+                status = await self._send_command(1, 0)
+                if status:
+                    break
+                if attempt < max_retries - 1:
+                    self._logger.debug(
+                        "Status request timed out (attempt %d/%d), retrying...",
+                        attempt + 1, max_retries
+                    )
+                    await asyncio.sleep(1.0)
 
             if status:
                 self.data["connected"] = True
@@ -866,6 +877,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 return self.data
             else:
                 self._handle_connection_failure(Exception("No status received"))
+                # During stale tolerance window, return stale data instead of
+                # raising UpdateFailed — keeps entities available
+                if self._consecutive_failures <= self._max_stale_cycles:
+                    return self.data
                 raise UpdateFailed("No status received from heater")
 
         except UpdateFailed:
@@ -873,6 +888,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         except Exception as err:
             self._logger.debug("Error updating data: %s", err)
             self._handle_connection_failure(err)
+            if self._consecutive_failures <= self._max_stale_cycles:
+                return self.data
             raise UpdateFailed(f"Error updating data: {err}")
 
     async def _ensure_connected(self) -> None:
