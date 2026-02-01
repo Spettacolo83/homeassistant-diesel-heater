@@ -940,6 +940,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     self._logger.info("🔍 Detected ABBA/HeaterCC heater (service fff0)")
                     self._is_abba_device = True
                     self._protocol_mode = 5  # ABBA protocol
+                    self._protocol = self._protocols[5]
 
                     # Log all characteristics in this service for debugging
                     char_list = [f"{c.uuid} (props: {c.properties})" for c in service.characteristics]
@@ -1262,9 +1263,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """Build command packet for the heater.
 
         Delegates to the active protocol's command builder.
-        Falls back to AA55 if protocol not yet detected.
+        Falls back to ABBA if _is_abba_device, else AA55.
         """
-        protocol = self._protocol or self._protocols[1]
+        if self._protocol:
+            protocol = self._protocol
+        elif self._is_abba_device:
+            protocol = self._protocols[5]
+        else:
+            protocol = self._protocols[1]
         packet = protocol.build_command(command, argument, self._passkey)
         self._logger.debug(
             "Command packet (%d bytes, %s): %s", len(packet), protocol.name, packet.hex()
