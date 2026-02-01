@@ -1303,7 +1303,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             timeout: Timeout in seconds for waiting response
         """
         if not self._client or not self._client.is_connected:
-            self._logger.error(
+            self._logger.info(
                 "Cannot send command: heater not connected. "
                 "The integration will attempt to reconnect automatically."
             )
@@ -1348,7 +1348,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     )
                     return True
 
-            self._logger.warning("⚠️ No response received after %.1fs", timeout)
+            self._logger.info("No response received after %.1fs", timeout)
             return False
 
         except Exception as err:
