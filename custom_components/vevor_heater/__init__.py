@@ -13,6 +13,7 @@ from homeassistant.const import CONF_ADDRESS, Platform
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import entity_registry as er
 
 from .const import DOMAIN
 from .coordinator import VevorHeaterCoordinator
@@ -20,6 +21,24 @@ from .coordinator import VevorHeaterCoordinator
 VevorHeaterConfigEntry = ConfigEntry[VevorHeaterCoordinator]
 
 _LOGGER = logging.getLogger(__name__)
+
+# Entity unique_id suffix migrations: old_suffix -> new_suffix
+# These preserve entity history when unique_ids are renamed across versions.
+_UNIQUE_ID_MIGRATIONS: dict[str, str] = {
+    # v1.0.27-beta.19: renamed fuel sensors with "est" prefix
+    "_hourly_fuel_consumption": "_est_hourly_fuel_consumption",
+    "_daily_fuel_consumed": "_est_daily_fuel_consumed",
+    "_total_fuel_consumed": "_est_total_fuel_consumed",
+    "_daily_fuel_history": "_est_daily_fuel_history",
+    # v1.0.27-beta.19: renamed fuel reset button
+    "_reset_fuel_level": "_reset_est_fuel_remaining",
+}
+
+# Entity unique_id suffixes to remove (replaced by entities on a different platform)
+_UNIQUE_IDS_TO_REMOVE: set[str] = {
+    # v1.0.27-beta.20: backlight number entity replaced by backlight select entity
+    "_backlight",
+}
 
 # Service constants
 SERVICE_SEND_COMMAND = "send_command"
@@ -45,11 +64,50 @@ PLATFORMS: list[Platform] = [
 ]
 
 
+def _migrate_entity_unique_ids(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+) -> None:
+    """Migrate entity unique_ids from older versions to preserve history."""
+    registry = er.async_get(hass)
+
+    for entity in er.async_entries_for_config_entry(registry, entry.entry_id):
+        # Migrate renamed unique_ids (same platform)
+        for old_suffix, new_suffix in _UNIQUE_ID_MIGRATIONS.items():
+            if entity.unique_id.endswith(old_suffix):
+                new_unique_id = entity.unique_id[: -len(old_suffix)] + new_suffix
+                _LOGGER.info(
+                    "Migrating entity %s unique_id: %s -> %s",
+                    entity.entity_id,
+                    entity.unique_id,
+                    new_unique_id,
+                )
+                registry.async_update_entity(
+                    entity.entity_id, new_unique_id=new_unique_id
+                )
+                break
+
+        # Remove entities that were replaced by a different platform entity
+        for suffix in _UNIQUE_IDS_TO_REMOVE:
+            if entity.unique_id.endswith(suffix):
+                _LOGGER.info(
+                    "Removing deprecated entity %s (unique_id: %s, "
+                    "replaced by new entity on different platform)",
+                    entity.entity_id,
+                    entity.unique_id,
+                )
+                registry.async_remove(entity.entity_id)
+                break
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: VevorHeaterConfigEntry) -> bool:
     """Set up Vevor Diesel Heater from a config entry."""
     address: str = entry.data[CONF_ADDRESS]
-    
+
     _LOGGER.debug("Setting up Vevor Heater with address: %s", address)
+
+    # Migrate entity unique_ids from older versions (preserves history)
+    _migrate_entity_unique_ids(hass, entry)
     
     # Get BLE device from Home Assistant's bluetooth integration
     ble_device = bluetooth.async_ble_device_from_address(

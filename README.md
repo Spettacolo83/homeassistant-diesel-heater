@@ -12,7 +12,7 @@
 
 > This is a maintained fork of the original [homeassistant-vevor-heater](https://github.com/MSDATDE/homeassistant-vevor-heater) by [@MSDATDE](https://github.com/MSDATDE), enhanced with HACS 2.0+ compatibility and additional improvements.
 
-Control your Vevor/BYD/HeaterCC Diesel Heater from Home Assistant via Bluetooth. Supports AirHeaterBLE (AA55/AA66) and AirHeaterCC (ABBA) protocol heaters.
+Control your Vevor/BYD/HeaterCC/Sunster Diesel Heater from Home Assistant via Bluetooth. Supports AirHeaterBLE (AA55/AA66), AirHeaterCC (ABBA), and Sunster (CBFF) protocol heaters.
 
 ## Features
 
@@ -27,7 +27,7 @@ Control your Vevor/BYD/HeaterCC Diesel Heater from Home Assistant via Bluetooth.
 - 🔌 **Bluetooth LE** - Direct local connection, no cloud required
 - ⚡ **Real-time Updates** - 30-second polling interval
 - 💾 **Data Persistence** - Fuel consumption data saved across restarts
-- 🌐 **Multi-Protocol Support** - Works with AA55, AA66, and ABBA protocol heaters
+- 🌐 **Multi-Protocol Support** - Works with AA55, AA66, ABBA, and CBFF protocol heaters
 - 🛠️ **Configuration Settings** - AirHeaterBLE-like settings:
   - Language, Temperature Unit, Altitude Unit
   - Tank Volume, Pump Type, Temperature Offset
@@ -55,25 +55,30 @@ This integration supports **multiple protocols** and has been tested with variou
 
 ### Supported Protocols
 
-| Protocol | Status | Apps | Notes |
-|----------|--------|------|-------|
-| AA55 Unencrypted | ✅ Fully Supported | AirHeaterBLE | Original Vevor protocol |
-| AA55 Encrypted | ✅ Fully Supported | AirHeaterBLE | XOR encrypted variant |
-| AA66 Unencrypted | ✅ Fully Supported | AirHeaterBLE | 20-byte variant |
-| AA66 Encrypted | ✅ Fully Supported | AirHeaterBLE | XOR encrypted, Fahrenheit internal |
-| ABBA | ✅ Fully Supported | AirHeaterCC/HeaterCC | Different command structure |
+| Protocol | Completion | Apps | Notes |
+|----------|-----------|------|-------|
+| AA55 Unencrypted | 95% | AirHeaterBLE | Original Vevor protocol |
+| AA55 Encrypted | 99% | AirHeaterBLE | XOR encrypted variant |
+| AA66 Unencrypted | 95% | AirHeaterBLE | 20-byte variant |
+| AA66 Encrypted | 95% | AirHeaterBLE | XOR encrypted, Fahrenheit internal |
+| ABBA | 80% | AirHeaterCC | Different command structure |
+| CBFF | 50% | Sunster | Double XOR encryption variant |
+
+ABBA and CBFF protocols are recent findings in newer Vevor and Chinabasto heaters. CBFF appeared in Sunster Bluetooth+WiFi heaters, but more heaters may use this protocol.
+We are actively developing them based on community feedback. If you own one, please check the [Issues](https://github.com/Spettacolo83/homeassistant-vevor-heater/issues), beta test, and report any problems.
 
 ### Bluetooth Service UUIDs
 
 - **FFE0** Service: `0000ffe0-0000-1000-8000-00805f9b34fb` (AA55/AA66 heaters)
-- **FFF0** Service: `0000fff0-0000-1000-8000-00805f9b34fb` (ABBA/HeaterCC heaters)
+- **FFF0** Service: `0000fff0-0000-1000-8000-00805f9b34fb` (ABBA/HeaterCC and CBFF/Sunster heaters)
 
 ### Tested Heaters
 
 - Vevor Diesel Heater (various models)
 - BYD Diesel Heaters
 - HeaterCC compatible heaters
-- Generic Chinese diesel heaters using AirHeaterBLE or AirHeaterCC apps
+- Sunster TB10Pro WiFi
+- Generic Chinese diesel heaters using AirHeaterBLE, AirHeaterCC, or Sunster apps
 
 ## Screenshots
 
@@ -221,59 +226,60 @@ After setup, go to the integration's **Configure** button to access these option
 
 ### Entities Created
 
-After setup, you'll have these entities:
+Entities are created **conditionally based on the detected BLE protocol**. Only entities that the protocol supports are created, preventing unsupported entities from showing as "Unavailable".
 
-#### Climate
-- `climate.vevor_heater` - Main thermostat control
-  - Set target temperature (8-36°C)
-  - Turn heater ON/OFF
-  - Presets: Away, Comfort (configurable temperatures)
-  - Works in Temperature Mode
+#### Core Entities (all protocols)
 
-#### Select
-- `select.vevor_heater_running_mode` - Mode selector (Off, Level, Temperature)
-- `select.vevor_heater_language` - Heater language (English, Chinese, German, Silent, Russian) *(Config)*
-- `select.vevor_heater_temperature_unit` - Temperature unit (Celsius, Fahrenheit) *(Config)*
-- `select.vevor_heater_altitude_unit` - Altitude unit (Meters, Feet) *(Config)*
-- `select.vevor_heater_tank_volume` - Tank volume (None, 5L-50L) *(Config)*
-- `select.vevor_heater_pump_type` - Pump type (16µl, 22µl, 28µl, 32µl) *(Config)*
+| Platform | Entity | Description |
+|----------|--------|-------------|
+| Climate | `climate.vevor_heater` | Thermostat control (8-36°C), presets (Away, Comfort) |
+| Fan | `fan.vevor_heater_heater_level` | Level control as fan entity (1-10) |
+| Switch | `switch.vevor_heater_power` | Simple ON/OFF control |
+| Switch | `switch.vevor_heater_auto_offset` | Auto Temperature Offset toggle *(Config)* |
+| Select | `select.vevor_heater_running_mode` | Mode selector (Off, Level, Temperature) |
+| Number | `number.vevor_heater_level` | Set heater power level (1-10) |
+| Number | `number.vevor_heater_target_temperature` | Set target temperature (8-36°C) |
+| Number | `number.vevor_heater_tank_capacity` | Set tank capacity for fuel estimation *(Config)* |
+| Button | `button.vevor_heater_sync_time` | Sync heater clock with HA time *(Config)* |
+| Button | `button.vevor_heater_reset_est_fuel_remaining` | Reset estimated fuel after refuel *(Config)* |
+| Sensor | Case Temperature, Interior Temperature, Voltage, Running Step/Mode, Set Level, Altitude, Error Code | Basic heater sensors |
+| Sensor | Estimated Hourly/Daily/Total Fuel, Fuel Remaining, Fuel Since Refuel | Fuel tracking (computed locally) |
+| Sensor | Daily/Total Runtime, History sensors | Runtime tracking (computed locally) |
+| Binary Sensor | Active, Problem, Connected | Heater status sensors *(Diagnostic)* |
 
-#### Number
-- `number.vevor_heater_level` - Set heater power level (1-10)
-- `number.vevor_heater_target_temperature` - Set target temperature (8-36°C)
-- `number.vevor_heater_temperature_offset` - Temperature offset (-9 to +9) *(Config)*
+#### Extended Entities (AA55 Encrypted, AA66 Encrypted, CBFF)
 
-#### Sensors
-- `sensor.vevor_diesel_heater_case_temperature` - Heater case temperature (°C) *(Diagnostic)*
-- `sensor.vevor_diesel_heater_interior_temperature` - Room/cabin temperature (°C)
-- `sensor.vevor_diesel_heater_supply_voltage` - Power supply voltage (V) *(Diagnostic)*
-- `sensor.vevor_diesel_heater_altitude` - Altitude compensation setting (m) *(Diagnostic)*
-- `sensor.vevor_diesel_heater_running_step` - Current operation step (Standby, Self-test, Ignition, Running, Cooldown, Ventilation)
-- `sensor.vevor_diesel_heater_error` - Error status *(Diagnostic)*
-- `sensor.vevor_diesel_heater_running_mode` - Current running mode
-- `sensor.vevor_diesel_heater_set_level` - Current set level
-- `sensor.vevor_diesel_heater_hourly_fuel_consumption` - Instantaneous fuel consumption rate (L/h)
-- `sensor.vevor_diesel_heater_daily_fuel_consumed` - Daily fuel consumption (L, resets at midnight)
-- `sensor.vevor_diesel_heater_total_fuel_consumed` - Total fuel consumed since installation (L)
-- `sensor.vevor_diesel_heater_daily_fuel_history` - Historical daily fuel consumption (stores last 30 days) *(Diagnostic)*
-- `sensor.vevor_diesel_heater_daily_runtime` - Daily runtime hours (resets at midnight) *(Diagnostic)*
-- `sensor.vevor_diesel_heater_total_runtime` - Total runtime hours *(Diagnostic)*
-- `sensor.vevor_diesel_heater_daily_runtime_history` - Historical daily runtime (stores last 30 days) *(Diagnostic)*
+| Platform | Entity | Description |
+|----------|--------|-------------|
+| Number | Temperature Offset | Temperature offset (-9 to +9) *(Config)* |
+| Select | Backlight | Display backlight brightness (Off, 1-10, 20-100) *(Config)* |
+| Sensor | Raw Interior Temperature, Heater Offset, CO (ppm) | Extended protocol sensors |
 
-#### Binary Sensors
-- `binary_sensor.vevor_diesel_heater_active` - Heater active status *(Diagnostic)*
-- `binary_sensor.vevor_diesel_heater_problem` - Heater problem/error indicator *(Diagnostic)*
+#### Config Entities (AA66 Encrypted, CBFF)
 
-#### Switches
-- `switch.vevor_heater_power` - Simple ON/OFF control
-- `switch.vevor_heater_auto_start_stop` - Auto Start/Stop toggle (heater fully stops at target temp +2°C)
-- `switch.vevor_heater_auto_offset` - Auto Temperature Offset toggle *(Config)*
+| Platform | Entity | Description |
+|----------|--------|-------------|
+| Select | Language, Pump Type, Tank Volume | Heater configuration selects *(Config)* |
 
-#### Buttons
-- `button.vevor_heater_sync_time` - Sync heater clock with Home Assistant time *(Config)*
+#### Unit/Auto Entities (AA66 Encrypted, ABBA, CBFF)
 
-#### Fan
-- `fan.vevor_heater_heater_level` - Heater level control as fan entity (level 1-10)
+| Platform | Entity | Description |
+|----------|--------|-------------|
+| Switch | Auto Start/Stop | Auto Start/Stop toggle |
+| Switch | Temperature Unit, Altitude Unit | Unit switches *(Config)* |
+| Binary Sensor | Auto Start/Stop | Auto Start/Stop status |
+
+#### CBFF-only Entities (Sunster)
+
+| Platform | Entity | Description |
+|----------|--------|-------------|
+| Sensor | HW/SW Version, Remaining Run Time, Startup/Shutdown Temp Diff | CBFF-specific sensors |
+
+#### ABBA-only Entities (HeaterCC)
+
+| Platform | Entity | Description |
+|----------|--------|-------------|
+| Switch | High Altitude | High altitude mode toggle |
 
 > Entities marked *(Diagnostic)* appear in the Diagnostic section of the device page.
 > Entities marked *(Config)* appear in the Configuration section.
@@ -479,14 +485,14 @@ content: |
 
 ## Protocol Details
 
-This integration communicates via Bluetooth LE and supports multiple protocol variants:
+This integration communicates via Bluetooth LE and supports 6 protocol variants across 3 families:
 
 ### AA55/AA66 Protocol (AirHeaterBLE heaters)
 
-- **Service UUID**: `0000ffe0-0000-1000-8000-00805f9b34fb` or `0000fff0-0000-1000-8000-00805f9b34fb`
-- **Characteristic UUID**: `0000ffe1` / `0000fff1` (read/write/notify)
-- **Variants**: AA55 (18/20-byte), AA66 (20-byte), encrypted and unencrypted
-- **Encryption**: XOR with key "password"
+- **Service UUID**: `0000ffe0-0000-1000-8000-00805f9b34fb`
+- **Characteristic UUID**: `0000ffe1` (read/write/notify)
+- **Variants**: AA55 (18/20-byte), AA66 (20-byte), encrypted (48-byte) and unencrypted
+- **Encryption**: XOR with 8-byte key "password"
 - **Default Passkey**: `1234` (configurable)
 
 #### AA55/AA66 Commands
@@ -545,9 +551,70 @@ This integration communicates via Bluetooth LE and supports multiple protocol va
 | 10 | E10 - Startup failure |
 | 192 | EC0 - Carbon monoxide alarm |
 
+### CBFF Protocol (Sunster heaters)
+
+- **Service UUID**: `0000fff0-0000-1000-8000-00805f9b34fb`
+- **Write UUID**: `0000fff2` / **Notify UUID**: `0000fff1`
+- **Header**: `0xCBFF` (notifications) / Commands use AA55 format, ACK with `0xAA77`
+- **Encryption**: Some heaters use double-XOR encryption (key1 = "passwordA2409PW", key2 = BLE MAC)
+- **Packet size**: 47 bytes
+
+#### CBFF Response (47 bytes)
+
+| Byte | Field | Values |
+|------|-------|--------|
+| 0-1 | Header | `CB FF` |
+| 2 | Protocol Version | Version byte |
+| 10 | Run State | 2/5/6 = OFF, others = ON |
+| 11 | Run Mode | 1/3/4=Level, 2=Temperature |
+| 12 | Run Param | Level (1-10) or temp target |
+| 13 | Now Gear | Current gear in temp mode |
+| 14 | Run Step | Operation step |
+| 15 | Fault Display | Error code (lower 6 bits) |
+| 17 | Temp Unit | Lower nibble: 0=C, 1=F |
+| 18-19 | Cab Temperature | int16 LE (°C) |
+| 20 | Altitude Unit | Lower nibble: 0=m, 1=ft |
+| 21-22 | Altitude | uint16 LE |
+| 23-24 | Voltage | uint16 LE (/10) |
+| 25-26 | Case Temperature | int16 LE (/10) |
+| 27-28 | CO PPM | uint16 LE (/10) |
+| 30-31 | Hardware Version | uint16 LE |
+| 32-33 | Software Version | uint16 LE |
+| 34 | Temp Compensation | int8 offset |
+| 35 | Language | 255=N/A |
+| 36 | Tank Volume | 255=N/A |
+| 37 | Pump Model | 20=RF off, 21=RF on, other=pump type |
+| 38 | Backlight | 255=N/A |
+| 39-40 | Startup/Shutdown Temp Diff | 255=N/A |
+| 42 | Auto Start/Stop | 0=Off, 1=On |
+| 44-45 | Remaining Run Time | uint16 LE, 65535=N/A |
+
 ## Changelog
 
-### Version 1.0.26 (Latest)
+### Version 1.0.27 (Latest)
+- **Conditional Entity Creation**: Entities are now created only if the detected BLE protocol supports them (Issue #28)
+  - AA55/AA66 basic protocols only create core entities
+  - Extended entities (backlight, offset, CO) only for encrypted protocols and CBFF
+  - Config entities (language, pump type, tank volume) only for AA66Encrypted and CBFF
+  - Unit switches only for AA66Encrypted, ABBA, CBFF
+  - Mode 0 (unknown) creates all entities as safe fallback
+- **Backlight Select Entity**: Replaced 0-100 number slider with discrete value select matching the Vevor app (Issue #25)
+  - Values: Off, 1-10, 20, 30, ..., 100
+- **CBFF/Sunster Protocol**: Support for Sunster TB10Pro WiFi and similar heaters
+  - 47-byte CBFF notifications with optional double-XOR encryption
+  - Full sensor support: HW/SW version, remaining run time, temp diff, CO
+- **Entity Unique ID Migration**: Seamless migration from older entity names — history is preserved
+- **Standalone Protocol Library**: `diesel_heater_ble` package extracted for future PyPI/HA core submission
+- **`entry.runtime_data` Pattern**: Migrated to modern HA config entry data pattern
+- **Estimated Fuel Sensors**: Renamed fuel tracking sensors with "Estimated" prefix for clarity
+  - Added "Estimated Fuel Since Refuel" sensor
+- **ABBA Fixes**: Fixed power off (toggle via 0xA1), fixed device detection regression, fixed case_temperature byte order
+- **BLE Resilience**: Status request retries (3x) and stale data tolerance (3 cycles) before going Unavailable
+- **Manifest**: Added `integration_type: device` and `loggers` for HA core preparation
+- **Test Suite**: 213 tests covering all 6 protocol parsers, config flow, and library parity
+- Special thanks to @Xev for extensive protocol research, beta testing, and detailed feedback
+
+### Version 1.0.26
 - **ABBA Protocol Support**: Full support for HeaterCC/AirHeaterCC app heaters
   - Status parsing (Heating, Off, Cooldown, Ventilation, Standby)
   - Temperature readings (cabin and case)
@@ -785,9 +852,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - **Original Author**: [@MSDATDE](https://github.com/MSDATDE) - Thank you for creating this excellent integration!
 - **Original Repository**: [MSDATDE/homeassistant-vevor-heater](https://github.com/MSDATDE/homeassistant-vevor-heater)
-- **@Xev** - Extensive testing, protocol research, ABBA protocol analysis, and invaluable feedback throughout development
+- **@Xev** - Extensive testing, protocol research, ABBA/CBFF protocol analysis, Sunster app reverse engineering, and invaluable feedback throughout development
 - **@postal** - ABBA protocol byte mapping and verification
-- **@triptyx-ux** - ABBA heater testing and confirmation
+- **@triptyx-ux** - ABBA and CBFF/Sunster heater testing
 - **@zak4206** - 18-byte AA55 protocol identification
 - **@warehog** - [esphome-diesel-heater-ble](https://github.com/warehog/esphome-diesel-heater-ble) protocol documentation and AirHeaterBLE app analysis
 - Based on the [vevor-ble-bridge](https://github.com/andyrak/vevor-ble-bridge) protocol documentation
