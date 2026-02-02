@@ -76,14 +76,40 @@ def _migrate_entity_unique_ids(
     registry = er.async_get(hass)
 
     for entity in er.async_entries_for_config_entry(registry, entry.entry_id):
+        uid = entity.unique_id
+
+        # Fix corrupted unique_ids from the beta.19-beta.21 migration bug
+        # where repeated _est_ prefixes were added (e.g. _est_est_est_daily_fuel_consumed)
+        for new_suffix in _UNIQUE_ID_MIGRATIONS.values():
+            # Strip the leading _ to get e.g. "est_daily_fuel_consumed"
+            bare = new_suffix.lstrip("_")
+            # Check for repeated "est_" prefix pattern
+            corrupted = "_est_" + bare
+            while corrupted in uid and uid.endswith(corrupted):
+                # Strip one extra "est_" layer: _est_est_X -> _est_X
+                fixed_uid = uid[: -len(corrupted)] + new_suffix
+                if fixed_uid != uid:
+                    _LOGGER.info(
+                        "Fixing corrupted unique_id %s -> %s",
+                        uid,
+                        fixed_uid,
+                    )
+                    registry.async_update_entity(
+                        entity.entity_id, new_unique_id=fixed_uid
+                    )
+                    uid = fixed_uid
+                else:
+                    break
+
         # Migrate renamed unique_ids (same platform)
+        # Guard: skip if already migrated (new_suffix is a substring of old_suffix)
         for old_suffix, new_suffix in _UNIQUE_ID_MIGRATIONS.items():
-            if entity.unique_id.endswith(old_suffix):
-                new_unique_id = entity.unique_id[: -len(old_suffix)] + new_suffix
+            if uid.endswith(old_suffix) and not uid.endswith(new_suffix):
+                new_unique_id = uid[: -len(old_suffix)] + new_suffix
                 _LOGGER.info(
                     "Migrating entity %s unique_id: %s -> %s",
                     entity.entity_id,
-                    entity.unique_id,
+                    uid,
                     new_unique_id,
                 )
                 registry.async_update_entity(
@@ -93,12 +119,12 @@ def _migrate_entity_unique_ids(
 
         # Remove entities that were replaced by a different platform entity
         for suffix in _UNIQUE_IDS_TO_REMOVE:
-            if entity.unique_id.endswith(suffix):
+            if uid.endswith(suffix):
                 _LOGGER.info(
                     "Removing deprecated entity %s (unique_id: %s, "
                     "replaced by new entity on different platform)",
                     entity.entity_id,
-                    entity.unique_id,
+                    uid,
                 )
                 registry.async_remove(entity.entity_id)
                 break
