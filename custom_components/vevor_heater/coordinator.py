@@ -71,7 +71,7 @@ from .const import (
     STORAGE_KEY_TOTAL_RUNTIME,
     UPDATE_INTERVAL,
 )
-from .protocol import (
+from diesel_heater_ble import (
     HeaterProtocol,
     ProtocolAA55,
     ProtocolAA55Encrypted,

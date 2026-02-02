@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from custom_components.vevor_heater.protocol import (
+from diesel_heater_ble import (
     HeaterProtocol,
     ProtocolAA55,
     ProtocolAA55Encrypted,

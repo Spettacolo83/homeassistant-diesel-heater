@@ -4,6 +4,14 @@ Each protocol class encapsulates the byte-level parsing (parse) and
 command building (build_command) for a specific BLE protocol variant.
 The coordinator uses these classes via a common HeaterProtocol interface.
 
+Protocols supported:
+  - AA55 (unencrypted, 18-20 bytes)
+  - AA55 encrypted (48 bytes, XOR)
+  - AA66 (unencrypted, 20 bytes, BYD variant)
+  - AA66 encrypted (48 bytes, XOR)
+  - ABBA/HeaterCC (21+ bytes, own command format)
+  - CBFF/Sunster v2.1 (47 bytes, optional double-XOR encryption)
+
 This module has no dependency on Home Assistant.
 """
 from __future__ import annotations
@@ -160,7 +168,7 @@ class ProtocolAA66(VevorCommandMixin, HeaterProtocol):
         voltage_raw = _u8_to_number(data[11]) | (_u8_to_number(data[12]) << 8)
         parsed["supply_voltage"] = voltage_raw / 10.0
 
-        # Auto-detect case temp format: >350 means 0.1 scale
+        # Auto-detect case temp format: >350 means 0.1°C scale
         case_temp_raw = _u8_to_number(data[13]) | (_u8_to_number(data[14]) << 8)
         if case_temp_raw > 350:
             parsed["case_temperature"] = case_temp_raw / 10.0
@@ -374,7 +382,7 @@ class ProtocolABBA(HeaterProtocol):
         mode_byte = _u8_to_number(data[5])
         if mode_byte == 0xFF:
             parsed["error_code"] = _u8_to_number(data[6])
-            # Keep last known mode -- don't set running_mode
+            # Keep last known mode — don't set running_mode
         else:
             parsed["error_code"] = 0
             if mode_byte == 0x00:
@@ -384,7 +392,8 @@ class ProtocolABBA(HeaterProtocol):
             else:
                 parsed["running_mode"] = mode_byte
 
-        # Byte 6: Gear/Target temp -- only parse if NOT in error state
+        # Byte 6: Gear/Target temp — only parse if NOT in error state
+        # (when mode_byte == 0xFF, byte 6 is the error code, not gear)
         if "running_mode" in parsed:
             gear_byte = _u8_to_number(data[6])
             if parsed["running_mode"] == RUNNING_MODE_LEVEL:
@@ -431,7 +440,10 @@ class ProtocolABBA(HeaterProtocol):
             return self._build_abba("baab04cc000000")
         elif command == 3:
             # ABBA uses openOnHeat (0xA1) as a toggle: same command for
-            # both ON and OFF.
+            # both ON and OFF.  The AirHeaterCC app has no explicit "off"
+            # function — the Heat button toggles between heating and
+            # cooldown.  The old 0xA4 (openOnBlow/ventilation) was ignored
+            # by the heater while actively heating.
             return self._build_abba("baab04bba10000")
         elif command == 4:
             temp_hex = format(argument, '02x')
@@ -454,7 +466,7 @@ class ProtocolABBA(HeaterProtocol):
         elif command == 99:
             return self._build_abba("baab04bba50000")  # High altitude toggle
         else:
-            # Unknown command -- send status request as fallback
+            # Unknown command — send status request as fallback
             return self._build_abba("baab04cc000000")
 
     @staticmethod
@@ -502,7 +514,7 @@ class ProtocolCBFF(VevorCommandMixin, HeaterProtocol):
         if not self._is_data_suspect(parsed):
             return parsed
 
-        # Raw data looks wrong -- try decryption if device_sn is available
+        # Raw data looks wrong — try decryption if device_sn is available
         if self._device_sn:
             decrypted = self._decrypt_cbff(data, self._device_sn)
             parsed_dec = self._parse_cbff_fields(decrypted)

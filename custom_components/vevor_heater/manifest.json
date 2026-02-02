@@ -9,7 +9,7 @@
   "issue_tracker": "https://github.com/Spettacolo83/homeassistant-vevor-heater/issues",
   "iot_class": "local_polling",
   "loggers": ["diesel_heater_ble"],
-  "requirements": ["bleak>=0.21.0", "bleak-retry-connector>=3.4.0"],
+  "requirements": ["diesel-heater-ble>=0.1.0", "bleak>=0.21.0", "bleak-retry-connector>=3.4.0"],
   "bluetooth": [
     {
       "connectable": true,
@@ -20,5 +20,5 @@
       "service_uuid": "0000fff0-0000-1000-8000-00805f9b34fb"
     }
   ],
-  "version": "1.0.27-beta.23"
+  "version": "1.0.27-beta.24"
 }
