@@ -2,23 +2,23 @@
 from __future__ import annotations
 
 from homeassistant.components.button import ButtonEntity
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from . import VevorHeaterConfigEntry
 from .const import DOMAIN
 from .coordinator import VevorHeaterCoordinator
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: VevorHeaterConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Vevor Heater buttons."""
-    coordinator: VevorHeaterCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator = entry.runtime_data
 
     async_add_entities([
         VevorTimeSyncButton(coordinator),
@@ -60,21 +60,21 @@ class VevorTimeSyncButton(CoordinatorEntity[VevorHeaterCoordinator], ButtonEntit
 
 
 class VevorResetFuelLevelButton(CoordinatorEntity[VevorHeaterCoordinator], ButtonEntity):
-    """Button to reset estimated fuel level after refueling.
+    """Button to reset estimated fuel remaining after refueling.
 
     Resets the fuel consumed counter so the estimated fuel remaining
     sensor starts counting down from the full tank capacity again.
     """
 
     _attr_has_entity_name = True
-    _attr_name = "Reset Estimated Fuel Level"
+    _attr_name = "Reset Estimated Fuel Remaining"
     _attr_icon = "mdi:gas-station"
     _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
         """Initialize the button."""
         super().__init__(coordinator)
-        self._attr_unique_id = f"{coordinator.address}_reset_fuel_level"
+        self._attr_unique_id = f"{coordinator.address}_reset_est_fuel_remaining"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, coordinator.address)},
             "name": "Vevor Diesel Heater",
