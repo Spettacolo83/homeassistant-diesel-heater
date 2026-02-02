@@ -1,6 +1,8 @@
 """Select platform for Vevor Diesel Heater."""
 from __future__ import annotations
 
+PARALLEL_UPDATES = 1
+
 import logging
 
 from homeassistant.components.select import SelectEntity

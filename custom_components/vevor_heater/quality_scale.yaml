@@ -1,0 +1,146 @@
+rules:
+  # Bronze
+  action-setup: done
+  appropriate-polling: done
+  brands: todo
+  common-modules: done
+  config-flow-test-coverage: done
+  config-flow: done
+  dependency-transparency:
+    status: todo
+    comment: |
+      Pending publication of diesel-heater-ble library to PyPI.
+  docs-actions:
+    status: todo
+    comment: |
+      Pending documentation PR on home-assistant.io.
+  docs-high-level-description:
+    status: todo
+    comment: |
+      Pending documentation PR on home-assistant.io.
+  docs-installation-instructions:
+    status: todo
+    comment: |
+      Pending documentation PR on home-assistant.io.
+  docs-removal-instructions:
+    status: todo
+    comment: |
+      Pending documentation PR on home-assistant.io.
+  entity-event-setup: done
+  entity-unique-id: done
+  has-entity-name: done
+  runtime-data: done
+  test-before-configure: done
+  test-before-setup: done
+  unique-config-entry: done
+
+  # Silver
+  action-exceptions: done
+  config-entry-unloading: done
+  docs-configuration-parameters:
+    status: todo
+    comment: |
+      Pending documentation PR on home-assistant.io.
+  docs-installation-parameters:
+    status: todo
+    comment: |
+      Pending documentation PR on home-assistant.io.
+  entity-unavailable: done
+  integration-owner: done
+  log-when-unavailable: done
+  parallel-updates: done
+  reauthentication-flow:
+    status: exempt
+    comment: |
+      This integration uses an optional PIN code that is set during
+      initial configuration. There is no authentication flow to reauthenticate.
+  test-coverage:
+    status: todo
+    comment: |
+      Protocol and config flow tests exist. Coordinator and entity
+      platform tests still needed for 95%+ coverage.
+
+  # Gold
+  devices: done
+  diagnostics:
+    status: todo
+    comment: |
+      Diagnostics platform not yet implemented.
+  discovery-update-info:
+    status: exempt
+    comment: |
+      BLE device address does not change. No network info to update.
+  discovery: done
+  docs-data-update:
+    status: todo
+    comment: |
+      Pending documentation PR on home-assistant.io.
+  docs-examples:
+    status: todo
+    comment: |
+      Pending documentation PR on home-assistant.io.
+  docs-known-limitations:
+    status: todo
+    comment: |
+      Pending documentation PR on home-assistant.io.
+  docs-supported-devices:
+    status: todo
+    comment: |
+      Pending documentation PR on home-assistant.io.
+  docs-supported-functions:
+    status: todo
+    comment: |
+      Pending documentation PR on home-assistant.io.
+  docs-troubleshooting:
+    status: todo
+    comment: |
+      Pending documentation PR on home-assistant.io.
+  docs-use-cases:
+    status: todo
+    comment: |
+      Pending documentation PR on home-assistant.io.
+  dynamic-devices:
+    status: exempt
+    comment: |
+      Each config entry represents a single BLE heater device.
+  entity-category: done
+  entity-device-class: done
+  entity-disabled-by-default: done
+  entity-translations:
+    status: todo
+    comment: |
+      Entity names are in strings.json but not yet using translation keys.
+  exception-translations:
+    status: todo
+    comment: |
+      Exceptions not yet using translation keys.
+  icon-translations:
+    status: todo
+    comment: |
+      Icons not yet using translation keys.
+  reconfiguration-flow:
+    status: todo
+    comment: |
+      Options flow exists but no reconfigure flow yet.
+  repair-issues:
+    status: exempt
+    comment: |
+      No scenarios requiring user intervention via repair issues.
+  stale-devices:
+    status: exempt
+    comment: |
+      Each config entry maps to exactly one device.
+
+  # Platinum
+  async-dependency:
+    status: done
+    comment: |
+      bleak is fully async.
+  inject-websession:
+    status: exempt
+    comment: |
+      This integration uses BLE, not HTTP. No websession needed.
+  strict-typing:
+    status: todo
+    comment: |
+      Type annotations present but not strict-checked with mypy.

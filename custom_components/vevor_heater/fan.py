@@ -1,6 +1,8 @@
 """Fan platform for Vevor Diesel Heater."""
 from __future__ import annotations
 
+PARALLEL_UPDATES = 1
+
 import logging
 import math
 from typing import Any

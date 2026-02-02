@@ -11,7 +11,11 @@ from homeassistant.components import bluetooth
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_ADDRESS, Platform
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.exceptions import (
+    ConfigEntryNotReady,
+    HomeAssistantError,
+    ServiceValidationError,
+)
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_registry as er
 
@@ -187,12 +191,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: VevorHeaterConfigEntry) 
                     target_coords.append(coord)
 
             if not target_coords:
-                _LOGGER.warning("No matching heater found for device_id: %s", device_id)
-                return
+                raise ServiceValidationError(
+                    f"No matching heater found for device_id: {device_id}"
+                )
 
             for coord in target_coords:
                 _LOGGER.info("Sending command to heater: %s", coord.address)
-                await coord.async_send_raw_command(command, argument)
+                try:
+                    await coord.async_send_raw_command(command, argument)
+                except Exception as err:
+                    raise HomeAssistantError(
+                        f"Failed to send command to heater {coord.address}: {err}"
+                    ) from err
 
         hass.services.async_register(
             DOMAIN,

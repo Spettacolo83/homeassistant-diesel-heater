@@ -1,6 +1,8 @@
 """Button platform for Vevor Diesel Heater."""
 from __future__ import annotations
 
+PARALLEL_UPDATES = 1
+
 from homeassistant.components.button import ButtonEntity
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant

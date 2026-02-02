@@ -1,6 +1,8 @@
 """Number platform for Vevor Diesel Heater."""
 from __future__ import annotations
 
+PARALLEL_UPDATES = 1
+
 from homeassistant.components.number import NumberEntity
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback

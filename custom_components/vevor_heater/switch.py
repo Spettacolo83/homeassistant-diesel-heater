@@ -1,6 +1,8 @@
 """Switch platform for Vevor Diesel Heater."""
 from __future__ import annotations
 
+PARALLEL_UPDATES = 1
+
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
