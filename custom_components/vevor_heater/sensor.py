@@ -36,44 +36,58 @@ async def async_setup_entry(
     entry: VevorHeaterConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up Vevor Heater sensors."""
-    coordinator = entry.runtime_data
+    """Set up Vevor Heater sensors.
 
-    async_add_entities(
-        [
-            VevorCaseTemperatureSensor(coordinator),
-            VevorCabTemperatureSensor(coordinator),
+    Entities are created conditionally based on the detected BLE protocol.
+    Mode 0 (unknown) creates all entities as safe fallback.
+    """
+    coordinator = entry.runtime_data
+    mode = coordinator.protocol_mode
+
+    # Core sensors (all protocols)
+    entities: list[VevorSensorBase] = [
+        VevorCaseTemperatureSensor(coordinator),
+        VevorCabTemperatureSensor(coordinator),
+        VevorSupplyVoltageSensor(coordinator),
+        VevorRunningStepSensor(coordinator),
+        VevorRunningModeSensor(coordinator),
+        VevorSetLevelSensor(coordinator),
+        VevorAltitudeSensor(coordinator),
+        VevorErrorCodeSensor(coordinator),
+        # Fuel consumption sensors (computed locally, not protocol-dependent)
+        VevorHourlyFuelConsumptionSensor(coordinator),
+        VevorDailyFuelConsumedSensor(coordinator),
+        VevorTotalFuelConsumedSensor(coordinator),
+        VevorDailyFuelHistorySensor(coordinator),
+        # Runtime tracking sensors (computed locally)
+        VevorDailyRuntimeSensor(coordinator),
+        VevorTotalRuntimeSensor(coordinator),
+        VevorDailyRuntimeHistorySensor(coordinator),
+        # Fuel level tracking (computed locally)
+        VevorFuelRemainingSensor(coordinator),
+        VevorLastRefueledSensor(coordinator),
+        VevorFuelConsumedSinceResetSensor(coordinator),
+    ]
+
+    # Extended sensors (encrypted protocols + CBFF: heater_offset, CO, raw temp)
+    if mode in (0, 2, 4, 6):
+        entities.extend([
             VevorRawInteriorTemperatureSensor(coordinator),
             VevorHeaterOffsetSensor(coordinator),
-            VevorSupplyVoltageSensor(coordinator),
-            VevorRunningStepSensor(coordinator),
-            VevorRunningModeSensor(coordinator),
-            VevorSetLevelSensor(coordinator),
-            VevorAltitudeSensor(coordinator),
-            VevorErrorCodeSensor(coordinator),
-            # Fuel consumption sensors
-            VevorHourlyFuelConsumptionSensor(coordinator),
-            VevorDailyFuelConsumedSensor(coordinator),
-            VevorTotalFuelConsumedSensor(coordinator),
-            VevorDailyFuelHistorySensor(coordinator),
-            # Runtime tracking sensors
-            VevorDailyRuntimeSensor(coordinator),
-            VevorTotalRuntimeSensor(coordinator),
-            VevorDailyRuntimeHistorySensor(coordinator),
-            # Fuel level tracking
-            VevorFuelRemainingSensor(coordinator),
-            VevorLastRefueledSensor(coordinator),
-            VevorFuelConsumedSinceResetSensor(coordinator),
-            # CO sensor (CBFF/Sunster protocol only)
             VevorCOSensor(coordinator),
-            # CBFF extended info
+        ])
+
+    # CBFF-only sensors (HW/SW version, remaining run time, temp diff)
+    if mode in (0, 6):
+        entities.extend([
             VevorHardwareVersionSensor(coordinator),
             VevorSoftwareVersionSensor(coordinator),
             VevorRemainingRunTimeSensor(coordinator),
             VevorStartupTempDiffSensor(coordinator),
             VevorShutdownTempDiffSensor(coordinator),
-        ]
-    )
+        ])
+
+    async_add_entities(entities)
 
 
 class VevorSensorBase(CoordinatorEntity[VevorHeaterCoordinator], SensorEntity):

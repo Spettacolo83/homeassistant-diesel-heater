@@ -206,6 +206,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._last_auto_offset_time: float = 0.0
         self._current_heater_offset: int = 0  # Current offset sent to heater via cmd 12
 
+    @property
+    def protocol_mode(self) -> int:
+        """Return the detected BLE protocol mode (0=unknown, 1-6=detected)."""
+        return self._protocol_mode
+
     async def async_load_data(self) -> None:
         """Load persistent fuel consumption and runtime data."""
         try:

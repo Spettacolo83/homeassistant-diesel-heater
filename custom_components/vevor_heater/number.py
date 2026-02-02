@@ -26,18 +26,26 @@ async def async_setup_entry(
     entry: VevorHeaterConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up Vevor Heater number entities."""
-    coordinator = entry.runtime_data
+    """Set up Vevor Heater number entities.
 
-    async_add_entities(
-        [
-            VevorHeaterLevelNumber(coordinator),
-            VevorHeaterTemperatureNumber(coordinator),
-            VevorHeaterOffsetNumber(coordinator),
-            VevorTankCapacityNumber(coordinator),
-            VevorBacklightNumber(coordinator),
-        ]
-    )
+    Entities are created conditionally based on the detected BLE protocol.
+    Mode 0 (unknown) creates all entities as safe fallback.
+    """
+    coordinator = entry.runtime_data
+    mode = coordinator.protocol_mode
+
+    # Core number entities (all protocols)
+    entities: list[NumberEntity] = [
+        VevorHeaterLevelNumber(coordinator),
+        VevorHeaterTemperatureNumber(coordinator),
+        VevorTankCapacityNumber(coordinator),
+    ]
+
+    # Offset number (encrypted + CBFF protocols only)
+    if mode in (0, 2, 4, 6):
+        entities.append(VevorHeaterOffsetNumber(coordinator))
+
+    async_add_entities(entities)
 
 
 class VevorHeaterLevelNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberEntity):
@@ -204,48 +212,3 @@ class VevorTankCapacityNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberE
         self.async_write_ha_state()
 
 
-class VevorBacklightNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberEntity):
-    """Display backlight brightness control (cmd 21).
-
-    Controls the heater's LCD display backlight brightness.
-    Values: 0=Off, 1-10, 20-100 (in steps of 10).
-    Only available on heaters that report a backlight value.
-    """
-
-    _attr_has_entity_name = True
-    _attr_name = "Backlight"
-    _attr_icon = "mdi:brightness-6"
-    _attr_native_min_value = 0
-    _attr_native_max_value = 100
-    _attr_native_step = 1
-    _attr_entity_category = EntityCategory.CONFIG
-
-    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
-        """Initialize the number entity."""
-        super().__init__(coordinator)
-        self._attr_unique_id = f"{coordinator.address}_backlight"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, coordinator.address)},
-            "name": "Vevor Diesel Heater",
-            "manufacturer": "Vevor",
-            "model": "Diesel Heater",
-        }
-
-    @property
-    def available(self) -> bool:
-        """Return if entity is available (only for heaters that report backlight)."""
-        return self.coordinator.data.get("backlight") is not None
-
-    @property
-    def native_value(self) -> float | None:
-        """Return the current value."""
-        return self.coordinator.data.get("backlight")
-
-    async def async_set_native_value(self, value: float) -> None:
-        """Set new value."""
-        await self.coordinator.async_set_backlight(int(value))
-
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator."""
-        self.async_write_ha_state()

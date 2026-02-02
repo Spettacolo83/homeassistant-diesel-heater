@@ -10,6 +10,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import VevorHeaterConfigEntry
 from .const import (
+    BACKLIGHT_OPTIONS,
     DOMAIN,
     LANGUAGE_OPTIONS,
     PUMP_TYPE_OPTIONS,
@@ -28,14 +29,32 @@ async def async_setup_entry(
     entry: VevorHeaterConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up Vevor Heater select from config entry."""
+    """Set up Vevor Heater select from config entry.
+
+    Entities are created conditionally based on the detected BLE protocol.
+    Mode 0 (unknown) creates all entities as safe fallback.
+    """
     coordinator = entry.runtime_data
-    async_add_entities([
+    mode = coordinator.protocol_mode
+
+    # Core select entities (all protocols)
+    entities: list[SelectEntity] = [
         VevorHeaterModeSelect(coordinator),
-        VevorHeaterLanguageSelect(coordinator),
-        VevorHeaterPumpTypeSelect(coordinator),
-        VevorHeaterTankVolumeSelect(coordinator),
-    ])
+    ]
+
+    # Config selects (AA66Encrypted + CBFF: language, pump_type, tank_volume)
+    if mode in (0, 4, 6):
+        entities.extend([
+            VevorHeaterLanguageSelect(coordinator),
+            VevorHeaterPumpTypeSelect(coordinator),
+            VevorHeaterTankVolumeSelect(coordinator),
+        ])
+
+    # Backlight select (encrypted + CBFF protocols)
+    if mode in (0, 2, 4, 6):
+        entities.append(VevorBacklightSelect(coordinator))
+
+    async_add_entities(entities)
 
 
 class VevorHeaterModeSelect(SelectEntity):
@@ -272,6 +291,66 @@ class VevorHeaterTankVolumeSelect(SelectEntity):
             await self.coordinator.async_set_tank_volume(volume)
         else:
             _LOGGER.error("Unknown tank volume: %s", option)
+
+    async def async_added_to_hass(self) -> None:
+        """When entity is added to hass."""
+        self.async_on_remove(
+            self.coordinator.async_add_listener(self._handle_coordinator_update)
+        )
+
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+
+class VevorBacklightSelect(SelectEntity):
+    """Select entity for display backlight brightness (cmd 21).
+
+    Discrete brightness values matching the Vevor app:
+    Off, 1-10, 20, 30, ..., 100.
+    Replaces the old 0-100 number slider which was hard to use.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Backlight"
+    _attr_icon = "mdi:brightness-6"
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_options = list(BACKLIGHT_OPTIONS.values())
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the select entity."""
+        self.coordinator = coordinator
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, coordinator.address)},
+            "name": "Vevor Heater",
+            "manufacturer": "Vevor",
+            "model": "Diesel Heater",
+        }
+        self._attr_unique_id = f"{coordinator.address}_backlight_select"
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        return self.coordinator.data.get("backlight") is not None
+
+    @property
+    def current_option(self) -> str | None:
+        """Return the current backlight level."""
+        backlight = self.coordinator.data.get("backlight")
+        if backlight is not None:
+            if backlight in BACKLIGHT_OPTIONS:
+                return BACKLIGHT_OPTIONS[backlight]
+            return str(backlight)
+        return None
+
+    async def async_select_option(self, option: str) -> None:
+        """Change the backlight brightness."""
+        for value, name in BACKLIGHT_OPTIONS.items():
+            if name == option:
+                _LOGGER.info("Setting backlight to: %s (value: %d)", option, value)
+                await self.coordinator.async_set_backlight(value)
+                return
+        _LOGGER.error("Unknown backlight option: %s", option)
 
     async def async_added_to_hass(self) -> None:
         """When entity is added to hass."""

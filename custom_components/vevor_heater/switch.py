@@ -19,17 +19,36 @@ async def async_setup_entry(
     entry: VevorHeaterConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up Vevor Heater switch."""
-    coordinator = entry.runtime_data
+    """Set up Vevor Heater switch.
 
-    async_add_entities([
+    Entities are created conditionally based on the detected BLE protocol.
+    Mode 0 (unknown) creates all entities as safe fallback.
+    """
+    coordinator = entry.runtime_data
+    mode = coordinator.protocol_mode
+
+    # Core switches (all protocols)
+    entities: list[SwitchEntity] = [
         VevorHeaterPowerSwitch(coordinator),
-        VevorAutoStartStopSwitch(coordinator),
         VevorAutoOffsetSwitch(coordinator),
-        VevorTempUnitSwitch(coordinator),
-        VevorAltitudeUnitSwitch(coordinator),
-        VevorHighAltitudeSwitch(coordinator),
-    ])
+    ]
+
+    # Auto Start/Stop (AA66Encrypted, ABBA, CBFF)
+    if mode in (0, 4, 5, 6):
+        entities.append(VevorAutoStartStopSwitch(coordinator))
+
+    # Unit settings (AA66Encrypted, ABBA, CBFF)
+    if mode in (0, 4, 5, 6):
+        entities.extend([
+            VevorTempUnitSwitch(coordinator),
+            VevorAltitudeUnitSwitch(coordinator),
+        ])
+
+    # High altitude (ABBA only)
+    if mode in (0, 5):
+        entities.append(VevorHighAltitudeSwitch(coordinator))
+
+    async_add_entities(entities)
 
 
 class VevorHeaterPowerSwitch(CoordinatorEntity[VevorHeaterCoordinator], SwitchEntity):

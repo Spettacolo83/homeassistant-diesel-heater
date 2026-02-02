@@ -20,17 +20,26 @@ async def async_setup_entry(
     entry: VevorHeaterConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up Vevor Heater binary sensors."""
+    """Set up Vevor Heater binary sensors.
+
+    Entities are created conditionally based on the detected BLE protocol.
+    Mode 0 (unknown) creates all entities as safe fallback.
+    """
     coordinator = entry.runtime_data
-    
-    async_add_entities(
-        [
-            VevorHeaterActiveSensor(coordinator),
-            VevorHeaterProblemSensor(coordinator),
-            VevorHeaterConnectedSensor(coordinator),
-            VevorAutoStartStopSensor(coordinator),
-        ]
-    )
+    mode = coordinator.protocol_mode
+
+    # Core binary sensors (all protocols)
+    entities: list[BinarySensorEntity] = [
+        VevorHeaterActiveSensor(coordinator),
+        VevorHeaterProblemSensor(coordinator),
+        VevorHeaterConnectedSensor(coordinator),
+    ]
+
+    # Auto Start/Stop binary sensor (AA66Encrypted, ABBA, CBFF)
+    if mode in (0, 4, 5, 6):
+        entities.append(VevorAutoStartStopSensor(coordinator))
+
+    async_add_entities(entities)
 
 
 class VevorHeaterActiveSensor(
