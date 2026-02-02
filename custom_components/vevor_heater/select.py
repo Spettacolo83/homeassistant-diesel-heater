@@ -4,11 +4,11 @@ from __future__ import annotations
 import logging
 
 from homeassistant.components.select import SelectEntity
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from . import VevorHeaterConfigEntry
 from .const import (
     DOMAIN,
     LANGUAGE_OPTIONS,
@@ -25,11 +25,11 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: VevorHeaterConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Vevor Heater select from config entry."""
-    coordinator: VevorHeaterCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator = entry.runtime_data
     async_add_entities([
         VevorHeaterModeSelect(coordinator),
         VevorHeaterLanguageSelect(coordinator),

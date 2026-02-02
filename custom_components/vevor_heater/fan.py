@@ -6,7 +6,6 @@ import math
 from typing import Any
 
 from homeassistant.components.fan import FanEntity, FanEntityFeature
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util.percentage import (
@@ -14,6 +13,7 @@ from homeassistant.util.percentage import (
     percentage_to_ordered_list_item,
 )
 
+from . import VevorHeaterConfigEntry
 from .const import (
     DOMAIN,
     MAX_LEVEL,
@@ -30,11 +30,11 @@ ORDERED_LEVELS = [str(level) for level in range(MIN_LEVEL, MAX_LEVEL + 1)]
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: VevorHeaterConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Vevor Heater fan from config entry."""
-    coordinator: VevorHeaterCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator = entry.runtime_data
     async_add_entities([VevorHeaterFan(coordinator)])
 
 

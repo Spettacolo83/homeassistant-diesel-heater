@@ -17,6 +17,8 @@ from homeassistant.helpers import config_validation as cv
 from .const import DOMAIN
 from .coordinator import VevorHeaterCoordinator
 
+VevorHeaterConfigEntry = ConfigEntry[VevorHeaterCoordinator]
+
 _LOGGER = logging.getLogger(__name__)
 
 # Service constants
@@ -43,7 +45,7 @@ PLATFORMS: list[Platform] = [
 ]
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_setup_entry(hass: HomeAssistant, entry: VevorHeaterConfigEntry) -> bool:
     """Set up Vevor Diesel Heater from a config entry."""
     address: str = entry.data[CONF_ADDRESS]
     
@@ -92,9 +94,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             err
         )
 
-    # Store coordinator (even if connection failed - will retry in background)
-    hass.data.setdefault(DOMAIN, {})
-    hass.data[DOMAIN][entry.entry_id] = coordinator
+    # Store coordinator on the config entry (even if connection failed - will retry in background)
+    entry.runtime_data = coordinator
 
     # Forward entry setup to platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -114,16 +115,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
             # Find target heaters
             target_coords = []
-            for entry_id, coord in hass.data[DOMAIN].items():
-                if isinstance(coord, VevorHeaterCoordinator):
-                    if device_id:
-                        # Match by MAC address (last 5 chars or full address)
-                        if (device_id.upper() in coord.address.upper() or
-                            coord.address.upper().endswith(device_id.upper().replace(":", ""))):
-                            target_coords.append(coord)
-                    else:
-                        # No device_id specified, send to all
+            for config_entry in hass.config_entries.async_entries(DOMAIN):
+                coord = getattr(config_entry, "runtime_data", None)
+                if not isinstance(coord, VevorHeaterCoordinator):
+                    continue
+                if device_id:
+                    # Match by MAC address (last 5 chars or full address)
+                    if (device_id.upper() in coord.address.upper() or
+                        coord.address.upper().endswith(device_id.upper().replace(":", ""))):
                         target_coords.append(coord)
+                else:
+                    # No device_id specified, send to all
+                    target_coords.append(coord)
 
             if not target_coords:
                 _LOGGER.warning("No matching heater found for device_id: %s", device_id)
@@ -144,10 +147,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: VevorHeaterConfigEntry) -> bool:
     """Unload a config entry."""
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-        coordinator: VevorHeaterCoordinator = hass.data[DOMAIN].pop(entry.entry_id)
+        coordinator: VevorHeaterCoordinator = entry.runtime_data
         # Save fuel data before shutdown
         await coordinator.async_save_data()
         await coordinator.async_shutdown()

@@ -2,13 +2,13 @@
 from __future__ import annotations
 
 from homeassistant.components.number import NumberEntity
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from homeassistant.const import EntityCategory, UnitOfVolume
 
+from . import VevorHeaterConfigEntry
 from .const import (
     DOMAIN,
     MAX_HEATER_OFFSET,
@@ -23,11 +23,11 @@ from .coordinator import VevorHeaterCoordinator
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: VevorHeaterConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Vevor Heater number entities."""
-    coordinator: VevorHeaterCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator = entry.runtime_data
 
     async_add_entities(
         [
