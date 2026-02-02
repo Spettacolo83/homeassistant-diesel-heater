@@ -8,7 +8,6 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     CONCENTRATION_PARTS_PER_MILLION,
     EntityCategory,
@@ -22,6 +21,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from . import VevorHeaterConfigEntry
 from .const import (
     DOMAIN,
     ERROR_NAMES,
@@ -33,11 +33,11 @@ from .coordinator import VevorHeaterCoordinator
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: VevorHeaterConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Vevor Heater sensors."""
-    coordinator: VevorHeaterCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator = entry.runtime_data
 
     async_add_entities(
         [
@@ -63,6 +63,7 @@ async def async_setup_entry(
             # Fuel level tracking
             VevorFuelRemainingSensor(coordinator),
             VevorLastRefueledSensor(coordinator),
+            VevorFuelConsumedSinceResetSensor(coordinator),
             # CO sensor (CBFF/Sunster protocol only)
             VevorCOSensor(coordinator),
             # CBFF extended info
@@ -300,7 +301,7 @@ class VevorErrorCodeSensor(VevorSensorBase):
 # Fuel consumption sensors
 
 class VevorHourlyFuelConsumptionSensor(VevorSensorBase):
-    """Hourly fuel consumption sensor (instantaneous rate)."""
+    """Estimated hourly fuel consumption sensor (instantaneous rate)."""
 
     _attr_device_class = SensorDeviceClass.VOLUME_FLOW_RATE
     _attr_native_unit_of_measurement = f"{UnitOfVolume.LITERS}/h"
@@ -310,7 +311,7 @@ class VevorHourlyFuelConsumptionSensor(VevorSensorBase):
 
     def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator, "hourly_fuel_consumption", "Hourly Fuel Consumption")
+        super().__init__(coordinator, "est_hourly_fuel_consumption", "Estimated Hourly Fuel Consumption")
 
     @property
     def native_value(self) -> float | None:
@@ -319,7 +320,7 @@ class VevorHourlyFuelConsumptionSensor(VevorSensorBase):
 
 
 class VevorDailyFuelConsumedSensor(VevorSensorBase):
-    """Daily fuel consumed sensor."""
+    """Estimated daily fuel consumed sensor."""
 
     _attr_device_class = SensorDeviceClass.VOLUME
     _attr_native_unit_of_measurement = UnitOfVolume.LITERS
@@ -328,7 +329,7 @@ class VevorDailyFuelConsumedSensor(VevorSensorBase):
 
     def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator, "daily_fuel_consumed", "Daily Fuel Consumed")
+        super().__init__(coordinator, "est_daily_fuel_consumed", "Estimated Daily Fuel Consumed")
 
     @property
     def native_value(self) -> float | None:
@@ -337,7 +338,7 @@ class VevorDailyFuelConsumedSensor(VevorSensorBase):
 
 
 class VevorTotalFuelConsumedSensor(VevorSensorBase):
-    """Total fuel consumed sensor."""
+    """Estimated total fuel consumed sensor."""
 
     _attr_device_class = SensorDeviceClass.VOLUME
     _attr_native_unit_of_measurement = UnitOfVolume.LITERS
@@ -346,7 +347,7 @@ class VevorTotalFuelConsumedSensor(VevorSensorBase):
 
     def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator, "total_fuel_consumed", "Total Fuel Consumed")
+        super().__init__(coordinator, "est_total_fuel_consumed", "Estimated Total Fuel Consumed")
 
     @property
     def native_value(self) -> float | None:
@@ -355,7 +356,7 @@ class VevorTotalFuelConsumedSensor(VevorSensorBase):
 
 
 class VevorDailyFuelHistorySensor(VevorSensorBase):
-    """Daily fuel consumption history sensor."""
+    """Estimated daily fuel consumption history sensor."""
 
     _attr_icon = "mdi:chart-bar"
     _attr_native_unit_of_measurement = "days"
@@ -363,7 +364,7 @@ class VevorDailyFuelHistorySensor(VevorSensorBase):
 
     def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator, "daily_fuel_history", "Daily Fuel History")
+        super().__init__(coordinator, "est_daily_fuel_history", "Estimated Daily Fuel History")
 
     @property
     def native_value(self) -> int | None:
@@ -549,6 +550,35 @@ class VevorLastRefueledSensor(VevorSensorBase):
     def available(self) -> bool:
         """Return if entity is available."""
         return self.coordinator.data.get("last_refueled") is not None
+
+
+class VevorFuelConsumedSinceResetSensor(VevorSensorBase):
+    """Estimated fuel consumed since last refuel reset.
+
+    Shows how much fuel has been estimated to be consumed since the user
+    last pressed the Reset Estimated Fuel Remaining button. Useful for
+    verifying estimation accuracy against actual fuel usage.
+    """
+
+    _attr_device_class = SensorDeviceClass.VOLUME
+    _attr_native_unit_of_measurement = UnitOfVolume.LITERS
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_icon = "mdi:gas-station-outline"
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, "est_fuel_since_refuel", "Estimated Fuel Since Refuel")
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the state."""
+        return self.coordinator.data.get("fuel_consumed_since_reset")
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        return self.coordinator.data.get("fuel_consumed_since_reset") is not None
 
 
 class VevorCOSensor(VevorSensorBase):
