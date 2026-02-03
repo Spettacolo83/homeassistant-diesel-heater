@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, AsyncMock
 # Import stubs first
 from . import conftest  # noqa: F401
 
-from custom_components.vevor_heater.climate import VevorHeaterClimate
+from custom_components.vevor_heater.climate import VevorHeaterClimate, async_setup_entry
 
 
 def create_mock_coordinator() -> MagicMock:
@@ -455,3 +455,152 @@ class TestClimateHelperMethods:
         climate = VevorHeaterClimate(coordinator, config_entry)
 
         assert climate._get_comfort_temp() == 23
+
+
+# ---------------------------------------------------------------------------
+# Async setup entry tests
+# ---------------------------------------------------------------------------
+
+class TestAsyncSetupEntry:
+    """Tests for async_setup_entry."""
+
+    @pytest.mark.asyncio
+    async def test_async_setup_entry_creates_climate(self):
+        """Test async_setup_entry creates climate entity."""
+        coordinator = create_mock_coordinator()
+
+        # Create mock entry with runtime_data
+        entry = create_mock_config_entry()
+        entry.runtime_data = coordinator
+
+        # Create mock async_add_entities
+        async_add_entities = MagicMock()
+
+        # Create mock hass
+        hass = MagicMock()
+
+        await async_setup_entry(hass, entry, async_add_entities)
+
+        # Verify async_add_entities was called with a list containing VevorHeaterClimate
+        async_add_entities.assert_called_once()
+        call_args = async_add_entities.call_args[0][0]
+        assert len(call_args) == 1
+        assert isinstance(call_args[0], VevorHeaterClimate)
+
+
+# ---------------------------------------------------------------------------
+# Extended async method tests
+# ---------------------------------------------------------------------------
+
+class TestClimateAsyncSetTemperature:
+    """Tests for async_set_temperature method."""
+
+    @pytest.mark.asyncio
+    async def test_async_set_temperature_method_callable(self):
+        """Test async_set_temperature is callable."""
+        coordinator = create_mock_coordinator()
+        config_entry = create_mock_config_entry()
+        climate = VevorHeaterClimate(coordinator, config_entry)
+
+        # Verify method is callable
+        assert callable(climate.async_set_temperature)
+
+    @pytest.mark.asyncio
+    async def test_async_set_temperature_no_kwargs_returns_early(self):
+        """Test async_set_temperature with no kwargs does nothing."""
+        coordinator = create_mock_coordinator()
+        config_entry = create_mock_config_entry()
+        climate = VevorHeaterClimate(coordinator, config_entry)
+
+        # Should return early without calling coordinator
+        await climate.async_set_temperature()
+
+        coordinator.async_set_temperature.assert_not_called()
+
+
+class TestClimateAsyncSetPresetMode:
+    """Tests for async_set_preset_mode method."""
+
+    @pytest.mark.asyncio
+    async def test_async_set_preset_mode_method_callable(self):
+        """Test async_set_preset_mode is callable."""
+        coordinator = create_mock_coordinator()
+        config_entry = create_mock_config_entry()
+        climate = VevorHeaterClimate(coordinator, config_entry)
+
+        assert callable(climate.async_set_preset_mode)
+
+    @pytest.mark.asyncio
+    async def test_async_set_preset_mode_sets_current_preset(self):
+        """Test async_set_preset_mode sets _current_preset."""
+        coordinator = create_mock_coordinator()
+        config_entry = create_mock_config_entry()
+        climate = VevorHeaterClimate(coordinator, config_entry)
+
+        # Call with a string value
+        await climate.async_set_preset_mode("test_preset")
+
+        # _current_preset should be set to the passed value
+        assert climate._current_preset == "test_preset"
+
+
+class TestClimateAsyncSetHvacMode:
+    """Tests for async_set_hvac_mode method."""
+
+    @pytest.mark.asyncio
+    async def test_async_set_hvac_mode_method_callable(self):
+        """Test async_set_hvac_mode is callable."""
+        coordinator = create_mock_coordinator()
+        config_entry = create_mock_config_entry()
+        climate = VevorHeaterClimate(coordinator, config_entry)
+
+        assert callable(climate.async_set_hvac_mode)
+
+
+# ---------------------------------------------------------------------------
+# Preset mode edge cases
+# ---------------------------------------------------------------------------
+
+class TestClimatePresetModeEdgeCases:
+    """Tests for preset mode edge cases."""
+
+    def test_preset_mode_when_set_temp_is_none(self):
+        """Test preset_mode when set_temp is None."""
+        coordinator = create_mock_coordinator()
+        coordinator.data["set_temp"] = None
+        config_entry = create_mock_config_entry()
+        climate = VevorHeaterClimate(coordinator, config_entry)
+
+        # Should return default preset (PRESET_NONE or current_preset)
+        result = climate.preset_mode
+        assert result is not None
+
+    def test_preset_mode_returns_current_preset_when_no_match(self):
+        """Test preset_mode returns _current_preset when no temp match."""
+        coordinator = create_mock_coordinator()
+        coordinator.data["set_temp"] = 15  # Doesn't match any preset
+        config_entry = create_mock_config_entry()
+        config_entry.data["preset_away_temp"] = 8
+        config_entry.data["preset_comfort_temp"] = 21
+        climate = VevorHeaterClimate(coordinator, config_entry)
+        climate._current_preset = "custom_preset"
+
+        result = climate.preset_mode
+        assert result == "custom_preset"
+
+
+# ---------------------------------------------------------------------------
+# Entity lifecycle tests
+# ---------------------------------------------------------------------------
+
+class TestClimateEntityLifecycle:
+    """Tests for climate entity lifecycle."""
+
+    def test_handle_coordinator_update_method_exists(self):
+        """Test _handle_coordinator_update method exists."""
+        coordinator = create_mock_coordinator()
+        config_entry = create_mock_config_entry()
+        climate = VevorHeaterClimate(coordinator, config_entry)
+
+        # Verify method exists
+        assert hasattr(climate, '_handle_coordinator_update')
