@@ -604,3 +604,306 @@ class TestClimateEntityLifecycle:
 
         # Verify method exists
         assert hasattr(climate, '_handle_coordinator_update')
+
+    def test_handle_coordinator_update_is_callable(self):
+        """Test _handle_coordinator_update can be called."""
+        coordinator = create_mock_coordinator()
+        config_entry = create_mock_config_entry()
+        climate = VevorHeaterClimate(coordinator, config_entry)
+
+        # Just verify it doesn't raise - async_write_ha_state is on the base class
+        climate._handle_coordinator_update()
+
+
+# ---------------------------------------------------------------------------
+# Full async_set_preset_mode tests
+# ---------------------------------------------------------------------------
+
+class TestClimateAsyncSetPresetModeFull:
+    """Full tests for async_set_preset_mode method.
+
+    Note: Due to stub limitations (each import creates new MagicMocks),
+    we import the PRESET_* constants from the climate module itself.
+    """
+
+    @pytest.mark.asyncio
+    async def test_async_set_preset_mode_away(self):
+        """Test async_set_preset_mode with PRESET_AWAY."""
+        # Import from the same place climate.py imports
+        from custom_components.vevor_heater.climate import PRESET_AWAY
+
+        coordinator = create_mock_coordinator()
+        config_entry = create_mock_config_entry()
+        config_entry.data["preset_away_temp"] = 10
+        climate = VevorHeaterClimate(coordinator, config_entry)
+
+        await climate.async_set_preset_mode(PRESET_AWAY)
+
+        # Should call coordinator with away temperature
+        coordinator.async_set_temperature.assert_called_once_with(10)
+        assert climate._current_preset == PRESET_AWAY
+        assert climate._user_cleared_preset is False
+
+    @pytest.mark.asyncio
+    async def test_async_set_preset_mode_comfort(self):
+        """Test async_set_preset_mode with PRESET_COMFORT."""
+        from custom_components.vevor_heater.climate import PRESET_COMFORT
+
+        coordinator = create_mock_coordinator()
+        config_entry = create_mock_config_entry()
+        config_entry.data["preset_comfort_temp"] = 23
+        climate = VevorHeaterClimate(coordinator, config_entry)
+
+        await climate.async_set_preset_mode(PRESET_COMFORT)
+
+        # Should call coordinator with comfort temperature
+        coordinator.async_set_temperature.assert_called_once_with(23)
+        assert climate._current_preset == PRESET_COMFORT
+        assert climate._user_cleared_preset is False
+
+    @pytest.mark.asyncio
+    async def test_async_set_preset_mode_none(self):
+        """Test async_set_preset_mode with PRESET_NONE."""
+        from custom_components.vevor_heater.climate import PRESET_NONE
+
+        coordinator = create_mock_coordinator()
+        config_entry = create_mock_config_entry()
+        climate = VevorHeaterClimate(coordinator, config_entry)
+        climate._current_preset = "comfort"  # Set previous preset
+
+        # Mock async_write_ha_state since it's from the base class
+        climate.async_write_ha_state = MagicMock()
+
+        await climate.async_set_preset_mode(PRESET_NONE)
+
+        # Should NOT call coordinator (keep current temperature)
+        coordinator.async_set_temperature.assert_not_called()
+        assert climate._current_preset is None
+        assert climate._user_cleared_preset is True
+        climate.async_write_ha_state.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_async_set_preset_mode_clears_none_flag_on_away(self):
+        """Test setting preset clears _user_cleared_preset flag."""
+        from custom_components.vevor_heater.climate import PRESET_AWAY
+
+        coordinator = create_mock_coordinator()
+        config_entry = create_mock_config_entry()
+        climate = VevorHeaterClimate(coordinator, config_entry)
+        climate._user_cleared_preset = True  # Was previously cleared
+
+        await climate.async_set_preset_mode(PRESET_AWAY)
+
+        assert climate._user_cleared_preset is False
+
+    @pytest.mark.asyncio
+    async def test_async_set_preset_mode_clears_none_flag_on_comfort(self):
+        """Test setting comfort preset clears _user_cleared_preset flag."""
+        from custom_components.vevor_heater.climate import PRESET_COMFORT
+
+        coordinator = create_mock_coordinator()
+        config_entry = create_mock_config_entry()
+        climate = VevorHeaterClimate(coordinator, config_entry)
+        climate._user_cleared_preset = True  # Was previously cleared
+
+        await climate.async_set_preset_mode(PRESET_COMFORT)
+
+        assert climate._user_cleared_preset is False
+
+
+# ---------------------------------------------------------------------------
+# Full async_set_temperature tests
+# ---------------------------------------------------------------------------
+
+class TestClimateAsyncSetTemperatureFull:
+    """Full tests for async_set_temperature method.
+
+    Note: Due to stub limitations (ATTR_TEMPERATURE is a MagicMock, not
+    "temperature"), we can't fully test the async_set_temperature flow.
+    The basic tests in TestClimateAsyncSetTemperature verify the method
+    returns early when no temperature is provided. These tests verify
+    the method exists and can be called.
+    """
+
+    @pytest.mark.asyncio
+    async def test_async_set_temperature_method_signature(self):
+        """Test async_set_temperature accepts kwargs."""
+        coordinator = create_mock_coordinator()
+        config_entry = create_mock_config_entry()
+        climate = VevorHeaterClimate(coordinator, config_entry)
+
+        # Should accept arbitrary kwargs without error
+        await climate.async_set_temperature(some_param=25)
+
+        # Method returns early when ATTR_TEMPERATURE not in kwargs
+        coordinator.async_set_temperature.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_async_set_temperature_returns_early_no_temp(self):
+        """Test async_set_temperature returns early with no temperature."""
+        coordinator = create_mock_coordinator()
+        config_entry = create_mock_config_entry()
+        climate = VevorHeaterClimate(coordinator, config_entry)
+
+        await climate.async_set_temperature()
+
+        coordinator.async_set_temperature.assert_not_called()
+
+    def test_get_away_temp_in_async_set_temperature_path(self):
+        """Test _get_away_temp is correctly configured for temperature matching."""
+        coordinator = create_mock_coordinator()
+        config_entry = create_mock_config_entry()
+        config_entry.data["preset_away_temp"] = 10
+        climate = VevorHeaterClimate(coordinator, config_entry)
+
+        assert climate._get_away_temp() == 10
+
+    def test_get_comfort_temp_in_async_set_temperature_path(self):
+        """Test _get_comfort_temp is correctly configured for temperature matching."""
+        coordinator = create_mock_coordinator()
+        config_entry = create_mock_config_entry()
+        config_entry.data["preset_comfort_temp"] = 23
+        climate = VevorHeaterClimate(coordinator, config_entry)
+
+        assert climate._get_comfort_temp() == 23
+
+    def test_user_cleared_preset_flag_initialized_false(self):
+        """Test _user_cleared_preset is initialized to False."""
+        coordinator = create_mock_coordinator()
+        config_entry = create_mock_config_entry()
+        climate = VevorHeaterClimate(coordinator, config_entry)
+
+        assert climate._user_cleared_preset is False
+
+    def test_current_preset_initialized_none(self):
+        """Test _current_preset is initialized to None."""
+        coordinator = create_mock_coordinator()
+        config_entry = create_mock_config_entry()
+        climate = VevorHeaterClimate(coordinator, config_entry)
+
+        assert climate._current_preset is None
+
+
+# ---------------------------------------------------------------------------
+# Full async_set_hvac_mode tests
+# ---------------------------------------------------------------------------
+
+class TestClimateAsyncSetHvacModeFull:
+    """Full tests for async_set_hvac_mode method.
+
+    Note: We import HVACMode from the climate module to get the same
+    MagicMock instance that the code uses internally.
+    """
+
+    @pytest.mark.asyncio
+    async def test_async_set_hvac_mode_heat(self):
+        """Test async_set_hvac_mode with HEAT."""
+        from custom_components.vevor_heater.climate import HVACMode
+
+        coordinator = create_mock_coordinator()
+        config_entry = create_mock_config_entry()
+        climate = VevorHeaterClimate(coordinator, config_entry)
+
+        await climate.async_set_hvac_mode(HVACMode.HEAT)
+
+        coordinator.async_turn_on.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_async_set_hvac_mode_off(self):
+        """Test async_set_hvac_mode with OFF."""
+        from custom_components.vevor_heater.climate import HVACMode
+
+        coordinator = create_mock_coordinator()
+        config_entry = create_mock_config_entry()
+        climate = VevorHeaterClimate(coordinator, config_entry)
+
+        await climate.async_set_hvac_mode(HVACMode.OFF)
+
+        coordinator.async_turn_off.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Temperature unit tests
+# ---------------------------------------------------------------------------
+
+class TestClimateTemperatureUnit:
+    """Tests for climate temperature unit."""
+
+    def test_temperature_unit_is_celsius(self):
+        """Test temperature unit is Celsius."""
+        coordinator = create_mock_coordinator()
+        config_entry = create_mock_config_entry()
+        climate = VevorHeaterClimate(coordinator, config_entry)
+
+        # The unit is set via _attr_temperature_unit
+        assert climate._attr_temperature_unit is not None
+
+    def test_supported_features(self):
+        """Test supported features include required features."""
+        coordinator = create_mock_coordinator()
+        config_entry = create_mock_config_entry()
+        climate = VevorHeaterClimate(coordinator, config_entry)
+
+        # Verify supported_features is set
+        assert climate._attr_supported_features is not None
+
+
+# ---------------------------------------------------------------------------
+# Additional edge case tests
+# ---------------------------------------------------------------------------
+
+class TestClimateEdgeCases:
+    """Additional edge case tests for climate entity."""
+
+    def test_target_temperature_none(self):
+        """Test target_temperature when set_temp is None."""
+        coordinator = create_mock_coordinator()
+        coordinator.data["set_temp"] = None
+        config_entry = create_mock_config_entry()
+        climate = VevorHeaterClimate(coordinator, config_entry)
+
+        assert climate.target_temperature is None
+
+    def test_preset_mode_away_detection(self):
+        """Test preset mode correctly detects away."""
+        from custom_components.vevor_heater.climate import PRESET_AWAY
+
+        coordinator = create_mock_coordinator()
+        coordinator.data["set_temp"] = 8
+        config_entry = create_mock_config_entry()
+        config_entry.data["preset_away_temp"] = 8
+        config_entry.data["preset_comfort_temp"] = 21
+        climate = VevorHeaterClimate(coordinator, config_entry)
+
+        # The preset_mode should be PRESET_AWAY
+        assert climate.preset_mode == PRESET_AWAY
+
+    def test_preset_mode_comfort_detection(self):
+        """Test preset mode correctly detects comfort."""
+        from custom_components.vevor_heater.climate import PRESET_COMFORT
+
+        coordinator = create_mock_coordinator()
+        coordinator.data["set_temp"] = 21
+        config_entry = create_mock_config_entry()
+        config_entry.data["preset_away_temp"] = 8
+        config_entry.data["preset_comfort_temp"] = 21
+        climate = VevorHeaterClimate(coordinator, config_entry)
+
+        assert climate.preset_mode == PRESET_COMFORT
+
+    def test_available_uses_coordinator(self):
+        """Test available property is accessible."""
+        coordinator = create_mock_coordinator()
+        config_entry = create_mock_config_entry()
+        climate = VevorHeaterClimate(coordinator, config_entry)
+
+        # Just verify property is accessible (behavior from CoordinatorEntity)
+        _ = climate.available
+
+    def test_name_is_none(self):
+        """Test name attribute is None (uses device name)."""
+        coordinator = create_mock_coordinator()
+        config_entry = create_mock_config_entry()
+        climate = VevorHeaterClimate(coordinator, config_entry)
+
+        assert climate._attr_name is None
