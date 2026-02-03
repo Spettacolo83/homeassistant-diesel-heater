@@ -412,3 +412,51 @@ class TestBinarySensorAttributes:
         sensor = VevorHeaterConnectedSensor(coordinator)
 
         assert sensor._attr_device_info is not None
+
+
+# ---------------------------------------------------------------------------
+# _handle_coordinator_update tests
+# ---------------------------------------------------------------------------
+
+class TestHandleCoordinatorUpdate:
+    """Tests for _handle_coordinator_update on all binary sensor entities."""
+
+    def test_active_sensor_handle_coordinator_update(self):
+        """Test ActiveSensor _handle_coordinator_update calls async_write_ha_state."""
+        coordinator = create_mock_coordinator()
+        sensor = VevorHeaterActiveSensor(coordinator)
+        sensor.async_write_ha_state = MagicMock()
+
+        sensor._handle_coordinator_update()
+
+        sensor.async_write_ha_state.assert_called_once()
+
+    def test_problem_sensor_handle_coordinator_update(self):
+        """Test ProblemSensor _handle_coordinator_update calls async_write_ha_state."""
+        coordinator = create_mock_coordinator()
+        sensor = VevorHeaterProblemSensor(coordinator)
+        sensor.async_write_ha_state = MagicMock()
+
+        sensor._handle_coordinator_update()
+
+        sensor.async_write_ha_state.assert_called_once()
+
+    def test_connected_sensor_handle_coordinator_update(self):
+        """Test ConnectedSensor _handle_coordinator_update calls async_write_ha_state."""
+        coordinator = create_mock_coordinator()
+        sensor = VevorHeaterConnectedSensor(coordinator)
+        sensor.async_write_ha_state = MagicMock()
+
+        sensor._handle_coordinator_update()
+
+        sensor.async_write_ha_state.assert_called_once()
+
+    def test_auto_start_stop_sensor_handle_coordinator_update(self):
+        """Test AutoStartStopSensor _handle_coordinator_update calls async_write_ha_state."""
+        coordinator = create_mock_coordinator()
+        sensor = VevorAutoStartStopSensor(coordinator)
+        sensor.async_write_ha_state = MagicMock()
+
+        sensor._handle_coordinator_update()
+
+        sensor.async_write_ha_state.assert_called_once()
