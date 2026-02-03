@@ -1250,3 +1250,21 @@ class TestSensorEntityAttributes:
         assert sensor._attr_device_info is not None
         assert "identifiers" in sensor._attr_device_info
         assert "name" in sensor._attr_device_info
+
+
+# ---------------------------------------------------------------------------
+# _handle_coordinator_update tests
+# ---------------------------------------------------------------------------
+
+class TestHandleCoordinatorUpdate:
+    """Tests for _handle_coordinator_update on sensor entities."""
+
+    def test_cab_temperature_handle_coordinator_update(self):
+        """Test CabTemperatureSensor _handle_coordinator_update calls async_write_ha_state."""
+        coordinator = create_mock_coordinator()
+        sensor = VevorCabTemperatureSensor(coordinator)
+        sensor.async_write_ha_state = MagicMock()
+
+        sensor._handle_coordinator_update()
+
+        sensor.async_write_ha_state.assert_called_once()
