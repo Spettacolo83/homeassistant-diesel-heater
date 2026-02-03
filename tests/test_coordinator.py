@@ -535,3 +535,387 @@ class TestHistoryCleaning:
 
         assert old_date not in coordinator._daily_runtime_history
         assert recent_date in coordinator._daily_runtime_history
+
+    def test_clean_old_history_empty(self):
+        """Test cleaning empty history doesn't crash."""
+        coordinator = create_mock_coordinator()
+        coordinator._daily_fuel_history = {}
+
+        coordinator._clean_old_history()
+
+        assert coordinator._daily_fuel_history == {}
+
+    def test_clean_old_runtime_history_empty(self):
+        """Test cleaning empty runtime history doesn't crash."""
+        coordinator = create_mock_coordinator()
+        coordinator._daily_runtime_history = {}
+
+        coordinator._clean_old_runtime_history()
+
+        assert coordinator._daily_runtime_history == {}
+
+
+# ---------------------------------------------------------------------------
+# Protocol mode property tests
+# ---------------------------------------------------------------------------
+
+class TestProtocolMode:
+    """Tests for protocol_mode property."""
+
+    def test_protocol_mode_returns_value(self):
+        """Test protocol_mode returns current mode."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 3
+
+        assert coordinator.protocol_mode == 3
+
+    def test_protocol_mode_default(self):
+        """Test protocol_mode default is 0."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 0
+
+        assert coordinator.protocol_mode == 0
+
+
+# ---------------------------------------------------------------------------
+# Notification callback tests
+# ---------------------------------------------------------------------------
+
+class TestNotificationCallback:
+    """Tests for BLE notification callback."""
+
+    def test_notification_callback_method_exists(self):
+        """Test notification callback method exists."""
+        coordinator = create_mock_coordinator()
+
+        # Method should exist and be callable
+        assert hasattr(coordinator, '_notification_callback')
+        assert callable(coordinator._notification_callback)
+
+
+# ---------------------------------------------------------------------------
+# Additional fuel tracking tests
+# ---------------------------------------------------------------------------
+
+class TestFuelTrackingAdvanced:
+    """Advanced tests for fuel tracking."""
+
+    def test_fuel_consumption_all_levels(self):
+        """Test fuel consumption calculation for all levels 1-10."""
+        coordinator = create_mock_coordinator()
+        coordinator.data["running_step"] = RUNNING_STEP_RUNNING
+
+        for level in range(1, 11):
+            coordinator.data["set_level"] = level
+            consumption = coordinator._calculate_fuel_consumption(3600)
+            expected = FUEL_CONSUMPTION_TABLE.get(level, 0.1)
+            assert abs(consumption - expected) < 0.001, f"Level {level} failed"
+
+    def test_fuel_tracking_accumulates(self):
+        """Test fuel tracking accumulates over multiple updates."""
+        coordinator = create_mock_coordinator()
+        coordinator.data["running_step"] = RUNNING_STEP_RUNNING
+        coordinator.data["set_level"] = 1
+
+        # First update
+        coordinator._update_fuel_tracking(1800)  # 30 min
+        first_total = coordinator._total_fuel_consumed
+
+        # Second update
+        coordinator._update_fuel_tracking(1800)  # 30 min
+        second_total = coordinator._total_fuel_consumed
+
+        assert second_total > first_total
+        assert abs(second_total - first_total * 2) < 0.01
+
+    def test_fuel_remaining_with_zero_capacity(self):
+        """Test fuel remaining when tank capacity is 0."""
+        coordinator = create_mock_coordinator()
+        coordinator.data["tank_capacity"] = 0
+        coordinator._fuel_consumed_since_reset = 0.0
+
+        coordinator._update_fuel_remaining()
+
+        # With 0 capacity, fuel remaining stays None or 0
+        assert coordinator.data["fuel_remaining"] is None or coordinator.data["fuel_remaining"] == 0.0
+
+    def test_fuel_remaining_exact_empty(self):
+        """Test fuel remaining when exactly empty."""
+        coordinator = create_mock_coordinator()
+        coordinator.data["tank_capacity"] = 5
+        coordinator._fuel_consumed_since_reset = 5.0
+
+        coordinator._update_fuel_remaining()
+
+        assert coordinator.data["fuel_remaining"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Additional runtime tracking tests
+# ---------------------------------------------------------------------------
+
+class TestRuntimeTrackingAdvanced:
+    """Advanced tests for runtime tracking."""
+
+    def test_runtime_tracking_accumulates(self):
+        """Test runtime tracking accumulates over multiple updates."""
+        coordinator = create_mock_coordinator()
+        coordinator.data["running_step"] = RUNNING_STEP_RUNNING
+
+        # First update
+        coordinator._update_runtime_tracking(1800)  # 30 min
+        first_total = coordinator._total_runtime_seconds
+
+        # Second update
+        coordinator._update_runtime_tracking(1800)  # 30 min
+        second_total = coordinator._total_runtime_seconds
+
+        assert second_total == first_total + 1800
+
+    def test_runtime_updates_data_dict(self):
+        """Test runtime tracking updates data dict."""
+        coordinator = create_mock_coordinator()
+        coordinator.data["running_step"] = RUNNING_STEP_RUNNING
+
+        coordinator._update_runtime_tracking(3600)  # 1 hour
+
+        # Data dict should have updated values
+        assert coordinator.data["daily_runtime_hours"] == 1.0
+        assert coordinator.data["total_runtime_hours"] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# Additional command building tests
+# ---------------------------------------------------------------------------
+
+class TestCommandBuildingAdvanced:
+    """Advanced tests for command building."""
+
+    def test_build_command_packet_with_argument(self):
+        """Test building command packet with argument."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 1  # AA55
+        coordinator._passkey = 1234
+
+        # Set level command (cmd 4) with argument 5
+        packet = coordinator._build_command_packet(4, 5)
+
+        assert len(packet) == 8
+        assert packet[0] == 0xAA
+        assert packet[1] == 0x55
+
+    def test_build_command_packet_encrypted(self):
+        """Test building command packet for encrypted protocol."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 2  # AA55 Encrypted
+        coordinator._passkey = 1234
+
+        packet = coordinator._build_command_packet(1, 0)
+
+        # Command packets start with AA55 regardless of protocol
+        assert packet[0] == 0xAA
+        assert packet[1] == 0x55
+
+    def test_build_command_packet_aa66(self):
+        """Test building AA66 command packet."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 3  # AA66
+        coordinator._passkey = 1234
+
+        packet = coordinator._build_command_packet(1, 0)
+
+        # AA66 devices use AA55 command format
+        assert len(packet) == 8
+        assert packet[0] == 0xAA
+
+    def test_build_command_packet_cbff(self):
+        """Test building CBFF command packet (uses AA55 format)."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 6  # CBFF
+        coordinator._passkey = 1234
+
+        packet = coordinator._build_command_packet(1, 0)
+
+        # CBFF uses AA55 command format
+        assert packet[0] == 0xAA
+        assert packet[1] == 0x55
+
+
+# ---------------------------------------------------------------------------
+# Additional protocol detection tests
+# ---------------------------------------------------------------------------
+
+class TestProtocolDetectionAdvanced:
+    """Advanced tests for protocol detection."""
+
+    def test_detect_protocol_aa66_unencrypted(self):
+        """Test detection of AA66 unencrypted protocol."""
+        coordinator = create_mock_coordinator()
+
+        # AA66 header, 20 bytes
+        data = bytearray([0xAA, 0x66] + [0x00] * 18)
+        header = (data[0] << 8) | data[1]
+
+        protocol, parsed_data = coordinator._detect_protocol(data, header)
+
+        assert protocol is not None
+        assert protocol.protocol_mode == 3  # AA66 unencrypted
+
+    def test_detect_protocol_short_data(self):
+        """Test protocol detection with too short data."""
+        coordinator = create_mock_coordinator()
+
+        # Only 5 bytes - too short for any protocol
+        data = bytearray([0xAA, 0x55, 0x00, 0x00, 0x00])
+        header = (data[0] << 8) | data[1]
+
+        protocol, parsed_data = coordinator._detect_protocol(data, header)
+
+        # Should not match any protocol due to length
+        assert protocol is None or parsed_data is None
+
+
+# ---------------------------------------------------------------------------
+# Data persistence format tests
+# ---------------------------------------------------------------------------
+
+class TestDataFormat:
+    """Tests for data format and rounding."""
+
+    def test_hourly_consumption_rounded(self):
+        """Test hourly consumption is rounded to 2 decimals."""
+        coordinator = create_mock_coordinator()
+        coordinator.data["running_step"] = RUNNING_STEP_RUNNING
+        coordinator.data["set_level"] = 5
+
+        coordinator._update_fuel_tracking(3600)
+
+        # Check rounding in data dict
+        daily = coordinator.data["daily_fuel_consumed"]
+        assert daily == round(daily, 2)
+
+    def test_runtime_hours_rounded(self):
+        """Test runtime hours are rounded to 2 decimals."""
+        coordinator = create_mock_coordinator()
+        coordinator.data["running_step"] = RUNNING_STEP_RUNNING
+
+        coordinator._update_runtime_tracking(3661)  # 1 hour and 1 second
+
+        hours = coordinator.data["daily_runtime_hours"]
+        assert hours == round(hours, 2)
+
+
+# ---------------------------------------------------------------------------
+# Edge case tests
+# ---------------------------------------------------------------------------
+
+class TestEdgeCases:
+    """Tests for edge cases and boundary conditions."""
+
+    def test_fuel_consumption_invalid_level(self):
+        """Test fuel consumption with invalid level (defaults)."""
+        coordinator = create_mock_coordinator()
+        coordinator.data["running_step"] = RUNNING_STEP_RUNNING
+        coordinator.data["set_level"] = 99  # Invalid
+
+        # Should use default consumption rate
+        consumption = coordinator._calculate_fuel_consumption(3600)
+        assert consumption >= 0
+
+    def test_clear_sensor_values_preserves_non_volatile(self):
+        """Test clearing sensor values preserves non-volatile data."""
+        coordinator = create_mock_coordinator()
+        coordinator.data["daily_fuel_consumed"] = 5.0
+        coordinator.data["total_fuel_consumed"] = 100.0
+        coordinator.data["cab_temperature"] = 25.0
+
+        coordinator._clear_sensor_values()
+
+        # Volatile should be cleared
+        assert coordinator.data["cab_temperature"] is None
+        # Non-volatile should remain
+        assert coordinator.data["daily_fuel_consumed"] == 5.0
+        assert coordinator.data["total_fuel_consumed"] == 100.0
+
+    def test_restore_stale_data_partial(self):
+        """Test restoring partial stale data."""
+        coordinator = create_mock_coordinator()
+        coordinator._last_valid_data = {
+            "cab_temperature": 25.0,
+            # supply_voltage not saved
+        }
+        coordinator.data["cab_temperature"] = None
+        coordinator.data["supply_voltage"] = None
+
+        coordinator._restore_stale_data()
+
+        # Should restore what we have
+        assert coordinator.data["cab_temperature"] == 25.0
+        # Should remain None
+        assert coordinator.data["supply_voltage"] is None
+
+    def test_connection_failure_first_failure(self):
+        """Test first connection failure behavior."""
+        coordinator = create_mock_coordinator()
+        coordinator._consecutive_failures = 0
+        coordinator._last_valid_data = {"cab_temperature": 20.0}
+        coordinator.data["cab_temperature"] = 20.0
+
+        coordinator._handle_connection_failure(Exception("Network error"))
+
+        # After first failure, should restore stale data
+        assert coordinator._consecutive_failures == 1
+
+    def test_save_valid_data_filters_none(self):
+        """Test that save_valid_data doesn't save None values."""
+        coordinator = create_mock_coordinator()
+        coordinator.data["cab_temperature"] = 25.0
+        coordinator.data["supply_voltage"] = None
+
+        coordinator._save_valid_data()
+
+        assert coordinator._last_valid_data.get("cab_temperature") == 25.0
+        # None values should not overwrite existing saved data
+        assert coordinator._last_valid_data.get("supply_voltage") is None
+
+
+# ---------------------------------------------------------------------------
+# Temperature offset advanced tests
+# ---------------------------------------------------------------------------
+
+class TestTemperatureOffsetAdvanced:
+    """Advanced tests for temperature offset."""
+
+    def test_offset_with_heater_offset(self):
+        """Test UI offset calculation with heater's own offset."""
+        coordinator = create_mock_coordinator()
+        coordinator.data["cab_temperature"] = 20.0
+        coordinator.data["heater_offset"] = 2  # Heater reports +2 offset
+        coordinator.config_entry.data = {"temperature_offset": 0.0}
+
+        coordinator._apply_ui_temperature_offset()
+
+        # Raw should be 20 - 2 = 18 (sensor reading before heater offset)
+        assert coordinator.data["cab_temperature_raw"] == 18.0
+
+    def test_offset_applies_correctly(self):
+        """Test temperature offset applies correctly."""
+        coordinator = create_mock_coordinator()
+        coordinator.data["cab_temperature"] = 25.0
+        coordinator.data["heater_offset"] = 0
+        coordinator.config_entry.data = {"temperature_offset": 5.0}
+
+        coordinator._apply_ui_temperature_offset()
+
+        assert coordinator.data["cab_temperature"] == 30.0
+
+    def test_offset_zero_no_change(self):
+        """Test zero offset doesn't change temperature."""
+        coordinator = create_mock_coordinator()
+        coordinator.data["cab_temperature"] = 25.0
+        coordinator.data["heater_offset"] = 0
+        coordinator.config_entry.data = {"temperature_offset": 0.0}
+
+        coordinator._apply_ui_temperature_offset()
+
+        assert coordinator.data["cab_temperature"] == 25.0
