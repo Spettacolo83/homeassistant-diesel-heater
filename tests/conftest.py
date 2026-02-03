@@ -399,3 +399,38 @@ if "homeassistant.const" not in sys.modules:
 
 # Set real string values for constants used as dict keys
 sys.modules["homeassistant.const"].ATTR_TEMPERATURE = "temperature"
+sys.modules["homeassistant.const"].CONF_ADDRESS = "address"
+
+
+# ---------------------------------------------------------------------------
+# Exception stubs
+# ---------------------------------------------------------------------------
+# HA exceptions need to be real exception classes, not MagicMocks
+
+class _ConfigEntryNotReady(Exception):
+    """Stub for homeassistant.exceptions.ConfigEntryNotReady."""
+    pass
+
+
+class _HomeAssistantError(Exception):
+    """Stub for homeassistant.exceptions.HomeAssistantError."""
+    pass
+
+
+class _ServiceValidationError(Exception):
+    """Stub for homeassistant.exceptions.ServiceValidationError."""
+    pass
+
+
+# Ensure homeassistant.exceptions module exists
+if "homeassistant.exceptions" not in sys.modules:
+    _ha_exceptions = types.ModuleType("homeassistant.exceptions")
+    _ha_exceptions.__path__ = []
+    _ha_exceptions.__loader__ = _HAStubFinder()
+    _ha_exceptions.__spec__ = None
+    _ha_exceptions.__getattr__ = lambda name: MagicMock()
+    sys.modules["homeassistant.exceptions"] = _ha_exceptions
+
+sys.modules["homeassistant.exceptions"].ConfigEntryNotReady = _ConfigEntryNotReady
+sys.modules["homeassistant.exceptions"].HomeAssistantError = _HomeAssistantError
+sys.modules["homeassistant.exceptions"].ServiceValidationError = _ServiceValidationError
