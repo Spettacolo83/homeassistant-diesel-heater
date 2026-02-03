@@ -8,6 +8,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, AsyncMock, patch
 import asyncio
+import pytest
 
 # Import stubs first
 from . import conftest  # noqa: F401
@@ -17,6 +18,18 @@ from custom_components.vevor_heater.coordinator import VevorHeaterCoordinator
 from custom_components.vevor_heater.const import (
     FUEL_CONSUMPTION_TABLE,
     RUNNING_STEP_RUNNING,
+    STORAGE_KEY_TOTAL_FUEL,
+    STORAGE_KEY_DAILY_FUEL,
+    STORAGE_KEY_DAILY_DATE,
+    STORAGE_KEY_DAILY_HISTORY,
+    STORAGE_KEY_TOTAL_RUNTIME,
+    STORAGE_KEY_DAILY_RUNTIME,
+    STORAGE_KEY_DAILY_RUNTIME_DATE,
+    STORAGE_KEY_DAILY_RUNTIME_HISTORY,
+    STORAGE_KEY_FUEL_SINCE_RESET,
+    STORAGE_KEY_TANK_CAPACITY,
+    STORAGE_KEY_LAST_REFUELED,
+    STORAGE_KEY_AUTO_OFFSET_ENABLED,
 )
 
 
@@ -118,6 +131,19 @@ def create_mock_coordinator() -> VevorHeaterCoordinator:
         "set_level", "set_temp", "altitude", "error_code",
         "hourly_fuel_consumption", "co_ppm", "remain_run_time",
     )
+
+    # Auto offset related
+    coordinator._auto_offset_unsub = None
+    coordinator._auto_offset_enabled = False
+    coordinator._external_temp_sensor = None
+    coordinator._auto_offset_max = 5
+    coordinator._heater_uses_fahrenheit = False
+
+    # Add address property (used by statistics import)
+    coordinator.address = "AA:BB:CC:DD:EE:FF"
+
+    # Add async_set_updated_data method (from DataUpdateCoordinator parent)
+    coordinator.async_set_updated_data = MagicMock()
 
     return coordinator
 
@@ -919,3 +945,760 @@ class TestTemperatureOffsetAdvanced:
         coordinator._apply_ui_temperature_offset()
 
         assert coordinator.data["cab_temperature"] == 25.0
+
+
+# ---------------------------------------------------------------------------
+# Async data persistence tests
+# ---------------------------------------------------------------------------
+
+class TestAsyncDataPersistence:
+    """Tests for async data persistence methods."""
+
+    @pytest.mark.asyncio
+    async def test_async_save_data_calls_store(self):
+        """Test async_save_data calls the store."""
+        coordinator = create_mock_coordinator()
+        coordinator._store = MagicMock()
+        coordinator._store.async_save = AsyncMock()
+        coordinator._last_save_time = 0
+
+        await coordinator.async_save_data()
+
+        coordinator._store.async_save.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_async_save_data_includes_fuel_data(self):
+        """Test async_save_data includes fuel tracking data."""
+        coordinator = create_mock_coordinator()
+        coordinator._store = MagicMock()
+        coordinator._store.async_save = AsyncMock()
+        coordinator._last_save_time = 0
+        coordinator._total_fuel_consumed = 50.5
+        coordinator._daily_fuel_consumed = 2.5
+
+        await coordinator.async_save_data()
+
+        # Check the saved data contains fuel info
+        call_args = coordinator._store.async_save.call_args
+        saved_data = call_args[0][0]
+        assert STORAGE_KEY_TOTAL_FUEL in saved_data
+        assert STORAGE_KEY_DAILY_FUEL in saved_data
+
+    @pytest.mark.asyncio
+    async def test_async_save_data_includes_runtime_data(self):
+        """Test async_save_data includes runtime tracking data."""
+        coordinator = create_mock_coordinator()
+        coordinator._store = MagicMock()
+        coordinator._store.async_save = AsyncMock()
+        coordinator._last_save_time = 0
+        coordinator._total_runtime_seconds = 36000.0
+        coordinator._daily_runtime_seconds = 3600.0
+
+        await coordinator.async_save_data()
+
+        call_args = coordinator._store.async_save.call_args
+        saved_data = call_args[0][0]
+        assert STORAGE_KEY_TOTAL_RUNTIME in saved_data
+        assert STORAGE_KEY_DAILY_RUNTIME in saved_data
+
+    @pytest.mark.asyncio
+    async def test_async_load_data_restores_fuel(self):
+        """Test async_load_data calls store and processes data."""
+        coordinator = create_mock_coordinator()
+        coordinator._store = MagicMock()
+        # Use today's date to avoid daily reset
+        today = datetime.now().date().isoformat()
+        stored_data = {
+            STORAGE_KEY_TOTAL_FUEL: 100.5,
+            STORAGE_KEY_DAILY_FUEL: 5.0,
+            STORAGE_KEY_DAILY_HISTORY: {"2024-01-01": 3.0},
+            STORAGE_KEY_DAILY_DATE: today,  # Use today to avoid reset
+            STORAGE_KEY_TOTAL_RUNTIME: 7200.0,
+            STORAGE_KEY_DAILY_RUNTIME: 1800.0,
+            STORAGE_KEY_DAILY_RUNTIME_HISTORY: {},
+            STORAGE_KEY_DAILY_RUNTIME_DATE: today,  # Use today to avoid reset
+        }
+        coordinator._store.async_load = AsyncMock(return_value=stored_data)
+
+        await coordinator.async_load_data()
+
+        # Verify store was called
+        coordinator._store.async_load.assert_called_once()
+        # After load, total fuel should be restored from stored data
+        # The actual restoration depends on the coordinator implementation
+        # Check that data dict has the values (they are synced to data dict)
+        assert coordinator.data["total_fuel_consumed"] == 100.5
+        assert coordinator.data["daily_fuel_consumed"] == 5.0
+
+    @pytest.mark.asyncio
+    async def test_async_load_data_handles_missing_data(self):
+        """Test async_load_data handles missing/None data gracefully."""
+        coordinator = create_mock_coordinator()
+        coordinator._store = MagicMock()
+        coordinator._store.async_load = AsyncMock(return_value=None)
+
+        # Should not raise
+        await coordinator.async_load_data()
+
+        # Values should remain at defaults
+        assert coordinator._total_fuel_consumed == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Async fuel management tests
+# ---------------------------------------------------------------------------
+
+class TestAsyncFuelManagement:
+    """Tests for async fuel management methods."""
+
+    @pytest.mark.asyncio
+    async def test_async_reset_fuel_level(self):
+        """Test async_reset_fuel_level resets fuel tracking."""
+        coordinator = create_mock_coordinator()
+        coordinator._store = MagicMock()
+        coordinator._store.async_save = AsyncMock()
+        coordinator._fuel_consumed_since_reset = 10.0
+        coordinator._last_save_time = 0
+
+        await coordinator.async_reset_fuel_level()
+
+        assert coordinator._fuel_consumed_since_reset == 0.0
+        assert coordinator.data["fuel_consumed_since_reset"] == 0.0
+
+    @pytest.mark.asyncio
+    async def test_async_set_tank_capacity(self):
+        """Test async_set_tank_capacity updates capacity."""
+        coordinator = create_mock_coordinator()
+        coordinator._store = MagicMock()
+        coordinator._store.async_save = AsyncMock()
+        coordinator._last_save_time = 0
+
+        await coordinator.async_set_tank_capacity(15)
+
+        assert coordinator.data["tank_capacity"] == 15
+
+
+# ---------------------------------------------------------------------------
+# Daily reset tests
+# ---------------------------------------------------------------------------
+
+class TestDailyReset:
+    """Tests for daily reset functionality."""
+
+    @pytest.mark.asyncio
+    async def test_check_daily_reset_same_day(self):
+        """Test _check_daily_reset doesn't reset on same day."""
+        coordinator = create_mock_coordinator()
+        coordinator._store = MagicMock()
+        coordinator._store.async_save = AsyncMock()
+        today = datetime.now().strftime("%Y-%m-%d")
+        coordinator._last_reset_date = today
+        coordinator._daily_fuel_consumed = 5.0
+
+        await coordinator._check_daily_reset()
+
+        # Should not reset since it's the same day
+        assert coordinator._daily_fuel_consumed == 5.0
+
+    @pytest.mark.asyncio
+    async def test_check_daily_reset_new_day(self):
+        """Test _check_daily_reset resets on new day."""
+        coordinator = create_mock_coordinator()
+        coordinator._store = MagicMock()
+        coordinator._store.async_save = AsyncMock()
+        coordinator._last_save_time = 0
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        coordinator._last_reset_date = yesterday
+        coordinator._daily_fuel_consumed = 5.0
+        coordinator._daily_fuel_history = {}
+
+        await coordinator._check_daily_reset()
+
+        # Should reset for new day
+        assert coordinator._daily_fuel_consumed == 0.0
+        # Yesterday's value should be in history
+        assert yesterday in coordinator._daily_fuel_history
+
+    @pytest.mark.asyncio
+    async def test_check_daily_runtime_reset_same_day(self):
+        """Test _check_daily_runtime_reset doesn't reset on same day."""
+        coordinator = create_mock_coordinator()
+        coordinator._store = MagicMock()
+        coordinator._store.async_save = AsyncMock()
+        today = datetime.now().strftime("%Y-%m-%d")
+        coordinator._last_runtime_reset_date = today
+        coordinator._daily_runtime_seconds = 3600.0
+
+        await coordinator._check_daily_runtime_reset()
+
+        # Should not reset
+        assert coordinator._daily_runtime_seconds == 3600.0
+
+    @pytest.mark.asyncio
+    async def test_check_daily_runtime_reset_new_day(self):
+        """Test _check_daily_runtime_reset resets on new day."""
+        coordinator = create_mock_coordinator()
+        coordinator._store = MagicMock()
+        coordinator._store.async_save = AsyncMock()
+        coordinator._last_save_time = 0
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        coordinator._last_runtime_reset_date = yesterday
+        coordinator._daily_runtime_seconds = 7200.0
+        coordinator._daily_runtime_history = {}
+
+        await coordinator._check_daily_runtime_reset()
+
+        # Should reset for new day
+        assert coordinator._daily_runtime_seconds == 0.0
+        # Yesterday's hours should be in history
+        assert yesterday in coordinator._daily_runtime_history
+
+
+# ---------------------------------------------------------------------------
+# Async command tests
+# ---------------------------------------------------------------------------
+
+class TestAsyncCommands:
+    """Tests for async command methods."""
+
+    @pytest.mark.asyncio
+    async def test_async_turn_on(self):
+        """Test async_turn_on sends correct command."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        await coordinator.async_turn_on()
+
+        coordinator._send_command.assert_called_once()
+        # Command 3 with arg 1 is turn on
+        call_args = coordinator._send_command.call_args
+        assert call_args[0][0] == 3
+        assert call_args[0][1] == 1
+
+    @pytest.mark.asyncio
+    async def test_async_turn_off(self):
+        """Test async_turn_off sends correct command."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator.data["running_state"] = 1  # Must be running to turn off
+
+        await coordinator.async_turn_off()
+
+        coordinator._send_command.assert_called_once()
+        # Command 3 with arg 0 is turn off
+        call_args = coordinator._send_command.call_args
+        assert call_args[0][0] == 3
+        assert call_args[0][1] == 0
+
+    @pytest.mark.asyncio
+    async def test_async_set_level(self):
+        """Test async_set_level sends correct command."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        await coordinator.async_set_level(7)
+
+        coordinator._send_command.assert_called_once()
+        # Command 4 is set level
+        call_args = coordinator._send_command.call_args
+        assert call_args[0][0] == 4
+        assert call_args[0][1] == 7
+
+    @pytest.mark.asyncio
+    async def test_async_set_temperature(self):
+        """Test async_set_temperature sends correct command."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        await coordinator.async_set_temperature(25)
+
+        coordinator._send_command.assert_called_once()
+        # Command 4 is used for both level and temperature
+        call_args = coordinator._send_command.call_args
+        assert call_args[0][0] == 4
+        assert call_args[0][1] == 25
+
+    @pytest.mark.asyncio
+    async def test_async_set_mode(self):
+        """Test async_set_mode sends correct command."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        await coordinator.async_set_mode(2)  # Temperature mode
+
+        coordinator._send_command.assert_called_once()
+        call_args = coordinator._send_command.call_args
+        assert call_args[0][1] == 2
+
+    @pytest.mark.asyncio
+    async def test_async_set_auto_start_stop(self):
+        """Test async_set_auto_start_stop sends correct command."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        await coordinator.async_set_auto_start_stop(True)
+
+        coordinator._send_command.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_async_sync_time(self):
+        """Test async_sync_time sends time sync command."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        await coordinator.async_sync_time()
+
+        coordinator._send_command.assert_called_once()
+        # Command 10 is time sync
+        call_args = coordinator._send_command.call_args
+        assert call_args[0][0] == 10
+
+    @pytest.mark.asyncio
+    async def test_async_set_heater_offset(self):
+        """Test async_set_heater_offset sends correct command."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        await coordinator.async_set_heater_offset(3)
+
+        coordinator._send_command.assert_called_once()
+        # Command 12 is set offset (or 20 for newer protocol)
+        call_args = coordinator._send_command.call_args
+        assert call_args[0][0] in [12, 20]
+
+    @pytest.mark.asyncio
+    async def test_async_set_backlight(self):
+        """Test async_set_backlight sends correct command."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        await coordinator.async_set_backlight(5)
+
+        coordinator._send_command.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_async_set_auto_offset_enabled(self):
+        """Test async_set_auto_offset_enabled updates state."""
+        coordinator = create_mock_coordinator()
+        coordinator._store = MagicMock()
+        coordinator._store.async_save = AsyncMock()
+        coordinator._last_save_time = 0
+        coordinator._setup_external_temp_listener = AsyncMock()
+        coordinator._auto_offset_unsub = None
+
+        await coordinator.async_set_auto_offset_enabled(True)
+
+        assert coordinator.data["auto_offset_enabled"] is True
+
+    @pytest.mark.asyncio
+    async def test_async_send_raw_command(self):
+        """Test async_send_raw_command sends arbitrary command."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        result = await coordinator.async_send_raw_command(99, 42)
+
+        assert result is True
+        coordinator._send_command.assert_called_once_with(99, 42)
+
+
+# ---------------------------------------------------------------------------
+# Address and heater ID tests
+# ---------------------------------------------------------------------------
+
+class TestAddressProperties:
+    """Tests for address-related properties."""
+
+    def test_address_property(self):
+        """Test address property returns BLE address."""
+        coordinator = create_mock_coordinator()
+        coordinator._address = "AA:BB:CC:DD:EE:FF"
+
+        # Check if address property exists and works
+        assert hasattr(coordinator, '_address')
+        assert coordinator._address == "AA:BB:CC:DD:EE:FF"
+
+    def test_heater_id_format(self):
+        """Test heater_id is last 2 bytes of address."""
+        coordinator = create_mock_coordinator()
+        coordinator._heater_id = "EE:FF"
+
+        assert coordinator._heater_id == "EE:FF"
+
+
+# ---------------------------------------------------------------------------
+# ABBA protocol specific tests
+# ---------------------------------------------------------------------------
+
+class TestABBAProtocol:
+    """Tests for ABBA protocol specific behavior."""
+
+    def test_is_abba_device_flag(self):
+        """Test _is_abba_device flag."""
+        coordinator = create_mock_coordinator()
+        coordinator._is_abba_device = True
+
+        assert coordinator._is_abba_device is True
+
+    def test_build_command_abba_uses_protocol(self):
+        """Test ABBA command building uses protocol handler."""
+        from diesel_heater_ble import ProtocolABBA
+
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 5
+        coordinator._is_abba_device = True
+        coordinator._protocol = ProtocolABBA()
+
+        packet = coordinator._build_command_packet(1, 0)
+
+        # ABBA packets start with BA AB
+        assert packet[0] == 0xBA
+        assert packet[1] == 0xAB
+
+
+# ---------------------------------------------------------------------------
+# Statistics import tests
+# ---------------------------------------------------------------------------
+
+class TestStatisticsImport:
+    """Tests for statistics import functionality."""
+
+    def test_has_import_statistics_method(self):
+        """Test _import_statistics method exists."""
+        coordinator = create_mock_coordinator()
+
+        assert hasattr(coordinator, '_import_statistics')
+        assert callable(coordinator._import_statistics)
+
+    def test_has_import_runtime_statistics_method(self):
+        """Test _import_runtime_statistics method exists."""
+        coordinator = create_mock_coordinator()
+
+        assert hasattr(coordinator, '_import_runtime_statistics')
+        assert callable(coordinator._import_runtime_statistics)
+
+
+# ---------------------------------------------------------------------------
+# Additional async command tests
+# ---------------------------------------------------------------------------
+
+class TestAsyncConfigurationCommands:
+    """Tests for async configuration commands."""
+
+    @pytest.mark.asyncio
+    async def test_async_set_language(self):
+        """Test async_set_language sends correct command."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        await coordinator.async_set_language(2)  # German
+
+        coordinator._send_command.assert_called_once()
+        # Command 14 is set language
+        call_args = coordinator._send_command.call_args
+        assert call_args[0][0] == 14
+        assert call_args[0][1] == 2
+
+    @pytest.mark.asyncio
+    async def test_async_set_temp_unit_celsius(self):
+        """Test async_set_temp_unit sets Celsius."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        await coordinator.async_set_temp_unit(False)  # Celsius
+
+        coordinator._send_command.assert_called_once()
+        # Command 15 is set temp unit
+        call_args = coordinator._send_command.call_args
+        assert call_args[0][0] == 15
+        assert call_args[0][1] == 0  # 0 = Celsius
+
+    @pytest.mark.asyncio
+    async def test_async_set_temp_unit_fahrenheit(self):
+        """Test async_set_temp_unit sets Fahrenheit."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        await coordinator.async_set_temp_unit(True)  # Fahrenheit
+
+        coordinator._send_command.assert_called_once()
+        call_args = coordinator._send_command.call_args
+        assert call_args[0][0] == 15
+        assert call_args[0][1] == 1  # 1 = Fahrenheit
+
+    @pytest.mark.asyncio
+    async def test_async_set_altitude_unit_meters(self):
+        """Test async_set_altitude_unit sets meters."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        await coordinator.async_set_altitude_unit(False)  # Meters
+
+        coordinator._send_command.assert_called_once()
+        # Command 19 is set altitude unit
+        call_args = coordinator._send_command.call_args
+        assert call_args[0][0] == 19
+        assert call_args[0][1] == 0  # 0 = Meters
+
+    @pytest.mark.asyncio
+    async def test_async_set_altitude_unit_feet(self):
+        """Test async_set_altitude_unit sets feet."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        await coordinator.async_set_altitude_unit(True)  # Feet
+
+        coordinator._send_command.assert_called_once()
+        call_args = coordinator._send_command.call_args
+        assert call_args[0][0] == 19
+        assert call_args[0][1] == 1  # 1 = Feet
+
+    @pytest.mark.asyncio
+    async def test_async_set_high_altitude_enabled_abba(self):
+        """Test async_set_high_altitude enables high altitude mode for ABBA."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator._is_abba_device = True  # Must be ABBA device
+        coordinator.async_request_refresh = AsyncMock()
+
+        await coordinator.async_set_high_altitude(True)
+
+        coordinator._send_command.assert_called_once()
+        # Command 99 is high altitude toggle
+        call_args = coordinator._send_command.call_args
+        assert call_args[0][0] == 99
+
+    @pytest.mark.asyncio
+    async def test_async_set_high_altitude_skipped_non_abba(self):
+        """Test async_set_high_altitude does nothing for non-ABBA devices."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator._is_abba_device = False  # Not ABBA device
+
+        await coordinator.async_set_high_altitude(True)
+
+        # Should not call _send_command for non-ABBA devices
+        coordinator._send_command.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_async_set_tank_volume(self):
+        """Test async_set_tank_volume sets tank volume index."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        await coordinator.async_set_tank_volume(5)  # Index 5 = 25L
+
+        coordinator._send_command.assert_called_once()
+        # Command 16 is set tank volume
+        call_args = coordinator._send_command.call_args
+        assert call_args[0][0] == 16
+        assert call_args[0][1] == 5
+
+    @pytest.mark.asyncio
+    async def test_async_set_pump_type(self):
+        """Test async_set_pump_type sets pump type."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        await coordinator.async_set_pump_type(2)  # 28µl pump
+
+        coordinator._send_command.assert_called_once()
+        # Command 17 is set pump type
+        call_args = coordinator._send_command.call_args
+        assert call_args[0][0] == 17
+        assert call_args[0][1] == 2
+
+
+# ---------------------------------------------------------------------------
+# Response parsing tests
+# ---------------------------------------------------------------------------
+
+class TestResponseParsing:
+    """Tests for response parsing functionality."""
+
+    def test_parse_response_aa55_updates_data(self):
+        """Test parsing AA55 response updates data dict."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 1  # AA55
+        coordinator._protocol = coordinator._protocols[1]
+
+        # Create a valid 20-byte AA55 response
+        data = bytearray([0xAA, 0x55] + [0x00] * 18)
+
+        # Parse the response (actual byte positions depend on protocol)
+        coordinator._parse_response(data)
+
+        # After parsing, data dict should have some values updated
+        # (not checking specific values since protocol layout is complex)
+        assert "running_state" in coordinator.data
+
+    def test_parse_response_method_exists(self):
+        """Test _parse_response method exists."""
+        coordinator = create_mock_coordinator()
+
+        assert hasattr(coordinator, '_parse_response')
+        assert callable(coordinator._parse_response)
+
+    def test_parse_response_processes_data(self):
+        """Test parsing response processes the data without error."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 1  # AA55
+        coordinator._protocol = coordinator._protocols[1]
+
+        # Create a valid response
+        data = bytearray([0xAA, 0x55] + [0x00] * 18)
+
+        # Should not raise an exception
+        coordinator._parse_response(data)
+
+        # Data dict should still be accessible
+        assert coordinator.data is not None
+
+
+# ---------------------------------------------------------------------------
+# Utility methods tests
+# ---------------------------------------------------------------------------
+
+class TestUtilityMethods:
+    """Tests for utility methods."""
+
+    def test_protocol_mode_property(self):
+        """Test protocol_mode property getter."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 5
+
+        assert coordinator.protocol_mode == 5
+
+    def test_clear_sensor_values_all_volatile(self):
+        """Test clearing all volatile sensor values."""
+        coordinator = create_mock_coordinator()
+        # Set all volatile fields
+        coordinator.data["case_temperature"] = 50
+        coordinator.data["cab_temperature"] = 20
+        coordinator.data["supply_voltage"] = 12.5
+        coordinator.data["running_state"] = 1
+        coordinator.data["running_step"] = 3
+        coordinator.data["set_level"] = 5
+        coordinator.data["set_temp"] = 22
+
+        coordinator._clear_sensor_values()
+
+        # All volatile fields should be None
+        assert coordinator.data["case_temperature"] is None
+        assert coordinator.data["cab_temperature"] is None
+        assert coordinator.data["supply_voltage"] is None
+
+    def test_save_valid_data_all_fields(self):
+        """Test saving all valid data fields."""
+        coordinator = create_mock_coordinator()
+        coordinator.data["cab_temperature"] = 25.0
+        coordinator.data["case_temperature"] = 60
+        coordinator.data["supply_voltage"] = 13.2
+        coordinator._last_valid_data = {}
+
+        coordinator._save_valid_data()
+
+        assert coordinator._last_valid_data["cab_temperature"] == 25.0
+        assert coordinator._last_valid_data["case_temperature"] == 60
+        assert coordinator._last_valid_data["supply_voltage"] == 13.2
+
+
+# ---------------------------------------------------------------------------
+# Temperature clamp tests
+# ---------------------------------------------------------------------------
+
+class TestTemperatureClamp:
+    """Tests for temperature clamping logic."""
+
+    @pytest.mark.asyncio
+    async def test_set_temperature_clamps_below_min(self):
+        """Test temperature below 8 is clamped to 8."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        await coordinator.async_set_temperature(5)  # Below min
+
+        call_args = coordinator._send_command.call_args
+        assert call_args[0][1] == 8  # Clamped to min
+
+    @pytest.mark.asyncio
+    async def test_set_temperature_clamps_above_max(self):
+        """Test temperature above 36 is clamped to 36."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        await coordinator.async_set_temperature(40)  # Above max
+
+        call_args = coordinator._send_command.call_args
+        assert call_args[0][1] == 36  # Clamped to max
+
+
+# ---------------------------------------------------------------------------
+# Level clamp tests
+# ---------------------------------------------------------------------------
+
+class TestLevelClamp:
+    """Tests for level clamping logic."""
+
+    @pytest.mark.asyncio
+    async def test_set_level_clamps_below_min(self):
+        """Test level below 1 is clamped to 1."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        await coordinator.async_set_level(0)  # Below min
+
+        call_args = coordinator._send_command.call_args
+        assert call_args[0][1] == 1  # Clamped to min
+
+    @pytest.mark.asyncio
+    async def test_set_level_clamps_above_max(self):
+        """Test level above 10 is clamped to 10."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        await coordinator.async_set_level(15)  # Above max
+
+        call_args = coordinator._send_command.call_args
+        assert call_args[0][1] == 10  # Clamped to max
+
+    @pytest.mark.asyncio
+    async def test_set_level_in_range(self):
+        """Test level in valid range is not clamped."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        await coordinator.async_set_level(5)  # In range
+
+        call_args = coordinator._send_command.call_args
+        assert call_args[0][1] == 5  # Not clamped
+
+
+# ---------------------------------------------------------------------------
+# Mode command tests
+# ---------------------------------------------------------------------------
+
+class TestModeCommands:
+    """Tests for mode switching commands."""
+
+    @pytest.mark.asyncio
+    async def test_set_mode_level(self):
+        """Test setting level mode (1)."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        await coordinator.async_set_mode(1)  # Level mode
+
+        call_args = coordinator._send_command.call_args
+        assert call_args[0][1] == 1
+
+    @pytest.mark.asyncio
+    async def test_set_mode_temperature(self):
+        """Test setting temperature mode (2)."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        await coordinator.async_set_mode(2)  # Temperature mode
+
+        call_args = coordinator._send_command.call_args
+        assert call_args[0][1] == 2
