@@ -192,3 +192,170 @@ sys.modules["homeassistant.data_entry_flow"].AbortFlow = _AbortFlow
 sys.modules["homeassistant.data_entry_flow"].FlowResult = dict
 
 sys.modules["homeassistant.const"].CONF_ADDRESS = "address"
+
+
+# ---------------------------------------------------------------------------
+# Coordinator stubs
+# ---------------------------------------------------------------------------
+
+class _StubDataUpdateCoordinator:
+    """Stub for homeassistant.helpers.update_coordinator.DataUpdateCoordinator."""
+
+    def __init__(self, *args, **kwargs):
+        self.hass = kwargs.get("hass")
+        self.name = kwargs.get("name", "test")
+        self.data = {}
+        self._listeners = {}
+
+    async def async_config_entry_first_refresh(self):
+        pass
+
+    async def async_refresh(self):
+        pass
+
+    async def async_request_refresh(self):
+        pass
+
+    def async_add_listener(self, callback):
+        pass
+
+
+class _StubUpdateFailed(Exception):
+    """Stub for homeassistant.helpers.update_coordinator.UpdateFailed."""
+    pass
+
+
+# Inject coordinator stubs
+import homeassistant.helpers.update_coordinator  # noqa: E402
+
+sys.modules["homeassistant.helpers.update_coordinator"].DataUpdateCoordinator = _StubDataUpdateCoordinator
+sys.modules["homeassistant.helpers.update_coordinator"].UpdateFailed = _StubUpdateFailed
+
+
+# ---------------------------------------------------------------------------
+# Entity stubs
+# ---------------------------------------------------------------------------
+
+class _StubEntity:
+    """Stub for homeassistant.helpers.entity.Entity."""
+    _attr_has_entity_name = False
+    _attr_unique_id = None
+    _attr_name = None
+    _attr_device_info = None
+    _attr_available = True
+
+    @property
+    def available(self):
+        return getattr(self, "_attr_available", True)
+
+    @property
+    def unique_id(self):
+        return getattr(self, "_attr_unique_id", None)
+
+
+class _StubCoordinatorEntity(_StubEntity):
+    """Stub for homeassistant.helpers.update_coordinator.CoordinatorEntity."""
+
+    def __init__(self, coordinator, context=None):
+        self.coordinator = coordinator
+
+    def __class_getitem__(cls, item):
+        """Support CoordinatorEntity[T] syntax."""
+        return cls
+
+    @property
+    def available(self):
+        # Default: available if connected
+        if hasattr(self, "coordinator") and self.coordinator:
+            return self.coordinator.data.get("connected", True)
+        return True
+
+
+class _StubSensorEntity(_StubEntity):
+    """Stub for homeassistant.components.sensor.SensorEntity."""
+    _attr_native_value = None
+    _attr_native_unit_of_measurement = None
+    _attr_device_class = None
+    _attr_state_class = None
+
+    @property
+    def native_value(self):
+        return getattr(self, "_attr_native_value", None)
+
+    @property
+    def device_class(self):
+        return getattr(self, "_attr_device_class", None)
+
+
+class _StubBinarySensorEntity(_StubEntity):
+    """Stub for homeassistant.components.binary_sensor.BinarySensorEntity."""
+    _attr_is_on = None
+
+    @property
+    def is_on(self):
+        return getattr(self, "_attr_is_on", None)
+
+
+class _StubClimateEntity(_StubEntity):
+    """Stub for homeassistant.components.climate.ClimateEntity."""
+    _attr_hvac_mode = None
+    _attr_hvac_modes = []
+    _attr_current_temperature = None
+    _attr_target_temperature = None
+
+
+class _StubFanEntity(_StubEntity):
+    """Stub for homeassistant.components.fan.FanEntity."""
+    _attr_is_on = None
+    _attr_percentage = None
+
+
+class _StubSwitchEntity(_StubEntity):
+    """Stub for homeassistant.components.switch.SwitchEntity."""
+    _attr_is_on = None
+
+    @property
+    def is_on(self):
+        return getattr(self, "_attr_is_on", None)
+
+
+class _StubSelectEntity(_StubEntity):
+    """Stub for homeassistant.components.select.SelectEntity."""
+    _attr_current_option = None
+    _attr_options = []
+
+
+class _StubNumberEntity(_StubEntity):
+    """Stub for homeassistant.components.number.NumberEntity."""
+    _attr_native_value = None
+    _attr_native_min_value = 0
+    _attr_native_max_value = 100
+
+
+class _StubButtonEntity(_StubEntity):
+    """Stub for homeassistant.components.button.ButtonEntity."""
+    pass
+
+
+# Inject entity stubs - import modules first to create them via our finder
+import homeassistant.helpers.entity  # noqa: E402
+import homeassistant.components.sensor  # noqa: E402
+import homeassistant.components.binary_sensor  # noqa: E402
+import homeassistant.components.climate  # noqa: E402
+import homeassistant.components.fan  # noqa: E402
+import homeassistant.components.switch  # noqa: E402
+import homeassistant.components.select  # noqa: E402
+import homeassistant.components.number  # noqa: E402
+import homeassistant.components.button  # noqa: E402
+
+sys.modules["homeassistant.helpers.update_coordinator"].CoordinatorEntity = _StubCoordinatorEntity
+sys.modules["homeassistant.helpers.entity"].Entity = _StubEntity
+
+sys.modules["homeassistant.components.sensor"].SensorEntity = _StubSensorEntity
+sys.modules["homeassistant.components.binary_sensor"].BinarySensorEntity = _StubBinarySensorEntity
+sys.modules["homeassistant.components.climate"].ClimateEntity = _StubClimateEntity
+sys.modules["homeassistant.components.fan"].FanEntity = _StubFanEntity
+sys.modules["homeassistant.components.switch"].SwitchEntity = _StubSwitchEntity
+sys.modules["homeassistant.components.select"].SelectEntity = _StubSelectEntity
+sys.modules["homeassistant.components.number"].NumberEntity = _StubNumberEntity
+sys.modules["homeassistant.components.button"].ButtonEntity = _StubButtonEntity
