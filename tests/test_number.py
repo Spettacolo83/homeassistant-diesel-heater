@@ -413,3 +413,51 @@ class TestNumberEntityAttributes:
 
         # EntityCategory.CONFIG is mocked, just check it's set
         assert number._attr_entity_category is not None
+
+
+# ---------------------------------------------------------------------------
+# _handle_coordinator_update tests
+# ---------------------------------------------------------------------------
+
+class TestHandleCoordinatorUpdate:
+    """Tests for _handle_coordinator_update on all number entities."""
+
+    def test_level_handle_coordinator_update(self):
+        """Test LevelNumber _handle_coordinator_update calls async_write_ha_state."""
+        coordinator = create_mock_coordinator()
+        number = VevorHeaterLevelNumber(coordinator)
+        number.async_write_ha_state = MagicMock()
+
+        number._handle_coordinator_update()
+
+        number.async_write_ha_state.assert_called_once()
+
+    def test_temperature_handle_coordinator_update(self):
+        """Test TemperatureNumber _handle_coordinator_update calls async_write_ha_state."""
+        coordinator = create_mock_coordinator()
+        number = VevorHeaterTemperatureNumber(coordinator)
+        number.async_write_ha_state = MagicMock()
+
+        number._handle_coordinator_update()
+
+        number.async_write_ha_state.assert_called_once()
+
+    def test_offset_handle_coordinator_update(self):
+        """Test OffsetNumber _handle_coordinator_update calls async_write_ha_state."""
+        coordinator = create_mock_coordinator()
+        number = VevorHeaterOffsetNumber(coordinator)
+        number.async_write_ha_state = MagicMock()
+
+        number._handle_coordinator_update()
+
+        number.async_write_ha_state.assert_called_once()
+
+    def test_tank_capacity_handle_coordinator_update(self):
+        """Test TankCapacityNumber _handle_coordinator_update calls async_write_ha_state."""
+        coordinator = create_mock_coordinator()
+        number = VevorTankCapacityNumber(coordinator)
+        number.async_write_ha_state = MagicMock()
+
+        number._handle_coordinator_update()
+
+        number.async_write_ha_state.assert_called_once()
