@@ -241,6 +241,26 @@ class TestUserStep:
         # Only device was filtered → falls through to manual
         assert result["step_id"] == "manual"
 
+    async def test_skips_already_discovered_devices(self):
+        """Test that devices already discovered in this flow are skipped."""
+        flow = VevorHeaterConfigFlow()
+        # Pre-populate _discovered_devices with a mock discovery info
+        existing_discovery = _make_ble_discovery(service_uuids=[SERVICE_UUID])
+        flow._discovered_devices = {MOCK_ADDRESS: existing_discovery}
+        # Create a new discovery with the same address
+        new_discovery = _make_ble_discovery(service_uuids=[SERVICE_UUID])
+
+        with patch(
+            "custom_components.vevor_heater.config_flow.bluetooth"
+        ) as mock_bt:
+            mock_bt.async_discovered_service_info.return_value = [new_discovery]
+            result = await flow.async_step_user()
+
+        # Device was already discovered → shows form with existing device
+        assert result["step_id"] == "user"
+        # The device should still be in _discovered_devices (not added again)
+        assert len(flow._discovered_devices) == 1
+
     async def test_select_device_creates_entry(self):
         flow = VevorHeaterConfigFlow()
 
