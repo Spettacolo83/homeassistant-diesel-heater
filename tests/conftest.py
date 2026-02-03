@@ -381,3 +381,21 @@ if "homeassistant.core" not in sys.modules:
     _ha_core.__getattr__ = lambda name: MagicMock()
     sys.modules["homeassistant.core"] = _ha_core
 sys.modules["homeassistant.core"].callback = _stub_callback
+
+
+# ---------------------------------------------------------------------------
+# Real HA constants (not MagicMocks)
+# ---------------------------------------------------------------------------
+# Some constants need to be real values for tests to work properly.
+
+# Ensure homeassistant.const module exists
+if "homeassistant.const" not in sys.modules:
+    _ha_const = types.ModuleType("homeassistant.const")
+    _ha_const.__path__ = []
+    _ha_const.__loader__ = _HAStubFinder()
+    _ha_const.__spec__ = None
+    _ha_const.__getattr__ = lambda name: MagicMock()
+    sys.modules["homeassistant.const"] = _ha_const
+
+# Set real string values for constants used as dict keys
+sys.modules["homeassistant.const"].ATTR_TEMPERATURE = "temperature"

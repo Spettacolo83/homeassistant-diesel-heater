@@ -785,6 +785,88 @@ class TestClimateAsyncSetTemperatureFull:
 
         assert climate._current_preset is None
 
+    @pytest.mark.asyncio
+    async def test_async_set_temperature_with_real_key(self):
+        """Test async_set_temperature with real temperature key."""
+        coordinator = create_mock_coordinator()
+        config_entry = create_mock_config_entry()
+        climate = VevorHeaterClimate(coordinator, config_entry)
+
+        # Use actual string key "temperature" (what ATTR_TEMPERATURE should be)
+        await climate.async_set_temperature(temperature=25)
+
+        coordinator.async_set_temperature.assert_called_once_with(25)
+
+    @pytest.mark.asyncio
+    async def test_async_set_temperature_clears_preset_flag(self):
+        """Test async_set_temperature clears _user_cleared_preset flag."""
+        coordinator = create_mock_coordinator()
+        config_entry = create_mock_config_entry()
+        climate = VevorHeaterClimate(coordinator, config_entry)
+        climate._user_cleared_preset = True
+
+        await climate.async_set_temperature(temperature=20)
+
+        assert climate._user_cleared_preset is False
+
+    @pytest.mark.asyncio
+    async def test_async_set_temperature_auto_selects_away_preset(self):
+        """Test async_set_temperature auto-selects PRESET_AWAY if temp matches."""
+        from custom_components.vevor_heater.climate import PRESET_AWAY
+
+        coordinator = create_mock_coordinator()
+        config_entry = create_mock_config_entry()
+        config_entry.data["preset_away_temp"] = 15
+        climate = VevorHeaterClimate(coordinator, config_entry)
+
+        await climate.async_set_temperature(temperature=15)
+
+        coordinator.async_set_temperature.assert_called_once_with(15)
+        assert climate._current_preset == PRESET_AWAY
+
+    @pytest.mark.asyncio
+    async def test_async_set_temperature_auto_selects_comfort_preset(self):
+        """Test async_set_temperature auto-selects PRESET_COMFORT if temp matches."""
+        from custom_components.vevor_heater.climate import PRESET_COMFORT
+
+        coordinator = create_mock_coordinator()
+        config_entry = create_mock_config_entry()
+        config_entry.data["preset_comfort_temp"] = 22
+        climate = VevorHeaterClimate(coordinator, config_entry)
+
+        await climate.async_set_temperature(temperature=22)
+
+        coordinator.async_set_temperature.assert_called_once_with(22)
+        assert climate._current_preset == PRESET_COMFORT
+
+    @pytest.mark.asyncio
+    async def test_async_set_temperature_sets_preset_none_for_other_temps(self):
+        """Test async_set_temperature sets preset to None for non-matching temps."""
+        coordinator = create_mock_coordinator()
+        config_entry = create_mock_config_entry()
+        config_entry.data["preset_away_temp"] = 10
+        config_entry.data["preset_comfort_temp"] = 23
+        climate = VevorHeaterClimate(coordinator, config_entry)
+        climate._current_preset = "something"  # Set previous value
+
+        # Temperature doesn't match away (10) or comfort (23)
+        await climate.async_set_temperature(temperature=18)
+
+        coordinator.async_set_temperature.assert_called_once_with(18)
+        assert climate._current_preset is None
+
+    @pytest.mark.asyncio
+    async def test_async_set_temperature_converts_to_int(self):
+        """Test async_set_temperature converts float to int."""
+        coordinator = create_mock_coordinator()
+        config_entry = create_mock_config_entry()
+        climate = VevorHeaterClimate(coordinator, config_entry)
+
+        await climate.async_set_temperature(temperature=22.7)
+
+        # Should be converted to int (22)
+        coordinator.async_set_temperature.assert_called_once_with(22)
+
 
 # ---------------------------------------------------------------------------
 # Full async_set_hvac_mode tests
