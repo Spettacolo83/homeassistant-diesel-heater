@@ -68,6 +68,45 @@ PLATFORMS: list[Platform] = [
 ]
 
 
+def _safe_update_unique_id(
+    registry: er.EntityRegistry,
+    entity_id: str,
+    old_uid: str,
+    new_uid: str,
+) -> bool:
+    """Safely update entity unique_id, removing duplicates if necessary.
+
+    Returns True if the entity was updated or removed, False if skipped.
+    """
+    # Check if target unique_id is already used by another entity
+    for existing in registry.entities.values():
+        if existing.unique_id == new_uid and existing.entity_id != entity_id:
+            # Target unique_id already exists — remove the corrupted entity
+            _LOGGER.info(
+                "Removing duplicate entity %s (unique_id %s conflicts with %s)",
+                entity_id,
+                old_uid,
+                existing.entity_id,
+            )
+            registry.async_remove(entity_id)
+            return True
+
+    # Safe to update
+    try:
+        registry.async_update_entity(entity_id, new_unique_id=new_uid)
+        return True
+    except ValueError as err:
+        # Shouldn't happen after our check, but handle gracefully
+        _LOGGER.warning(
+            "Failed to migrate %s unique_id %s -> %s: %s",
+            entity_id,
+            old_uid,
+            new_uid,
+            err,
+        )
+        return False
+
+
 def _migrate_entity_unique_ids(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -75,7 +114,14 @@ def _migrate_entity_unique_ids(
     """Migrate entity unique_ids from older versions to preserve history."""
     registry = er.async_get(hass)
 
-    for entity in er.async_entries_for_config_entry(registry, entry.entry_id):
+    # Build list first to avoid modifying during iteration
+    entities = list(er.async_entries_for_config_entry(registry, entry.entry_id))
+
+    for entity in entities:
+        # Skip if entity was already removed
+        if entity.entity_id not in registry.entities:
+            continue
+
         uid = entity.unique_id
 
         # Fix corrupted unique_ids from the beta.19-beta.21 migration bug
@@ -94,12 +140,16 @@ def _migrate_entity_unique_ids(
                         uid,
                         fixed_uid,
                     )
-                    registry.async_update_entity(
-                        entity.entity_id, new_unique_id=fixed_uid
-                    )
-                    uid = fixed_uid
+                    if _safe_update_unique_id(registry, entity.entity_id, uid, fixed_uid):
+                        uid = fixed_uid
+                    else:
+                        break
                 else:
                     break
+
+        # Skip if entity was removed during corruption fix
+        if entity.entity_id not in registry.entities:
+            continue
 
         # Migrate renamed unique_ids (same platform)
         # Guard: skip if already migrated (new_suffix is a substring of old_suffix)
@@ -112,10 +162,12 @@ def _migrate_entity_unique_ids(
                     uid,
                     new_unique_id,
                 )
-                registry.async_update_entity(
-                    entity.entity_id, new_unique_id=new_unique_id
-                )
+                _safe_update_unique_id(registry, entity.entity_id, uid, new_unique_id)
                 break
+
+        # Skip if entity was removed during migration
+        if entity.entity_id not in registry.entities:
+            continue
 
         # Remove entities that were replaced by a different platform entity
         for suffix in _UNIQUE_IDS_TO_REMOVE:
