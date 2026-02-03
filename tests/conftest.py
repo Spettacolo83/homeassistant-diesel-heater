@@ -434,3 +434,25 @@ if "homeassistant.exceptions" not in sys.modules:
 sys.modules["homeassistant.exceptions"].ConfigEntryNotReady = _ConfigEntryNotReady
 sys.modules["homeassistant.exceptions"].HomeAssistantError = _HomeAssistantError
 sys.modules["homeassistant.exceptions"].ServiceValidationError = _ServiceValidationError
+
+
+# ---------------------------------------------------------------------------
+# Bleak stubs
+# ---------------------------------------------------------------------------
+# bleak.exc.BleakError needs to be a real exception class, not a MagicMock
+
+class _BleakError(Exception):
+    """Stub for bleak.exc.BleakError."""
+    pass
+
+
+# Ensure bleak.exc module exists
+if "bleak.exc" not in sys.modules:
+    _bleak_exc = types.ModuleType("bleak.exc")
+    _bleak_exc.__path__ = []
+    _bleak_exc.__loader__ = _HAStubFinder()
+    _bleak_exc.__spec__ = None
+    _bleak_exc.__getattr__ = lambda name: MagicMock()
+    sys.modules["bleak.exc"] = _bleak_exc
+
+sys.modules["bleak.exc"].BleakError = _BleakError
