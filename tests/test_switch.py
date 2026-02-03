@@ -14,6 +14,7 @@ from custom_components.vevor_heater.switch import (
     VevorTempUnitSwitch,
     VevorAltitudeUnitSwitch,
     VevorHighAltitudeSwitch,
+    async_setup_entry,
 )
 
 
@@ -707,3 +708,210 @@ class TestSwitchEntityAttributes:
         for switch in switches:
             assert switch._attr_icon is not None
             assert switch._attr_icon.startswith("mdi:")
+
+
+# ---------------------------------------------------------------------------
+# async_setup_entry tests
+# ---------------------------------------------------------------------------
+
+class TestAsyncSetupEntry:
+    """Tests for async_setup_entry with different protocol modes."""
+
+    @pytest.mark.asyncio
+    async def test_setup_entry_protocol_mode_0_creates_all_entities(self):
+        """Test protocol mode 0 (unknown) creates all entities as fallback."""
+        coordinator = create_mock_coordinator()
+        coordinator.protocol_mode = 0
+
+        entry = MagicMock()
+        entry.runtime_data = coordinator
+        async_add_entities = MagicMock()
+        hass = MagicMock()
+
+        await async_setup_entry(hass, entry, async_add_entities)
+
+        async_add_entities.assert_called_once()
+        entities = async_add_entities.call_args[0][0]
+        # Mode 0: power + auto_offset + auto_start_stop + temp_unit + altitude_unit + high_altitude = 6
+        assert len(entities) == 6
+
+    @pytest.mark.asyncio
+    async def test_setup_entry_protocol_mode_1_creates_core_only(self):
+        """Test protocol mode 1 (AA55) creates only core switches."""
+        coordinator = create_mock_coordinator()
+        coordinator.protocol_mode = 1
+
+        entry = MagicMock()
+        entry.runtime_data = coordinator
+        async_add_entities = MagicMock()
+        hass = MagicMock()
+
+        await async_setup_entry(hass, entry, async_add_entities)
+
+        async_add_entities.assert_called_once()
+        entities = async_add_entities.call_args[0][0]
+        # Mode 1: only power + auto_offset = 2
+        assert len(entities) == 2
+
+    @pytest.mark.asyncio
+    async def test_setup_entry_protocol_mode_2_creates_core_only(self):
+        """Test protocol mode 2 (AA55Encrypted) creates only core switches."""
+        coordinator = create_mock_coordinator()
+        coordinator.protocol_mode = 2
+
+        entry = MagicMock()
+        entry.runtime_data = coordinator
+        async_add_entities = MagicMock()
+        hass = MagicMock()
+
+        await async_setup_entry(hass, entry, async_add_entities)
+
+        async_add_entities.assert_called_once()
+        entities = async_add_entities.call_args[0][0]
+        # Mode 2: only power + auto_offset = 2
+        assert len(entities) == 2
+
+    @pytest.mark.asyncio
+    async def test_setup_entry_protocol_mode_4_creates_unit_switches(self):
+        """Test protocol mode 4 (AA66Encrypted) creates unit switches."""
+        coordinator = create_mock_coordinator()
+        coordinator.protocol_mode = 4
+
+        entry = MagicMock()
+        entry.runtime_data = coordinator
+        async_add_entities = MagicMock()
+        hass = MagicMock()
+
+        await async_setup_entry(hass, entry, async_add_entities)
+
+        async_add_entities.assert_called_once()
+        entities = async_add_entities.call_args[0][0]
+        # Mode 4: power + auto_offset + auto_start_stop + temp_unit + altitude_unit = 5
+        assert len(entities) == 5
+
+    @pytest.mark.asyncio
+    async def test_setup_entry_protocol_mode_5_creates_abba_switches(self):
+        """Test protocol mode 5 (ABBA) creates all including high altitude."""
+        coordinator = create_mock_coordinator()
+        coordinator.protocol_mode = 5
+
+        entry = MagicMock()
+        entry.runtime_data = coordinator
+        async_add_entities = MagicMock()
+        hass = MagicMock()
+
+        await async_setup_entry(hass, entry, async_add_entities)
+
+        async_add_entities.assert_called_once()
+        entities = async_add_entities.call_args[0][0]
+        # Mode 5: power + auto_offset + auto_start_stop + temp_unit + altitude_unit + high_altitude = 6
+        assert len(entities) == 6
+
+    @pytest.mark.asyncio
+    async def test_setup_entry_protocol_mode_6_creates_cbff_switches(self):
+        """Test protocol mode 6 (CBFF) creates all except high altitude."""
+        coordinator = create_mock_coordinator()
+        coordinator.protocol_mode = 6
+
+        entry = MagicMock()
+        entry.runtime_data = coordinator
+        async_add_entities = MagicMock()
+        hass = MagicMock()
+
+        await async_setup_entry(hass, entry, async_add_entities)
+
+        async_add_entities.assert_called_once()
+        entities = async_add_entities.call_args[0][0]
+        # Mode 6: power + auto_offset + auto_start_stop + temp_unit + altitude_unit = 5
+        assert len(entities) == 5
+
+    @pytest.mark.asyncio
+    async def test_setup_entry_entity_types_mode_0(self):
+        """Test entity types created for protocol mode 0."""
+        coordinator = create_mock_coordinator()
+        coordinator.protocol_mode = 0
+
+        entry = MagicMock()
+        entry.runtime_data = coordinator
+        async_add_entities = MagicMock()
+        hass = MagicMock()
+
+        await async_setup_entry(hass, entry, async_add_entities)
+
+        entities = async_add_entities.call_args[0][0]
+        entity_types = [type(e).__name__ for e in entities]
+
+        assert "VevorHeaterPowerSwitch" in entity_types
+        assert "VevorAutoOffsetSwitch" in entity_types
+        assert "VevorAutoStartStopSwitch" in entity_types
+        assert "VevorTempUnitSwitch" in entity_types
+        assert "VevorAltitudeUnitSwitch" in entity_types
+        assert "VevorHighAltitudeSwitch" in entity_types
+
+
+# ---------------------------------------------------------------------------
+# _handle_coordinator_update tests
+# ---------------------------------------------------------------------------
+
+class TestHandleCoordinatorUpdate:
+    """Tests for _handle_coordinator_update on all switch entities."""
+
+    def test_power_switch_handle_coordinator_update(self):
+        """Test PowerSwitch _handle_coordinator_update calls async_write_ha_state."""
+        coordinator = create_mock_coordinator()
+        switch = VevorHeaterPowerSwitch(coordinator)
+        switch.async_write_ha_state = MagicMock()
+
+        switch._handle_coordinator_update()
+
+        switch.async_write_ha_state.assert_called_once()
+
+    def test_auto_start_stop_switch_handle_coordinator_update(self):
+        """Test AutoStartStopSwitch _handle_coordinator_update calls async_write_ha_state."""
+        coordinator = create_mock_coordinator()
+        switch = VevorAutoStartStopSwitch(coordinator)
+        switch.async_write_ha_state = MagicMock()
+
+        switch._handle_coordinator_update()
+
+        switch.async_write_ha_state.assert_called_once()
+
+    def test_auto_offset_switch_handle_coordinator_update(self):
+        """Test AutoOffsetSwitch _handle_coordinator_update calls async_write_ha_state."""
+        coordinator = create_mock_coordinator()
+        switch = VevorAutoOffsetSwitch(coordinator)
+        switch.async_write_ha_state = MagicMock()
+
+        switch._handle_coordinator_update()
+
+        switch.async_write_ha_state.assert_called_once()
+
+    def test_temp_unit_switch_handle_coordinator_update(self):
+        """Test TempUnitSwitch _handle_coordinator_update calls async_write_ha_state."""
+        coordinator = create_mock_coordinator()
+        switch = VevorTempUnitSwitch(coordinator)
+        switch.async_write_ha_state = MagicMock()
+
+        switch._handle_coordinator_update()
+
+        switch.async_write_ha_state.assert_called_once()
+
+    def test_altitude_unit_switch_handle_coordinator_update(self):
+        """Test AltitudeUnitSwitch _handle_coordinator_update calls async_write_ha_state."""
+        coordinator = create_mock_coordinator()
+        switch = VevorAltitudeUnitSwitch(coordinator)
+        switch.async_write_ha_state = MagicMock()
+
+        switch._handle_coordinator_update()
+
+        switch.async_write_ha_state.assert_called_once()
+
+    def test_high_altitude_switch_handle_coordinator_update(self):
+        """Test HighAltitudeSwitch _handle_coordinator_update calls async_write_ha_state."""
+        coordinator = create_mock_coordinator()
+        switch = VevorHighAltitudeSwitch(coordinator)
+        switch.async_write_ha_state = MagicMock()
+
+        switch._handle_coordinator_update()
+
+        switch.async_write_ha_state.assert_called_once()

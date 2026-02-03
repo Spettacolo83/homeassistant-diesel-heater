@@ -606,13 +606,15 @@ class TestClimateEntityLifecycle:
         assert hasattr(climate, '_handle_coordinator_update')
 
     def test_handle_coordinator_update_is_callable(self):
-        """Test _handle_coordinator_update can be called."""
+        """Test _handle_coordinator_update calls async_write_ha_state."""
         coordinator = create_mock_coordinator()
         config_entry = create_mock_config_entry()
         climate = VevorHeaterClimate(coordinator, config_entry)
+        climate.async_write_ha_state = MagicMock()
 
-        # Just verify it doesn't raise - async_write_ha_state is on the base class
         climate._handle_coordinator_update()
+
+        climate.async_write_ha_state.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

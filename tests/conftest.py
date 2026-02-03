@@ -359,3 +359,25 @@ sys.modules["homeassistant.components.switch"].SwitchEntity = _StubSwitchEntity
 sys.modules["homeassistant.components.select"].SelectEntity = _StubSelectEntity
 sys.modules["homeassistant.components.number"].NumberEntity = _StubNumberEntity
 sys.modules["homeassistant.components.button"].ButtonEntity = _StubButtonEntity
+
+
+# ---------------------------------------------------------------------------
+# Core callback decorator stub
+# ---------------------------------------------------------------------------
+# The @callback decorator in HA is an identity decorator that marks functions
+# as callbacks but doesn't change their behavior. We need a real function
+# instead of MagicMock to preserve method bodies.
+
+def _stub_callback(func):
+    """Stub for homeassistant.core.callback decorator (identity function)."""
+    return func
+
+# Ensure homeassistant.core module exists before setting callback
+if "homeassistant.core" not in sys.modules:
+    _ha_core = types.ModuleType("homeassistant.core")
+    _ha_core.__path__ = []
+    _ha_core.__loader__ = _HAStubFinder()
+    _ha_core.__spec__ = None
+    _ha_core.__getattr__ = lambda name: MagicMock()
+    sys.modules["homeassistant.core"] = _ha_core
+sys.modules["homeassistant.core"].callback = _stub_callback

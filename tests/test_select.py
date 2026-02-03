@@ -13,6 +13,7 @@ from custom_components.vevor_heater.select import (
     VevorHeaterPumpTypeSelect,
     VevorHeaterTankVolumeSelect,
     VevorBacklightSelect,
+    async_setup_entry,
 )
 
 
@@ -746,3 +747,353 @@ class TestSelectEntityAttributes:
         select = VevorBacklightSelect(coordinator)
 
         assert select._attr_name == "Backlight"
+
+
+# ---------------------------------------------------------------------------
+# async_setup_entry tests
+# ---------------------------------------------------------------------------
+
+class TestAsyncSetupEntry:
+    """Tests for async_setup_entry with different protocol modes."""
+
+    @pytest.mark.asyncio
+    async def test_setup_entry_protocol_mode_0_creates_all_entities(self):
+        """Test protocol mode 0 (unknown) creates all entities as fallback."""
+        coordinator = create_mock_coordinator()
+        coordinator.protocol_mode = 0
+
+        entry = MagicMock()
+        entry.runtime_data = coordinator
+        async_add_entities = MagicMock()
+        hass = MagicMock()
+
+        await async_setup_entry(hass, entry, async_add_entities)
+
+        async_add_entities.assert_called_once()
+        entities = async_add_entities.call_args[0][0]
+        # Mode 0: mode + language + pump_type + tank_volume + backlight = 5
+        assert len(entities) == 5
+
+    @pytest.mark.asyncio
+    async def test_setup_entry_protocol_mode_1_creates_mode_only(self):
+        """Test protocol mode 1 (AA55) creates only mode select."""
+        coordinator = create_mock_coordinator()
+        coordinator.protocol_mode = 1
+
+        entry = MagicMock()
+        entry.runtime_data = coordinator
+        async_add_entities = MagicMock()
+        hass = MagicMock()
+
+        await async_setup_entry(hass, entry, async_add_entities)
+
+        async_add_entities.assert_called_once()
+        entities = async_add_entities.call_args[0][0]
+        # Mode 1: only mode select
+        assert len(entities) == 1
+        assert isinstance(entities[0], VevorHeaterModeSelect)
+
+    @pytest.mark.asyncio
+    async def test_setup_entry_protocol_mode_2_creates_mode_and_backlight(self):
+        """Test protocol mode 2 (AA55Encrypted) creates mode + backlight."""
+        coordinator = create_mock_coordinator()
+        coordinator.protocol_mode = 2
+
+        entry = MagicMock()
+        entry.runtime_data = coordinator
+        async_add_entities = MagicMock()
+        hass = MagicMock()
+
+        await async_setup_entry(hass, entry, async_add_entities)
+
+        async_add_entities.assert_called_once()
+        entities = async_add_entities.call_args[0][0]
+        # Mode 2: mode + backlight = 2
+        assert len(entities) == 2
+
+    @pytest.mark.asyncio
+    async def test_setup_entry_protocol_mode_4_creates_all_entities(self):
+        """Test protocol mode 4 (AA66Encrypted) creates all entities."""
+        coordinator = create_mock_coordinator()
+        coordinator.protocol_mode = 4
+
+        entry = MagicMock()
+        entry.runtime_data = coordinator
+        async_add_entities = MagicMock()
+        hass = MagicMock()
+
+        await async_setup_entry(hass, entry, async_add_entities)
+
+        async_add_entities.assert_called_once()
+        entities = async_add_entities.call_args[0][0]
+        # Mode 4: all 5 entities
+        assert len(entities) == 5
+
+    @pytest.mark.asyncio
+    async def test_setup_entry_protocol_mode_5_creates_mode_only(self):
+        """Test protocol mode 5 (ABBA) creates only mode select."""
+        coordinator = create_mock_coordinator()
+        coordinator.protocol_mode = 5
+
+        entry = MagicMock()
+        entry.runtime_data = coordinator
+        async_add_entities = MagicMock()
+        hass = MagicMock()
+
+        await async_setup_entry(hass, entry, async_add_entities)
+
+        async_add_entities.assert_called_once()
+        entities = async_add_entities.call_args[0][0]
+        # Mode 5: only mode select
+        assert len(entities) == 1
+
+    @pytest.mark.asyncio
+    async def test_setup_entry_protocol_mode_6_creates_all_entities(self):
+        """Test protocol mode 6 (CBFF) creates all entities."""
+        coordinator = create_mock_coordinator()
+        coordinator.protocol_mode = 6
+
+        entry = MagicMock()
+        entry.runtime_data = coordinator
+        async_add_entities = MagicMock()
+        hass = MagicMock()
+
+        await async_setup_entry(hass, entry, async_add_entities)
+
+        async_add_entities.assert_called_once()
+        entities = async_add_entities.call_args[0][0]
+        # Mode 6: all 5 entities
+        assert len(entities) == 5
+
+    @pytest.mark.asyncio
+    async def test_setup_entry_entity_types_mode_0(self):
+        """Test entity types created for protocol mode 0."""
+        coordinator = create_mock_coordinator()
+        coordinator.protocol_mode = 0
+
+        entry = MagicMock()
+        entry.runtime_data = coordinator
+        async_add_entities = MagicMock()
+        hass = MagicMock()
+
+        await async_setup_entry(hass, entry, async_add_entities)
+
+        entities = async_add_entities.call_args[0][0]
+        entity_types = [type(e).__name__ for e in entities]
+
+        assert "VevorHeaterModeSelect" in entity_types
+        assert "VevorHeaterLanguageSelect" in entity_types
+        assert "VevorHeaterPumpTypeSelect" in entity_types
+        assert "VevorHeaterTankVolumeSelect" in entity_types
+        assert "VevorBacklightSelect" in entity_types
+
+
+# ---------------------------------------------------------------------------
+# _handle_coordinator_update tests
+# ---------------------------------------------------------------------------
+
+class TestHandleCoordinatorUpdate:
+    """Tests for _handle_coordinator_update on all select entities."""
+
+    def test_mode_select_handle_coordinator_update(self):
+        """Test ModeSelect _handle_coordinator_update calls async_write_ha_state."""
+        coordinator = create_mock_coordinator()
+        select = VevorHeaterModeSelect(coordinator)
+        select.async_write_ha_state = MagicMock()
+
+        select._handle_coordinator_update()
+
+        select.async_write_ha_state.assert_called_once()
+
+    def test_language_select_handle_coordinator_update(self):
+        """Test LanguageSelect _handle_coordinator_update calls async_write_ha_state."""
+        coordinator = create_mock_coordinator()
+        select = VevorHeaterLanguageSelect(coordinator)
+        select.async_write_ha_state = MagicMock()
+
+        select._handle_coordinator_update()
+
+        select.async_write_ha_state.assert_called_once()
+
+    def test_pump_type_select_handle_coordinator_update(self):
+        """Test PumpTypeSelect _handle_coordinator_update calls async_write_ha_state."""
+        coordinator = create_mock_coordinator()
+        select = VevorHeaterPumpTypeSelect(coordinator)
+        select.async_write_ha_state = MagicMock()
+
+        select._handle_coordinator_update()
+
+        select.async_write_ha_state.assert_called_once()
+
+    def test_tank_volume_select_handle_coordinator_update(self):
+        """Test TankVolumeSelect _handle_coordinator_update calls async_write_ha_state."""
+        coordinator = create_mock_coordinator()
+        select = VevorHeaterTankVolumeSelect(coordinator)
+        select.async_write_ha_state = MagicMock()
+
+        select._handle_coordinator_update()
+
+        select.async_write_ha_state.assert_called_once()
+
+    def test_backlight_select_handle_coordinator_update(self):
+        """Test BacklightSelect _handle_coordinator_update calls async_write_ha_state."""
+        coordinator = create_mock_coordinator()
+        select = VevorBacklightSelect(coordinator)
+        select.async_write_ha_state = MagicMock()
+
+        select._handle_coordinator_update()
+
+        select.async_write_ha_state.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Additional async_added_to_hass tests
+# ---------------------------------------------------------------------------
+
+class TestAsyncAddedToHass:
+    """Tests for async_added_to_hass on all select entities."""
+
+    @pytest.mark.asyncio
+    async def test_language_select_async_added_to_hass(self):
+        """Test LanguageSelect async_added_to_hass registers listener."""
+        coordinator = create_mock_coordinator()
+        select = VevorHeaterLanguageSelect(coordinator)
+        select.async_on_remove = MagicMock()
+
+        await select.async_added_to_hass()
+
+        coordinator.async_add_listener.assert_called_once()
+        select.async_on_remove.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_pump_type_select_async_added_to_hass(self):
+        """Test PumpTypeSelect async_added_to_hass registers listener."""
+        coordinator = create_mock_coordinator()
+        select = VevorHeaterPumpTypeSelect(coordinator)
+        select.async_on_remove = MagicMock()
+
+        await select.async_added_to_hass()
+
+        coordinator.async_add_listener.assert_called_once()
+        select.async_on_remove.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_tank_volume_select_async_added_to_hass(self):
+        """Test TankVolumeSelect async_added_to_hass registers listener."""
+        coordinator = create_mock_coordinator()
+        select = VevorHeaterTankVolumeSelect(coordinator)
+        select.async_on_remove = MagicMock()
+
+        await select.async_added_to_hass()
+
+        coordinator.async_add_listener.assert_called_once()
+        select.async_on_remove.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_backlight_select_async_added_to_hass(self):
+        """Test BacklightSelect async_added_to_hass registers listener."""
+        coordinator = create_mock_coordinator()
+        select = VevorBacklightSelect(coordinator)
+        select.async_on_remove = MagicMock()
+
+        await select.async_added_to_hass()
+
+        coordinator.async_add_listener.assert_called_once()
+        select.async_on_remove.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Edge cases for current_option
+# ---------------------------------------------------------------------------
+
+class TestCurrentOptionEdgeCases:
+    """Tests for edge cases in current_option properties."""
+
+    def test_mode_select_unknown_mode_value(self):
+        """Test ModeSelect with unknown mode value returns None."""
+        coordinator = create_mock_coordinator()
+        coordinator.data["running_mode"] = 99  # Unknown mode
+        select = VevorHeaterModeSelect(coordinator)
+
+        # RUNNING_MODE_NAMES.get(99) returns None
+        assert select.current_option is None
+
+    def test_mode_select_missing_running_mode_key(self):
+        """Test ModeSelect when running_mode key is missing."""
+        coordinator = create_mock_coordinator()
+        del coordinator.data["running_mode"]
+        select = VevorHeaterModeSelect(coordinator)
+
+        assert select.current_option is None
+
+    def test_language_select_missing_language_key(self):
+        """Test LanguageSelect when language key is missing."""
+        coordinator = create_mock_coordinator()
+        del coordinator.data["language"]
+        select = VevorHeaterLanguageSelect(coordinator)
+
+        assert select.current_option is None
+
+    def test_pump_type_select_missing_pump_type_key(self):
+        """Test PumpTypeSelect when pump_type key is missing."""
+        coordinator = create_mock_coordinator()
+        del coordinator.data["pump_type"]
+        select = VevorHeaterPumpTypeSelect(coordinator)
+
+        assert select.current_option is None
+
+    def test_tank_volume_select_missing_tank_volume_key(self):
+        """Test TankVolumeSelect when tank_volume key is missing."""
+        coordinator = create_mock_coordinator()
+        del coordinator.data["tank_volume"]
+        select = VevorHeaterTankVolumeSelect(coordinator)
+
+        assert select.current_option is None
+
+    def test_backlight_select_missing_backlight_key(self):
+        """Test BacklightSelect when backlight key is missing."""
+        coordinator = create_mock_coordinator()
+        del coordinator.data["backlight"]
+        select = VevorBacklightSelect(coordinator)
+
+        assert select.current_option is None
+
+
+# ---------------------------------------------------------------------------
+# Device info tests
+# ---------------------------------------------------------------------------
+
+class TestDeviceInfo:
+    """Tests for device_info on all select entities."""
+
+    def test_language_select_device_info(self):
+        """Test LanguageSelect device_info is set correctly."""
+        coordinator = create_mock_coordinator()
+        select = VevorHeaterLanguageSelect(coordinator)
+
+        assert select._attr_device_info is not None
+        assert "identifiers" in select._attr_device_info
+
+    def test_pump_type_select_device_info(self):
+        """Test PumpTypeSelect device_info is set correctly."""
+        coordinator = create_mock_coordinator()
+        select = VevorHeaterPumpTypeSelect(coordinator)
+
+        assert select._attr_device_info is not None
+        assert "identifiers" in select._attr_device_info
+
+    def test_tank_volume_select_device_info(self):
+        """Test TankVolumeSelect device_info is set correctly."""
+        coordinator = create_mock_coordinator()
+        select = VevorHeaterTankVolumeSelect(coordinator)
+
+        assert select._attr_device_info is not None
+        assert "identifiers" in select._attr_device_info
+
+    def test_backlight_select_device_info(self):
+        """Test BacklightSelect device_info is set correctly."""
+        coordinator = create_mock_coordinator()
+        select = VevorBacklightSelect(coordinator)
+
+        assert select._attr_device_info is not None
+        assert "identifiers" in select._attr_device_info
