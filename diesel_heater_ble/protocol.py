@@ -20,11 +20,9 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from .const import (
-    ABBA_ERROR_NAMES,
     ABBA_STATUS_MAP,
     CBFF_RUN_STATE_OFF,
     ENCRYPTION_KEY,
-    PROTOCOL_HEADER_ABBA,
     RUNNING_MODE_LEVEL,
     RUNNING_MODE_MANUAL,
     RUNNING_MODE_TEMPERATURE,
