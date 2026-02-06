@@ -1702,3 +1702,1119 @@ class TestModeCommands:
 
         call_args = coordinator._send_command.call_args
         assert call_args[0][1] == 2
+
+
+# ---------------------------------------------------------------------------
+# HeaterLoggerAdapter tests
+# ---------------------------------------------------------------------------
+
+class TestHeaterLoggerAdapter:
+    """Tests for the HeaterLoggerAdapter class."""
+
+    def test_process_prefixes_message(self):
+        """Test that process() prefixes messages with heater ID."""
+        from custom_components.vevor_heater.coordinator import _HeaterLoggerAdapter
+        import logging
+
+        base_logger = logging.getLogger("test")
+        adapter = _HeaterLoggerAdapter(base_logger, {"heater_id": "EE:FF"})
+
+        msg, kwargs = adapter.process("Test message", {})
+
+        assert msg == "[EE:FF] Test message"
+        assert kwargs == {}
+
+    def test_process_preserves_kwargs(self):
+        """Test that process() preserves kwargs."""
+        from custom_components.vevor_heater.coordinator import _HeaterLoggerAdapter
+        import logging
+
+        base_logger = logging.getLogger("test")
+        adapter = _HeaterLoggerAdapter(base_logger, {"heater_id": "AA:BB"})
+
+        msg, kwargs = adapter.process("Message", {"extra": "value"})
+
+        assert msg == "[AA:BB] Message"
+        assert kwargs == {"extra": "value"}
+
+
+# ---------------------------------------------------------------------------
+# async_load_data tests (edge cases)
+# ---------------------------------------------------------------------------
+
+class TestAsyncLoadDataEdgeCases:
+    """Tests for async_load_data edge cases."""
+
+    @pytest.mark.asyncio
+    async def test_load_data_new_day_resets_daily_fuel(self):
+        """Test that loading data on a new day resets daily fuel counter."""
+        coordinator = create_mock_coordinator()
+        yesterday = (datetime.now() - timedelta(days=1)).date().isoformat()
+
+        stored_data = {
+            STORAGE_KEY_TOTAL_FUEL: 100.0,
+            STORAGE_KEY_DAILY_FUEL: 5.0,  # Yesterday's consumption
+            STORAGE_KEY_DAILY_DATE: yesterday,
+            STORAGE_KEY_DAILY_HISTORY: {},
+            STORAGE_KEY_TOTAL_RUNTIME: 3600.0,
+            STORAGE_KEY_DAILY_RUNTIME: 1800.0,
+            STORAGE_KEY_DAILY_RUNTIME_DATE: yesterday,
+            STORAGE_KEY_DAILY_RUNTIME_HISTORY: {},
+        }
+        coordinator._store.async_load = AsyncMock(return_value=stored_data)
+        coordinator._import_all_history_statistics = AsyncMock()
+        coordinator._import_all_runtime_history_statistics = AsyncMock()
+        coordinator._setup_external_temp_listener = AsyncMock()
+
+        await coordinator.async_load_data()
+
+        # Daily counter should be reset
+        assert coordinator._daily_fuel_consumed == 0.0
+        # Yesterday's value saved to history
+        assert yesterday in coordinator._daily_fuel_history
+
+    @pytest.mark.asyncio
+    async def test_load_data_same_day_preserves_daily(self):
+        """Test that loading data on same day preserves daily counters."""
+        coordinator = create_mock_coordinator()
+        today = datetime.now().date().isoformat()
+
+        stored_data = {
+            STORAGE_KEY_TOTAL_FUEL: 50.0,
+            STORAGE_KEY_DAILY_FUEL: 2.5,
+            STORAGE_KEY_DAILY_DATE: today,
+            STORAGE_KEY_DAILY_HISTORY: {},
+            STORAGE_KEY_TOTAL_RUNTIME: 1800.0,
+            STORAGE_KEY_DAILY_RUNTIME: 900.0,
+            STORAGE_KEY_DAILY_RUNTIME_DATE: today,
+            STORAGE_KEY_DAILY_RUNTIME_HISTORY: {},
+        }
+        coordinator._store.async_load = AsyncMock(return_value=stored_data)
+        coordinator._import_all_history_statistics = AsyncMock()
+        coordinator._import_all_runtime_history_statistics = AsyncMock()
+        coordinator._setup_external_temp_listener = AsyncMock()
+
+        await coordinator.async_load_data()
+
+        # Daily counter should be preserved
+        assert coordinator._daily_fuel_consumed == 2.5
+        assert coordinator._daily_runtime_seconds == 900.0
+
+    @pytest.mark.asyncio
+    async def test_load_data_with_tank_capacity(self):
+        """Test loading data with tank capacity."""
+        coordinator = create_mock_coordinator()
+        today = datetime.now().date().isoformat()
+
+        stored_data = {
+            STORAGE_KEY_TOTAL_FUEL: 10.0,
+            STORAGE_KEY_DAILY_FUEL: 1.0,
+            STORAGE_KEY_DAILY_DATE: today,
+            STORAGE_KEY_DAILY_HISTORY: {},
+            STORAGE_KEY_TOTAL_RUNTIME: 0.0,
+            STORAGE_KEY_DAILY_RUNTIME: 0.0,
+            STORAGE_KEY_DAILY_RUNTIME_DATE: today,
+            STORAGE_KEY_DAILY_RUNTIME_HISTORY: {},
+            STORAGE_KEY_TANK_CAPACITY: 15,
+            STORAGE_KEY_FUEL_SINCE_RESET: 3.5,
+            STORAGE_KEY_LAST_REFUELED: "2024-01-15T10:00:00",
+        }
+        coordinator._store.async_load = AsyncMock(return_value=stored_data)
+        coordinator._import_all_history_statistics = AsyncMock()
+        coordinator._import_all_runtime_history_statistics = AsyncMock()
+        coordinator._setup_external_temp_listener = AsyncMock()
+        coordinator._update_fuel_remaining = MagicMock()
+
+        await coordinator.async_load_data()
+
+        assert coordinator.data["tank_capacity"] == 15
+        assert coordinator._fuel_consumed_since_reset == 3.5
+        assert coordinator.data["last_refueled"] == "2024-01-15T10:00:00"
+
+    @pytest.mark.asyncio
+    async def test_load_data_with_auto_offset_enabled(self):
+        """Test loading data with auto offset enabled state."""
+        coordinator = create_mock_coordinator()
+        today = datetime.now().date().isoformat()
+
+        stored_data = {
+            STORAGE_KEY_TOTAL_FUEL: 0.0,
+            STORAGE_KEY_DAILY_FUEL: 0.0,
+            STORAGE_KEY_DAILY_DATE: today,
+            STORAGE_KEY_DAILY_HISTORY: {},
+            STORAGE_KEY_TOTAL_RUNTIME: 0.0,
+            STORAGE_KEY_DAILY_RUNTIME: 0.0,
+            STORAGE_KEY_DAILY_RUNTIME_DATE: today,
+            STORAGE_KEY_DAILY_RUNTIME_HISTORY: {},
+            STORAGE_KEY_AUTO_OFFSET_ENABLED: True,
+        }
+        coordinator._store.async_load = AsyncMock(return_value=stored_data)
+        coordinator._import_all_history_statistics = AsyncMock()
+        coordinator._import_all_runtime_history_statistics = AsyncMock()
+        coordinator._setup_external_temp_listener = AsyncMock()
+
+        await coordinator.async_load_data()
+
+        assert coordinator.data["auto_offset_enabled"] is True
+
+    @pytest.mark.asyncio
+    async def test_load_data_handles_exception(self):
+        """Test async_load_data handles storage exceptions gracefully."""
+        coordinator = create_mock_coordinator()
+        coordinator._store.async_load = AsyncMock(side_effect=Exception("Storage error"))
+        coordinator._setup_external_temp_listener = AsyncMock()
+
+        # Should not raise
+        await coordinator.async_load_data()
+
+        # External temp listener should still be set up
+        coordinator._setup_external_temp_listener.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_load_data_no_saved_date_uses_today(self):
+        """Test that missing saved date defaults to today."""
+        coordinator = create_mock_coordinator()
+
+        stored_data = {
+            STORAGE_KEY_TOTAL_FUEL: 10.0,
+            STORAGE_KEY_DAILY_FUEL: 1.0,
+            # No STORAGE_KEY_DAILY_DATE
+            STORAGE_KEY_DAILY_HISTORY: {},
+            STORAGE_KEY_TOTAL_RUNTIME: 0.0,
+            STORAGE_KEY_DAILY_RUNTIME: 0.0,
+            # No STORAGE_KEY_DAILY_RUNTIME_DATE
+            STORAGE_KEY_DAILY_RUNTIME_HISTORY: {},
+        }
+        coordinator._store.async_load = AsyncMock(return_value=stored_data)
+        coordinator._import_all_history_statistics = AsyncMock()
+        coordinator._import_all_runtime_history_statistics = AsyncMock()
+        coordinator._setup_external_temp_listener = AsyncMock()
+
+        await coordinator.async_load_data()
+
+        today = datetime.now().date().isoformat()
+        assert coordinator._last_reset_date == today
+        assert coordinator._last_runtime_reset_date == today
+
+
+# ---------------------------------------------------------------------------
+# External temperature sensor tests
+# ---------------------------------------------------------------------------
+
+class TestExternalTempSensor:
+    """Tests for external temperature sensor integration."""
+
+    @pytest.mark.asyncio
+    async def test_setup_external_temp_no_sensor_configured(self):
+        """Test setup with no external sensor configured."""
+        coordinator = create_mock_coordinator()
+        coordinator.config_entry.data = {"address": "AA:BB:CC:DD:EE:FF"}  # No CONF_EXTERNAL_TEMP_SENSOR
+        coordinator._auto_offset_unsub = None
+
+        await coordinator._setup_external_temp_listener()
+
+        # No listener should be set up
+        assert coordinator._auto_offset_unsub is None
+
+    @pytest.mark.asyncio
+    async def test_setup_external_temp_with_sensor(self):
+        """Test setup with external sensor configured."""
+        from custom_components.vevor_heater.const import CONF_EXTERNAL_TEMP_SENSOR
+
+        coordinator = create_mock_coordinator()
+        coordinator.config_entry.data = {
+            "address": "AA:BB:CC:DD:EE:FF",
+            CONF_EXTERNAL_TEMP_SENSOR: "sensor.external_temp",
+        }
+        coordinator._auto_offset_unsub = None
+        coordinator._async_calculate_auto_offset = AsyncMock()
+
+        # Mock async_track_state_change_event
+        mock_unsub = MagicMock()
+        with patch("custom_components.vevor_heater.coordinator.async_track_state_change_event", return_value=mock_unsub) as mock_track:
+            await coordinator._setup_external_temp_listener()
+
+            mock_track.assert_called_once()
+            assert coordinator._auto_offset_unsub == mock_unsub
+
+    @pytest.mark.asyncio
+    async def test_setup_external_temp_cleans_up_existing(self):
+        """Test that setup cleans up existing listener first."""
+        coordinator = create_mock_coordinator()
+        coordinator.config_entry.data = {"address": "AA:BB:CC:DD:EE:FF"}
+        old_unsub = MagicMock()
+        coordinator._auto_offset_unsub = old_unsub
+
+        await coordinator._setup_external_temp_listener()
+
+        # Old listener should be cleaned up
+        old_unsub.assert_called_once()
+        assert coordinator._auto_offset_unsub is None
+
+
+# ---------------------------------------------------------------------------
+# Auto offset calculation tests
+# ---------------------------------------------------------------------------
+
+class TestAutoOffsetCalculation:
+    """Tests for auto temperature offset calculation."""
+
+    @pytest.mark.asyncio
+    async def test_auto_offset_disabled(self):
+        """Test that auto offset is skipped when disabled."""
+        coordinator = create_mock_coordinator()
+        coordinator.data["auto_offset_enabled"] = False
+        coordinator.async_set_heater_offset = AsyncMock()
+
+        await coordinator._async_calculate_auto_offset()
+
+        coordinator.async_set_heater_offset.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_auto_offset_no_external_sensor(self):
+        """Test auto offset with no external sensor configured."""
+        coordinator = create_mock_coordinator()
+        coordinator.data["auto_offset_enabled"] = True
+        coordinator.config_entry.data = {"address": "AA:BB:CC:DD:EE:FF"}
+        coordinator.async_set_heater_offset = AsyncMock()
+
+        await coordinator._async_calculate_auto_offset()
+
+        coordinator.async_set_heater_offset.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_auto_offset_throttled(self):
+        """Test auto offset is throttled."""
+        import time
+        from custom_components.vevor_heater.const import CONF_EXTERNAL_TEMP_SENSOR
+
+        coordinator = create_mock_coordinator()
+        coordinator.data["auto_offset_enabled"] = True
+        coordinator.config_entry.data = {
+            "address": "AA:BB:CC:DD:EE:FF",
+            CONF_EXTERNAL_TEMP_SENSOR: "sensor.temp",
+        }
+        coordinator._last_auto_offset_time = time.time()  # Just now
+        coordinator.async_set_heater_offset = AsyncMock()
+
+        await coordinator._async_calculate_auto_offset()
+
+        coordinator.async_set_heater_offset.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_auto_offset_external_sensor_unavailable(self):
+        """Test auto offset when external sensor is unavailable."""
+        from custom_components.vevor_heater.const import CONF_EXTERNAL_TEMP_SENSOR
+
+        coordinator = create_mock_coordinator()
+        coordinator.data["auto_offset_enabled"] = True
+        coordinator.config_entry.data = {
+            "address": "AA:BB:CC:DD:EE:FF",
+            CONF_EXTERNAL_TEMP_SENSOR: "sensor.temp",
+        }
+        coordinator._last_auto_offset_time = 0
+
+        # Mock unavailable state
+        mock_state = MagicMock()
+        mock_state.state = "unavailable"
+        coordinator.hass.states.get = MagicMock(return_value=mock_state)
+        coordinator.async_set_heater_offset = AsyncMock()
+
+        await coordinator._async_calculate_auto_offset()
+
+        coordinator.async_set_heater_offset.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_auto_offset_invalid_external_value(self):
+        """Test auto offset with invalid external sensor value."""
+        from custom_components.vevor_heater.const import CONF_EXTERNAL_TEMP_SENSOR
+
+        coordinator = create_mock_coordinator()
+        coordinator.data["auto_offset_enabled"] = True
+        coordinator.config_entry.data = {
+            "address": "AA:BB:CC:DD:EE:FF",
+            CONF_EXTERNAL_TEMP_SENSOR: "sensor.temp",
+        }
+        coordinator._last_auto_offset_time = 0
+
+        mock_state = MagicMock()
+        mock_state.state = "not_a_number"
+        coordinator.hass.states.get = MagicMock(return_value=mock_state)
+        coordinator.async_set_heater_offset = AsyncMock()
+
+        await coordinator._async_calculate_auto_offset()
+
+        coordinator.async_set_heater_offset.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_auto_offset_no_heater_temp(self):
+        """Test auto offset when heater raw temp is not available."""
+        from custom_components.vevor_heater.const import CONF_EXTERNAL_TEMP_SENSOR
+
+        coordinator = create_mock_coordinator()
+        coordinator.data["auto_offset_enabled"] = True
+        coordinator.data["cab_temperature_raw"] = None
+        coordinator.config_entry.data = {
+            "address": "AA:BB:CC:DD:EE:FF",
+            CONF_EXTERNAL_TEMP_SENSOR: "sensor.temp",
+        }
+        coordinator._last_auto_offset_time = 0
+
+        mock_state = MagicMock()
+        mock_state.state = "22.5"
+        coordinator.hass.states.get = MagicMock(return_value=mock_state)
+        coordinator.async_set_heater_offset = AsyncMock()
+
+        await coordinator._async_calculate_auto_offset()
+
+        coordinator.async_set_heater_offset.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_auto_offset_small_difference_ignored(self):
+        """Test auto offset ignores small temperature differences."""
+        from custom_components.vevor_heater.const import CONF_EXTERNAL_TEMP_SENSOR
+
+        coordinator = create_mock_coordinator()
+        coordinator.data["auto_offset_enabled"] = True
+        coordinator.data["cab_temperature_raw"] = 22
+        coordinator.config_entry.data = {
+            "address": "AA:BB:CC:DD:EE:FF",
+            CONF_EXTERNAL_TEMP_SENSOR: "sensor.temp",
+        }
+        coordinator._last_auto_offset_time = 0
+        coordinator._current_heater_offset = 0
+
+        mock_state = MagicMock()
+        mock_state.state = "22.3"  # Only 0.3 difference
+        coordinator.hass.states.get = MagicMock(return_value=mock_state)
+        coordinator.async_set_heater_offset = AsyncMock()
+
+        await coordinator._async_calculate_auto_offset()
+
+        coordinator.async_set_heater_offset.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_auto_offset_applies_offset(self):
+        """Test auto offset applies when difference is significant."""
+        from custom_components.vevor_heater.const import CONF_EXTERNAL_TEMP_SENSOR, CONF_AUTO_OFFSET_MAX
+
+        coordinator = create_mock_coordinator()
+        coordinator.data["auto_offset_enabled"] = True
+        coordinator.data["cab_temperature_raw"] = 25  # Heater reads 25
+        coordinator.config_entry.data = {
+            "address": "AA:BB:CC:DD:EE:FF",
+            CONF_EXTERNAL_TEMP_SENSOR: "sensor.temp",
+            CONF_AUTO_OFFSET_MAX: 5,
+        }
+        coordinator._last_auto_offset_time = 0
+        coordinator._current_heater_offset = 0
+
+        mock_state = MagicMock()
+        mock_state.state = "22"  # External reads 22, difference = -3
+        coordinator.hass.states.get = MagicMock(return_value=mock_state)
+        coordinator.async_set_heater_offset = AsyncMock()
+
+        await coordinator._async_calculate_auto_offset()
+
+        # Should apply offset of -3
+        coordinator.async_set_heater_offset.assert_called_once_with(-3)
+
+    @pytest.mark.asyncio
+    async def test_auto_offset_clamped_to_max(self):
+        """Test auto offset is clamped to max value."""
+        from custom_components.vevor_heater.const import CONF_EXTERNAL_TEMP_SENSOR, CONF_AUTO_OFFSET_MAX
+
+        coordinator = create_mock_coordinator()
+        coordinator.data["auto_offset_enabled"] = True
+        coordinator.data["cab_temperature_raw"] = 30  # Heater reads 30
+        coordinator.config_entry.data = {
+            "address": "AA:BB:CC:DD:EE:FF",
+            CONF_EXTERNAL_TEMP_SENSOR: "sensor.temp",
+            CONF_AUTO_OFFSET_MAX: 3,  # Max offset is 3
+        }
+        coordinator._last_auto_offset_time = 0
+        coordinator._current_heater_offset = 0
+
+        mock_state = MagicMock()
+        mock_state.state = "20"  # External reads 20, difference = -10
+        coordinator.hass.states.get = MagicMock(return_value=mock_state)
+        coordinator.async_set_heater_offset = AsyncMock()
+
+        await coordinator._async_calculate_auto_offset()
+
+        # Should clamp to -3 (max)
+        coordinator.async_set_heater_offset.assert_called_once_with(-3)
+
+    @pytest.mark.asyncio
+    async def test_auto_offset_no_change_skipped(self):
+        """Test auto offset skips sending when offset unchanged."""
+        from custom_components.vevor_heater.const import CONF_EXTERNAL_TEMP_SENSOR, CONF_AUTO_OFFSET_MAX
+
+        coordinator = create_mock_coordinator()
+        coordinator.data["auto_offset_enabled"] = True
+        coordinator.data["cab_temperature_raw"] = 22
+        coordinator.config_entry.data = {
+            "address": "AA:BB:CC:DD:EE:FF",
+            CONF_EXTERNAL_TEMP_SENSOR: "sensor.temp",
+            CONF_AUTO_OFFSET_MAX: 5,
+        }
+        coordinator._last_auto_offset_time = 0
+        coordinator._current_heater_offset = -3  # Already set to -3
+
+        mock_state = MagicMock()
+        mock_state.state = "19"  # External=19, heater=22, diff=-3
+        coordinator.hass.states.get = MagicMock(return_value=mock_state)
+        coordinator.async_set_heater_offset = AsyncMock()
+
+        await coordinator._async_calculate_auto_offset()
+
+        # Offset unchanged, should not call
+        coordinator.async_set_heater_offset.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Connection failure handling tests
+# ---------------------------------------------------------------------------
+
+class TestConnectionFailureHandling2:
+    """Additional tests for connection failure handling."""
+
+    def test_handle_connection_failure_marks_disconnected_after_max_stale(self):
+        """Test that connection is marked disconnected after max stale cycles."""
+        coordinator = create_mock_coordinator()
+        coordinator._consecutive_failures = 3  # Already at max
+        coordinator._max_stale_cycles = 3
+        coordinator.data["connected"] = True
+        coordinator.data["cab_temperature"] = 22
+        coordinator._clear_sensor_values = MagicMock()
+
+        coordinator._handle_connection_failure(Exception("Test error"))
+
+        assert coordinator._consecutive_failures == 4
+        assert coordinator.data["connected"] is False
+        coordinator._clear_sensor_values.assert_called_once()
+
+    def test_handle_connection_failure_logs_warning_once(self):
+        """Test warning is logged only once when going offline."""
+        coordinator = create_mock_coordinator()
+        coordinator._consecutive_failures = 3  # At exactly max + 1
+        coordinator._max_stale_cycles = 3
+        coordinator.data["connected"] = True
+        coordinator._clear_sensor_values = MagicMock()
+
+        coordinator._handle_connection_failure(Exception("Test error"))
+
+        # Should log warning (consecutive_failures becomes 4 = max_stale_cycles + 1)
+        coordinator._logger.warning.assert_called()
+
+
+# ---------------------------------------------------------------------------
+# _async_update_data tests
+# ---------------------------------------------------------------------------
+
+class TestAsyncUpdateData:
+    """Tests for the main _async_update_data method."""
+
+    @pytest.mark.asyncio
+    async def test_update_data_checks_daily_reset_first(self):
+        """Test that daily reset is checked even if disconnected."""
+        coordinator = create_mock_coordinator()
+        coordinator._check_daily_reset = AsyncMock()
+        coordinator._check_daily_runtime_reset = AsyncMock()
+        coordinator._client = None  # Not connected
+        coordinator._ensure_connected = AsyncMock(side_effect=Exception("Cannot connect"))
+        coordinator._handle_connection_failure = MagicMock()
+
+        from homeassistant.helpers.update_coordinator import UpdateFailed
+        with pytest.raises(UpdateFailed):
+            await coordinator._async_update_data()
+
+        # Daily resets should still be checked
+        coordinator._check_daily_reset.assert_called_once()
+        coordinator._check_daily_runtime_reset.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_data_success_resets_failure_counter(self):
+        """Test successful update resets consecutive failures."""
+        import time
+
+        coordinator = create_mock_coordinator()
+        coordinator._check_daily_reset = AsyncMock()
+        coordinator._check_daily_runtime_reset = AsyncMock()
+        coordinator._client = MagicMock()
+        coordinator._client.is_connected = True
+        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator._consecutive_failures = 5
+        coordinator._last_update_time = time.time() - 60
+        coordinator._last_save_time = time.time()
+        coordinator._save_valid_data = MagicMock()
+        coordinator._update_fuel_tracking = MagicMock()
+        coordinator._update_runtime_tracking = MagicMock()
+        coordinator.async_save_data = AsyncMock()
+
+        result = await coordinator._async_update_data()
+
+        assert coordinator._consecutive_failures == 0
+        assert coordinator.data["connected"] is True
+        assert result == coordinator.data
+
+    @pytest.mark.asyncio
+    async def test_update_data_retries_on_timeout(self):
+        """Test update data retries status request on timeout."""
+        import time
+
+        coordinator = create_mock_coordinator()
+        coordinator._check_daily_reset = AsyncMock()
+        coordinator._check_daily_runtime_reset = AsyncMock()
+        coordinator._client = MagicMock()
+        coordinator._client.is_connected = True
+        # First two calls fail, third succeeds
+        coordinator._send_command = AsyncMock(side_effect=[False, False, True])
+        coordinator._consecutive_failures = 0
+        coordinator._last_update_time = time.time() - 60
+        coordinator._last_save_time = time.time()
+        coordinator._save_valid_data = MagicMock()
+        coordinator._update_fuel_tracking = MagicMock()
+        coordinator._update_runtime_tracking = MagicMock()
+        coordinator.async_save_data = AsyncMock()
+
+        result = await coordinator._async_update_data()
+
+        # Should have tried 3 times
+        assert coordinator._send_command.call_count == 3
+        assert coordinator.data["connected"] is True
+
+    @pytest.mark.asyncio
+    async def test_update_data_saves_periodically(self):
+        """Test update data saves every 5 minutes."""
+        import time
+
+        coordinator = create_mock_coordinator()
+        coordinator._check_daily_reset = AsyncMock()
+        coordinator._check_daily_runtime_reset = AsyncMock()
+        coordinator._client = MagicMock()
+        coordinator._client.is_connected = True
+        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator._consecutive_failures = 0
+        coordinator._last_update_time = time.time() - 60
+        coordinator._last_save_time = time.time() - 301  # Over 5 minutes ago
+        coordinator._save_valid_data = MagicMock()
+        coordinator._update_fuel_tracking = MagicMock()
+        coordinator._update_runtime_tracking = MagicMock()
+        coordinator.async_save_data = AsyncMock()
+
+        await coordinator._async_update_data()
+
+        coordinator.async_save_data.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_data_no_status_returns_stale_during_tolerance(self):
+        """Test no status returns stale data during tolerance window."""
+        import time
+
+        coordinator = create_mock_coordinator()
+        coordinator._check_daily_reset = AsyncMock()
+        coordinator._check_daily_runtime_reset = AsyncMock()
+        coordinator._client = MagicMock()
+        coordinator._client.is_connected = True
+        coordinator._send_command = AsyncMock(return_value=False)  # All fail
+        coordinator._consecutive_failures = 1  # Within tolerance
+        coordinator._max_stale_cycles = 3
+        coordinator._last_update_time = time.time()
+        coordinator._handle_connection_failure = MagicMock()
+
+        result = await coordinator._async_update_data()
+
+        # Should return stale data, not raise
+        assert result == coordinator.data
+
+    @pytest.mark.asyncio
+    async def test_update_data_no_status_raises_after_tolerance(self):
+        """Test no status raises UpdateFailed after tolerance exceeded."""
+        import time
+
+        coordinator = create_mock_coordinator()
+        coordinator._check_daily_reset = AsyncMock()
+        coordinator._check_daily_runtime_reset = AsyncMock()
+        coordinator._client = MagicMock()
+        coordinator._client.is_connected = True
+        coordinator._send_command = AsyncMock(return_value=False)
+        coordinator._consecutive_failures = 4  # Beyond tolerance
+        coordinator._max_stale_cycles = 3
+        coordinator._last_update_time = time.time()
+        coordinator._handle_connection_failure = MagicMock()
+
+        from homeassistant.helpers.update_coordinator import UpdateFailed
+        with pytest.raises(UpdateFailed) as exc_info:
+            await coordinator._async_update_data()
+
+        assert "No status received" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_update_data_exception_returns_stale_during_tolerance(self):
+        """Test exception returns stale data during tolerance window."""
+        import time
+
+        coordinator = create_mock_coordinator()
+        coordinator._check_daily_reset = AsyncMock()
+        coordinator._check_daily_runtime_reset = AsyncMock()
+        coordinator._client = MagicMock()
+        coordinator._client.is_connected = True
+        coordinator._send_command = AsyncMock(side_effect=Exception("BLE error"))
+        coordinator._consecutive_failures = 2
+        coordinator._max_stale_cycles = 3
+        coordinator._last_update_time = time.time()
+        coordinator._handle_connection_failure = MagicMock()
+
+        result = await coordinator._async_update_data()
+
+        assert result == coordinator.data
+
+
+# ---------------------------------------------------------------------------
+# External temp callback tests
+# ---------------------------------------------------------------------------
+
+class TestExternalTempCallback:
+    """Tests for external temperature change callback."""
+
+    def test_external_temp_changed_schedules_task(self):
+        """Test _async_external_temp_changed schedules calculation task."""
+        coordinator = create_mock_coordinator()
+        coordinator._async_calculate_auto_offset = AsyncMock()
+        mock_task = MagicMock()
+        coordinator.hass.async_create_task = MagicMock(return_value=mock_task)
+
+        event = MagicMock()
+        coordinator._async_external_temp_changed(event)
+
+        coordinator.hass.async_create_task.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# async_save_data tests
+# ---------------------------------------------------------------------------
+
+class TestAsyncSaveData:
+    """Tests for async_save_data method."""
+
+    @pytest.mark.asyncio
+    async def test_save_data_handles_exception(self):
+        """Test async_save_data handles storage exception gracefully."""
+        coordinator = create_mock_coordinator()
+        coordinator._store.async_save = AsyncMock(side_effect=Exception("Write failed"))
+
+        # Should not raise
+        await coordinator.async_save_data()
+
+        # Warning should be logged
+        coordinator._logger.warning.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_save_data_success(self):
+        """Test async_save_data saves data successfully."""
+        coordinator = create_mock_coordinator()
+        coordinator._store.async_save = AsyncMock()
+
+        await coordinator.async_save_data()
+
+        coordinator._store.async_save.assert_called_once()
+        # Verify data includes expected keys
+        call_args = coordinator._store.async_save.call_args
+        saved_data = call_args[0][0]
+        assert STORAGE_KEY_TOTAL_FUEL in saved_data
+        assert STORAGE_KEY_DAILY_FUEL in saved_data
+
+
+# ---------------------------------------------------------------------------
+# Statistics import tests
+# ---------------------------------------------------------------------------
+
+class TestStatisticsImportDetailed:
+    """Detailed tests for statistics import functionality."""
+
+    @pytest.mark.asyncio
+    async def test_import_statistics_no_recorder(self):
+        """Test _import_statistics when recorder not available."""
+        coordinator = create_mock_coordinator()
+
+        with patch("custom_components.vevor_heater.coordinator.get_instance", return_value=None):
+            await coordinator._import_statistics("2024-01-15", 2.5)
+
+        # Should just return without error
+        coordinator._logger.debug.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_import_statistics_invalid_date(self):
+        """Test _import_statistics with invalid date string."""
+        coordinator = create_mock_coordinator()
+        mock_recorder = MagicMock()
+
+        with patch("custom_components.vevor_heater.coordinator.get_instance", return_value=mock_recorder):
+            await coordinator._import_statistics("not-a-date", 2.5)
+
+        coordinator._logger.error.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_import_statistics_exception(self):
+        """Test _import_statistics handles async_add_external_statistics exception."""
+        coordinator = create_mock_coordinator()
+        mock_recorder = MagicMock()
+
+        with patch("custom_components.vevor_heater.coordinator.get_instance", return_value=mock_recorder):
+            with patch("custom_components.vevor_heater.coordinator.async_add_external_statistics", side_effect=Exception("Stats error")):
+                await coordinator._import_statistics("2024-01-15", 2.5)
+
+        coordinator._logger.warning.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_import_all_history_statistics_with_data(self):
+        """Test _import_all_history_statistics with actual history."""
+        coordinator = create_mock_coordinator()
+        coordinator._daily_fuel_history = {
+            "2024-01-14": 2.5,
+            "2024-01-15": 3.0,
+        }
+        coordinator._import_statistics = AsyncMock()
+
+        await coordinator._import_all_history_statistics()
+
+        assert coordinator._import_statistics.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_import_runtime_statistics_no_recorder(self):
+        """Test _import_runtime_statistics when recorder not available."""
+        coordinator = create_mock_coordinator()
+
+        with patch("custom_components.vevor_heater.coordinator.get_instance", return_value=None):
+            await coordinator._import_runtime_statistics("2024-01-15", 4.5)
+
+        coordinator._logger.debug.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_import_runtime_statistics_invalid_date(self):
+        """Test _import_runtime_statistics with invalid date string."""
+        coordinator = create_mock_coordinator()
+        mock_recorder = MagicMock()
+
+        with patch("custom_components.vevor_heater.coordinator.get_instance", return_value=mock_recorder):
+            await coordinator._import_runtime_statistics("invalid", 4.5)
+
+        coordinator._logger.error.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_import_runtime_statistics_exception(self):
+        """Test _import_runtime_statistics handles exception."""
+        coordinator = create_mock_coordinator()
+        mock_recorder = MagicMock()
+
+        with patch("custom_components.vevor_heater.coordinator.get_instance", return_value=mock_recorder):
+            with patch("custom_components.vevor_heater.coordinator.async_add_external_statistics", side_effect=Exception("Stats error")):
+                await coordinator._import_runtime_statistics("2024-01-15", 4.5)
+
+        coordinator._logger.warning.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_import_all_runtime_history_statistics_with_data(self):
+        """Test _import_all_runtime_history_statistics with actual history."""
+        coordinator = create_mock_coordinator()
+        coordinator._daily_runtime_history = {
+            "2024-01-14": 3.5,
+            "2024-01-15": 5.0,
+        }
+        coordinator._import_runtime_statistics = AsyncMock()
+
+        await coordinator._import_all_runtime_history_statistics()
+
+        assert coordinator._import_runtime_statistics.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# BLE connection cleanup tests
+# ---------------------------------------------------------------------------
+
+class TestBLEConnectionCleanup:
+    """Tests for BLE connection cleanup."""
+
+    @pytest.mark.asyncio
+    async def test_cleanup_connection_no_client(self):
+        """Test cleanup_connection with no client."""
+        coordinator = create_mock_coordinator()
+        coordinator._client = None
+
+        await coordinator._cleanup_connection()
+
+        # Should not raise
+        assert coordinator._client is None
+
+    @pytest.mark.asyncio
+    async def test_cleanup_connection_disconnects(self):
+        """Test cleanup_connection disconnects active client."""
+        coordinator = create_mock_coordinator()
+        mock_client = MagicMock()
+        mock_client.is_connected = True
+        mock_client.disconnect = AsyncMock()
+        mock_client.stop_notify = AsyncMock()
+        coordinator._client = mock_client
+        coordinator._characteristic = MagicMock()
+        coordinator._characteristic.properties = ["notify"]
+        coordinator._active_char_uuid = "fff1"
+
+        await coordinator._cleanup_connection()
+
+        mock_client.stop_notify.assert_called_once_with("fff1")
+        mock_client.disconnect.assert_called_once()
+        assert coordinator._client is None
+        assert coordinator._characteristic is None
+
+    @pytest.mark.asyncio
+    async def test_cleanup_connection_handles_disconnect_error(self):
+        """Test cleanup_connection handles disconnect error gracefully."""
+        coordinator = create_mock_coordinator()
+        mock_client = MagicMock()
+        mock_client.is_connected = True
+        mock_client.disconnect = AsyncMock(side_effect=Exception("Disconnect failed"))
+        coordinator._client = mock_client
+        coordinator._characteristic = None
+        coordinator._active_char_uuid = None
+
+        await coordinator._cleanup_connection()
+
+        # Should still clean up
+        assert coordinator._client is None
+
+    @pytest.mark.asyncio
+    async def test_cleanup_connection_handles_stop_notify_error(self):
+        """Test cleanup_connection handles stop_notify error gracefully."""
+        coordinator = create_mock_coordinator()
+        mock_client = MagicMock()
+        mock_client.is_connected = True
+        mock_client.disconnect = AsyncMock()
+        mock_client.stop_notify = AsyncMock(side_effect=Exception("Stop notify failed"))
+        coordinator._client = mock_client
+        coordinator._characteristic = MagicMock()
+        coordinator._characteristic.properties = ["notify"]
+        coordinator._active_char_uuid = "fff1"
+
+        await coordinator._cleanup_connection()
+
+        # Should still disconnect and clean up
+        mock_client.disconnect.assert_called_once()
+        assert coordinator._client is None
+
+
+# ---------------------------------------------------------------------------
+# GATT write tests
+# ---------------------------------------------------------------------------
+
+class TestGATTWrite:
+    """Tests for GATT write operations."""
+
+    @pytest.mark.asyncio
+    async def test_write_gatt_standard_characteristic(self):
+        """Test _write_gatt uses standard characteristic."""
+        coordinator = create_mock_coordinator()
+        coordinator._is_abba_device = False
+        mock_client = MagicMock()
+        mock_client.write_gatt_char = AsyncMock()
+        coordinator._client = mock_client
+        coordinator._characteristic = "standard_char"
+        coordinator._abba_write_char = None
+
+        packet = bytearray([0xAA, 0x55, 0x01, 0x00])
+        await coordinator._write_gatt(packet)
+
+        mock_client.write_gatt_char.assert_called_once_with("standard_char", packet, response=False)
+
+    @pytest.mark.asyncio
+    async def test_write_gatt_abba_characteristic(self):
+        """Test _write_gatt uses ABBA write characteristic for ABBA devices."""
+        coordinator = create_mock_coordinator()
+        coordinator._is_abba_device = True
+        mock_client = MagicMock()
+        mock_client.write_gatt_char = AsyncMock()
+        coordinator._client = mock_client
+        coordinator._characteristic = "standard_char"
+        coordinator._abba_write_char = "abba_write_char"
+
+        packet = bytearray([0xBA, 0xAB, 0x01, 0x00])
+        await coordinator._write_gatt(packet)
+
+        mock_client.write_gatt_char.assert_called_once_with("abba_write_char", packet, response=False)
+
+
+# ---------------------------------------------------------------------------
+# Wake up ping tests
+# ---------------------------------------------------------------------------
+
+class TestWakeUpPing:
+    """Tests for wake-up ping functionality."""
+
+    @pytest.mark.asyncio
+    async def test_send_wake_up_ping_success(self):
+        """Test _send_wake_up_ping sends packet successfully."""
+        coordinator = create_mock_coordinator()
+        mock_client = MagicMock()
+        coordinator._client = mock_client
+        coordinator._characteristic = "char"
+        coordinator._write_gatt = AsyncMock()
+        coordinator._build_command_packet = MagicMock(return_value=bytearray([0xAA, 0x55]))
+
+        await coordinator._send_wake_up_ping()
+
+        coordinator._build_command_packet.assert_called_once_with(1)
+        coordinator._write_gatt.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_send_wake_up_ping_handles_error(self):
+        """Test _send_wake_up_ping handles errors gracefully."""
+        coordinator = create_mock_coordinator()
+        mock_client = MagicMock()
+        coordinator._client = mock_client
+        coordinator._characteristic = "char"
+        coordinator._write_gatt = AsyncMock(side_effect=Exception("Write failed"))
+        coordinator._build_command_packet = MagicMock(return_value=bytearray([0xAA, 0x55]))
+
+        # Should not raise
+        await coordinator._send_wake_up_ping()
+
+        coordinator._logger.debug.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_send_wake_up_ping_no_client(self):
+        """Test _send_wake_up_ping with no client does nothing."""
+        coordinator = create_mock_coordinator()
+        coordinator._client = None
+        coordinator._write_gatt = AsyncMock()
+
+        await coordinator._send_wake_up_ping()
+
+        coordinator._write_gatt.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Send command tests
+# ---------------------------------------------------------------------------
+
+class TestSendCommand:
+    """Tests for _send_command method."""
+
+    @pytest.mark.asyncio
+    async def test_send_command_no_client(self):
+        """Test _send_command returns False when no client."""
+        coordinator = create_mock_coordinator()
+        coordinator._client = None
+
+        result = await coordinator._send_command(1, 0, timeout=0.1)
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_send_command_not_connected(self):
+        """Test _send_command returns False when not connected."""
+        coordinator = create_mock_coordinator()
+        mock_client = MagicMock()
+        mock_client.is_connected = False
+        coordinator._client = mock_client
+
+        result = await coordinator._send_command(1, 0, timeout=0.1)
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_send_command_no_characteristic(self):
+        """Test _send_command returns False when no characteristic."""
+        coordinator = create_mock_coordinator()
+        mock_client = MagicMock()
+        mock_client.is_connected = True
+        coordinator._client = mock_client
+        coordinator._characteristic = None
+
+        result = await coordinator._send_command(1, 0, timeout=0.1)
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_send_command_timeout(self):
+        """Test _send_command returns False on timeout."""
+        coordinator = create_mock_coordinator()
+        mock_client = MagicMock()
+        mock_client.is_connected = True
+        coordinator._client = mock_client
+        coordinator._characteristic = "char"
+        coordinator._write_gatt = AsyncMock()
+        coordinator._build_command_packet = MagicMock(return_value=bytearray([0xAA]))
+        coordinator._notification_data = None  # No response
+
+        result = await coordinator._send_command(1, 0, timeout=0.2)
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_send_command_success_with_response(self):
+        """Test _send_command returns True when response received."""
+        coordinator = create_mock_coordinator()
+        mock_client = MagicMock()
+        mock_client.is_connected = True
+        coordinator._client = mock_client
+        coordinator._characteristic = "char"
+        coordinator._build_command_packet = MagicMock(return_value=bytearray([0xAA]))
+
+        # Simulate response arriving after first iteration
+        async def mock_write(packet):
+            coordinator._notification_data = bytearray([0xAA, 0x55])
+
+        coordinator._write_gatt = AsyncMock(side_effect=mock_write)
+
+        result = await coordinator._send_command(1, 0, timeout=1.0)
+
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_send_command_exception_cleans_up(self):
+        """Test _send_command cleans up connection on exception."""
+        coordinator = create_mock_coordinator()
+        mock_client = MagicMock()
+        mock_client.is_connected = True
+        coordinator._client = mock_client
+        coordinator._characteristic = "char"
+        coordinator._write_gatt = AsyncMock(side_effect=Exception("BLE error"))
+        coordinator._build_command_packet = MagicMock(return_value=bytearray([0xAA]))
+        coordinator._cleanup_connection = AsyncMock()
+
+        result = await coordinator._send_command(1, 0, timeout=0.1)
+
+        assert result is False
+        coordinator._cleanup_connection.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Build command packet edge cases
+# ---------------------------------------------------------------------------
+
+class TestBuildCommandPacketEdgeCases:
+    """Edge case tests for _build_command_packet."""
+
+    def test_build_command_uses_abba_fallback(self):
+        """Test _build_command_packet uses ABBA protocol fallback."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol = None
+        coordinator._is_abba_device = True
+
+        packet = coordinator._build_command_packet(1, 0)
+
+        # Should use ABBA protocol (mode 5)
+        assert packet[0] == 0xBA
+        assert packet[1] == 0xAB
+
+    def test_build_command_uses_aa55_fallback(self):
+        """Test _build_command_packet uses AA55 protocol fallback."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol = None
+        coordinator._is_abba_device = False
+
+        packet = coordinator._build_command_packet(1, 0)
+
+        # Should use AA55 protocol (mode 1)
+        assert packet[0] == 0xAA
+        assert packet[1] == 0x55
