@@ -2818,3 +2818,175 @@ class TestBuildCommandPacketEdgeCases:
         # Should use AA55 protocol (mode 1)
         assert packet[0] == 0xAA
         assert packet[1] == 0x55
+
+
+# ---------------------------------------------------------------------------
+# ABBA toggle guard tests
+# ---------------------------------------------------------------------------
+
+class TestABBAToggleGuard:
+    """Tests for ABBA protocol toggle guard."""
+
+    @pytest.mark.asyncio
+    async def test_turn_on_skipped_when_already_on_abba(self):
+        """Test async_turn_on is skipped when heater already on (ABBA mode)."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 5  # ABBA
+        coordinator.data["running_state"] = 1  # Already on
+        coordinator._send_command = AsyncMock()
+
+        await coordinator.async_turn_on()
+
+        # Should not send command
+        coordinator._send_command.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_turn_on_proceeds_when_off_abba(self):
+        """Test async_turn_on proceeds when heater is off (ABBA mode)."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 5  # ABBA
+        coordinator.data["running_state"] = 0  # Off
+        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator.async_request_refresh = AsyncMock()
+
+        await coordinator.async_turn_on()
+
+        coordinator._send_command.assert_called_once_with(3, 1)
+        coordinator.async_request_refresh.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_turn_off_skipped_when_already_off_abba(self):
+        """Test async_turn_off is skipped when heater already off (ABBA mode)."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 5  # ABBA
+        coordinator.data["running_state"] = 0  # Already off
+        coordinator._send_command = AsyncMock()
+
+        await coordinator.async_turn_off()
+
+        # Should not send command
+        coordinator._send_command.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_turn_off_proceeds_when_on_abba(self):
+        """Test async_turn_off proceeds when heater is on (ABBA mode)."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 5  # ABBA
+        coordinator.data["running_state"] = 1  # On
+        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator.async_request_refresh = AsyncMock()
+
+        await coordinator.async_turn_off()
+
+        coordinator._send_command.assert_called_once_with(3, 0)
+        coordinator.async_request_refresh.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_turn_on_proceeds_non_abba_protocol(self):
+        """Test async_turn_on always proceeds for non-ABBA protocols."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 1  # AA55, not ABBA
+        coordinator.data["running_state"] = 1  # Already on, but not ABBA
+        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator.async_request_refresh = AsyncMock()
+
+        await coordinator.async_turn_on()
+
+        # Should still send command for non-ABBA
+        coordinator._send_command.assert_called_once_with(3, 1)
+
+
+# ---------------------------------------------------------------------------
+# Fahrenheit conversion tests
+# ---------------------------------------------------------------------------
+
+class TestFahrenheitConversion:
+    """Tests for Fahrenheit temperature conversion."""
+
+    @pytest.mark.asyncio
+    async def test_set_temperature_converts_to_fahrenheit(self):
+        """Test async_set_temperature converts to Fahrenheit when heater uses it."""
+        coordinator = create_mock_coordinator()
+        coordinator._heater_uses_fahrenheit = True
+        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator.async_request_refresh = AsyncMock()
+
+        # Set 20°C, should convert to 68°F
+        await coordinator.async_set_temperature(20)
+
+        coordinator._send_command.assert_called_once()
+        call_args = coordinator._send_command.call_args
+        # Command 4 is set temperature, arg should be 68 (20*9/5+32)
+        assert call_args[0][0] == 4
+        assert call_args[0][1] == 68
+
+    @pytest.mark.asyncio
+    async def test_set_temperature_celsius_no_conversion(self):
+        """Test async_set_temperature sends Celsius when heater uses it."""
+        coordinator = create_mock_coordinator()
+        coordinator._heater_uses_fahrenheit = False
+        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator.async_request_refresh = AsyncMock()
+
+        # Set 20°C, should stay as 20
+        await coordinator.async_set_temperature(20)
+
+        coordinator._send_command.assert_called_once()
+        call_args = coordinator._send_command.call_args
+        assert call_args[0][0] == 4
+        assert call_args[0][1] == 20
+
+
+# ---------------------------------------------------------------------------
+# Additional async command tests
+# ---------------------------------------------------------------------------
+
+class TestAsyncCommands2:
+    """Additional tests for async command methods."""
+
+    @pytest.mark.asyncio
+    async def test_turn_on_no_refresh_on_failure(self):
+        """Test async_turn_on doesn't refresh on command failure."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 1
+        coordinator._send_command = AsyncMock(return_value=False)
+        coordinator.async_request_refresh = AsyncMock()
+
+        await coordinator.async_turn_on()
+
+        coordinator.async_request_refresh.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_turn_off_no_refresh_on_failure(self):
+        """Test async_turn_off doesn't refresh on command failure."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 1
+        coordinator._send_command = AsyncMock(return_value=False)
+        coordinator.async_request_refresh = AsyncMock()
+
+        await coordinator.async_turn_off()
+
+        coordinator.async_request_refresh.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_set_level_no_refresh_on_failure(self):
+        """Test async_set_level doesn't refresh on command failure."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=False)
+        coordinator.async_request_refresh = AsyncMock()
+
+        await coordinator.async_set_level(5)
+
+        coordinator.async_request_refresh.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_set_temperature_no_refresh_on_failure(self):
+        """Test async_set_temperature doesn't refresh on command failure."""
+        coordinator = create_mock_coordinator()
+        coordinator._heater_uses_fahrenheit = False
+        coordinator._send_command = AsyncMock(return_value=False)
+        coordinator.async_request_refresh = AsyncMock()
+
+        await coordinator.async_set_temperature(22)
+
+        coordinator.async_request_refresh.assert_not_called()
