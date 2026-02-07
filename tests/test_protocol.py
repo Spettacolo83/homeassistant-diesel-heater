@@ -1296,15 +1296,101 @@ class TestProtocolCBFF:
         assert "cab_temperature" not in result
         assert "supply_voltage" not in result
 
-    def test_build_command_uses_aa55(self):
-        """CBFF uses standard AA55 command format."""
+    # --- FEAA command building ---
+
+    def test_build_command_status_request(self):
+        """Status request uses FEAA format with cmd_1=0x80, cmd_2=0x00."""
         pkt = self.proto.build_command(1, 0, 1234)
-        assert pkt[0] == 0xAA
-        assert pkt[1] == 0x55
-        assert len(pkt) == 8
+        assert pkt[0] == 0xFE
+        assert pkt[1] == 0xAA
+        assert pkt[6] == 0x80  # cmd_1 (status query)
+        assert pkt[7] == 0x00  # cmd_2 (read)
+        # Checksum is sum of all previous bytes & 0xFF
+        assert pkt[-1] == sum(pkt[:-1]) & 0xFF
+
+    def test_build_command_power_on(self):
+        """Power on uses FEAA with cmd_1=0x81, cmd_2=0x03, payload=1."""
+        pkt = self.proto.build_command(3, 1, 1234)  # cmd=3 (power), arg=1 (on)
+        assert pkt[0] == 0xFE
+        assert pkt[1] == 0xAA
+        assert pkt[6] == 0x81  # cmd_1 (power command)
+        assert pkt[7] == 0x03  # cmd_2 (with payload)
+        assert pkt[8] == 0x01  # payload: on
+        assert pkt[-1] == sum(pkt[:-1]) & 0xFF
+
+    def test_build_command_power_off(self):
+        """Power off uses FEAA with cmd_1=0x81, cmd_2=0x03, payload=0."""
+        pkt = self.proto.build_command(3, 0, 1234)  # cmd=3 (power), arg=0 (off)
+        assert pkt[0] == 0xFE
+        assert pkt[1] == 0xAA
+        assert pkt[6] == 0x81  # cmd_1 (power command)
+        assert pkt[7] == 0x03  # cmd_2 (with payload)
+        assert pkt[8] == 0x00  # payload: off
+        assert pkt[-1] == sum(pkt[:-1]) & 0xFF
+
+    def test_build_command_set_temperature(self):
+        """Set temperature uses FEAA with cmd_1=0x81, payload=[2, temp]."""
+        pkt = self.proto.build_command(4, 25, 1234)  # cmd=4 (set temp), arg=25
+        assert pkt[0] == 0xFE
+        assert pkt[1] == 0xAA
+        assert pkt[6] == 0x81  # cmd_1 (control command)
+        assert pkt[7] == 0x03  # cmd_2 (with payload)
+        assert pkt[8] == 0x02  # run_mode: temperature
+        assert pkt[9] == 25    # run_param: temperature value
+        assert pkt[-1] == sum(pkt[:-1]) & 0xFF
+
+    def test_build_command_set_level(self):
+        """Set level uses FEAA with cmd_1=0x81, payload=[1, level]."""
+        pkt = self.proto.build_command(5, 7, 1234)  # cmd=5 (set level), arg=7
+        assert pkt[0] == 0xFE
+        assert pkt[1] == 0xAA
+        assert pkt[6] == 0x81  # cmd_1 (control command)
+        assert pkt[7] == 0x03  # cmd_2 (with payload)
+        assert pkt[8] == 0x01  # run_mode: level
+        assert pkt[9] == 7     # run_param: level value
+        assert pkt[-1] == sum(pkt[:-1]) & 0xFF
+
+    def test_build_command_set_mode(self):
+        """Set mode uses FEAA with cmd_1=0x81, cmd_2=0x02."""
+        pkt = self.proto.build_command(2, 1, 1234)
+        assert pkt[0] == 0xFE
+        assert pkt[1] == 0xAA
+        assert pkt[6] == 0x81  # cmd_1 (control command)
+        assert pkt[7] == 0x02  # cmd_2 (without payload)
+        assert pkt[-1] == sum(pkt[:-1]) & 0xFF
+
+    def test_build_command_config_uses_aa55_fallback(self):
+        """Config commands (14-21) fall back to AA55 format."""
+        for cmd in (14, 15, 16, 17, 19, 20, 21):
+            pkt = self.proto.build_command(cmd, 0, 1234)
+            assert pkt[0] == 0xAA
+            assert pkt[1] == 0x55
+            assert len(pkt) == 8
+
+    def test_build_command_unknown_defaults_to_status(self):
+        """Unknown command defaults to status request."""
+        pkt = self.proto.build_command(99, 0, 1234)
+        assert pkt[0] == 0xFE
+        assert pkt[1] == 0xAA
+        assert pkt[6] == 0x80  # status query
+        assert pkt[7] == 0x00  # read
+
+    def test_feaa_packet_length_field(self):
+        """FEAA packet length field is correct (uint16 LE)."""
+        pkt = self.proto.build_command(1, 0, 1234)  # status request (9 bytes)
+        # Length field is bytes 4-5 (LE), should be 9
+        length = pkt[4] | (pkt[5] << 8)
+        assert length == len(pkt)
+
+    def test_feaa_checksum_calculation(self):
+        """Verify FEAA checksum is sum of all previous bytes & 0xFF."""
+        pkt = self.proto.build_command(3, 1, 1234)  # power on
+        expected_checksum = sum(pkt[:-1]) & 0xFF
+        assert pkt[-1] == expected_checksum
 
     def test_is_heater_protocol(self):
         assert isinstance(self.proto, HeaterProtocol)
 
-    def test_is_vevor_command_mixin(self):
-        assert isinstance(self.proto, VevorCommandMixin)
+    def test_not_vevor_command_mixin(self):
+        """CBFF no longer uses VevorCommandMixin (uses FEAA instead)."""
+        assert not isinstance(self.proto, VevorCommandMixin)

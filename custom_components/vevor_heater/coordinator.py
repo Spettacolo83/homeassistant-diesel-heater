@@ -392,6 +392,18 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._logger.warning("Invalid external sensor value: %s", state.state)
             return
 
+        # Check if external sensor uses Fahrenheit and convert to Celsius
+        # The heater offset calculation must be done in Celsius
+        unit = state.attributes.get("unit_of_measurement", "")
+        if unit in ("°F", "℉", "F"):
+            # Convert Fahrenheit to Celsius: C = (F - 32) * 5/9
+            external_temp_celsius = (external_temp - 32) * 5 / 9
+            self._logger.debug(
+                "External sensor in Fahrenheit: %.1f°F → %.1f°C",
+                external_temp, external_temp_celsius
+            )
+            external_temp = external_temp_celsius
+
         # Get heater's raw cab temperature (before any offset)
         raw_heater_temp = self.data.get("cab_temperature_raw")
         if raw_heater_temp is None:
@@ -1437,8 +1449,32 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._logger.warning("🌡️ SET TEMPERATURE FAILED: command not sent successfully")
 
     async def async_set_mode(self, mode: int) -> None:
-        """Set running mode (0=Manual, 1=Level, 2=Temperature)."""
-        # Command 2 for mode (needs verification)
+        """Set running mode (0=Manual, 1=Level, 2=Temperature, 3=Ventilation).
+
+        Mode 3 (Ventilation) is ABBA-only and only works when heater is in standby.
+        It activates fan-only mode without heating.
+        """
+        # Ventilation mode (ABBA only)
+        if mode == 3:
+            if self._protocol_mode != 5:
+                self._logger.warning("Ventilation mode is only available for ABBA devices")
+                return
+
+            running_step = self.data.get("running_step", 0)
+            if running_step not in (0, 6):  # STANDBY or VENTILATION
+                self._logger.warning(
+                    "Ventilation mode only available when heater is off (current step: %d)",
+                    running_step
+                )
+                return
+
+            self._logger.info("Activating ventilation mode (ABBA 0xA4)")
+            success = await self._send_command(101, 0)  # Command 101 = ventilation
+            if success:
+                await self.async_request_refresh()
+            return
+
+        # Standard modes (0-2)
         mode = max(0, min(2, mode))
         self._logger.info("Setting running mode to %d", mode)
         success = await self._send_command(2, mode)

@@ -17,13 +17,18 @@ from custom_components.vevor_heater.select import (
 )
 
 
-def create_mock_coordinator() -> MagicMock:
-    """Create a mock coordinator for select testing."""
+def create_mock_coordinator(protocol_mode: int = 1) -> MagicMock:
+    """Create a mock coordinator for select testing.
+
+    Args:
+        protocol_mode: Protocol mode (1=AA55, 5=ABBA, etc.)
+    """
     coordinator = MagicMock()
     coordinator._address = "AA:BB:CC:DD:EE:FF"
     coordinator.address = "AA:BB:CC:DD:EE:FF"
     coordinator._heater_id = "EE:FF"
     coordinator.last_update_success = True
+    coordinator.protocol_mode = protocol_mode
     coordinator.send_command = AsyncMock(return_value=True)
     coordinator.async_set_mode = AsyncMock()
     coordinator.async_set_language = AsyncMock()
@@ -34,6 +39,7 @@ def create_mock_coordinator() -> MagicMock:
     coordinator.data = {
         "connected": True,
         "running_mode": 1,  # Level mode
+        "running_step": 0,  # Standby
         "backlight": 3,
         "language": 0,  # English
         "pump_type": 1,  # 22µl
@@ -74,19 +80,19 @@ class TestVevorHeaterModeSelect:
 
         assert select.current_option is None
 
-    def test_options_attr_not_empty(self):
-        """Test _attr_options list is not empty."""
+    def test_options_not_empty(self):
+        """Test options property is not empty."""
         coordinator = create_mock_coordinator()
         select = VevorHeaterModeSelect(coordinator)
 
-        assert len(select._attr_options) > 0
+        assert len(select.options) > 0
 
-    def test_options_has_two_modes(self):
-        """Test _attr_options has exactly two modes."""
-        coordinator = create_mock_coordinator()
+    def test_options_has_two_modes_for_non_abba(self):
+        """Test options has exactly two modes for non-ABBA protocols."""
+        coordinator = create_mock_coordinator(protocol_mode=1)  # AA55
         select = VevorHeaterModeSelect(coordinator)
 
-        assert len(select._attr_options) == 2
+        assert len(select.options) == 2
 
     def test_unique_id(self):
         """Test unique_id format."""
@@ -117,7 +123,7 @@ class TestVevorHeaterModeSelect:
         select = VevorHeaterModeSelect(coordinator)
 
         # Get the level mode option name
-        level_option = select._attr_options[0]  # First option is Level
+        level_option = select.options[0]  # First option is Level
         await select.async_select_option(level_option)
 
         coordinator.async_set_mode.assert_called_once()
@@ -129,7 +135,7 @@ class TestVevorHeaterModeSelect:
         select = VevorHeaterModeSelect(coordinator)
 
         # Get the temperature mode option name
-        temp_option = select._attr_options[1]  # Second option is Temperature
+        temp_option = select.options[1]  # Second option is Temperature
         await select.async_select_option(temp_option)
 
         coordinator.async_set_mode.assert_called_once()
@@ -143,6 +149,81 @@ class TestVevorHeaterModeSelect:
         await select.async_select_option("Unknown Mode")
 
         coordinator.async_set_mode.assert_not_called()
+
+    # ABBA Ventilation Mode tests (Issue #30)
+    def test_abba_options_include_ventilation_when_standby(self):
+        """Test ABBA protocol includes Ventilation option when in standby."""
+        coordinator = create_mock_coordinator(protocol_mode=5)  # ABBA
+        coordinator.data["running_step"] = 0  # Standby
+        select = VevorHeaterModeSelect(coordinator)
+
+        assert len(select.options) == 3
+        assert "Ventilation" in select.options
+
+    def test_abba_options_include_ventilation_when_already_ventilating(self):
+        """Test ABBA protocol includes Ventilation when already ventilating."""
+        coordinator = create_mock_coordinator(protocol_mode=5)  # ABBA
+        coordinator.data["running_step"] = 6  # Ventilation
+        select = VevorHeaterModeSelect(coordinator)
+
+        assert len(select.options) == 3
+        assert "Ventilation" in select.options
+
+    def test_abba_options_exclude_ventilation_when_running(self):
+        """Test ABBA protocol excludes Ventilation when heater is running."""
+        coordinator = create_mock_coordinator(protocol_mode=5)  # ABBA
+        coordinator.data["running_step"] = 3  # Running
+        select = VevorHeaterModeSelect(coordinator)
+
+        assert len(select.options) == 2
+        assert "Ventilation" not in select.options
+
+    def test_abba_options_exclude_ventilation_when_ignition(self):
+        """Test ABBA protocol excludes Ventilation during ignition."""
+        coordinator = create_mock_coordinator(protocol_mode=5)  # ABBA
+        coordinator.data["running_step"] = 2  # Ignition
+        select = VevorHeaterModeSelect(coordinator)
+
+        assert len(select.options) == 2
+        assert "Ventilation" not in select.options
+
+    def test_abba_options_exclude_ventilation_when_cooldown(self):
+        """Test ABBA protocol excludes Ventilation during cooldown."""
+        coordinator = create_mock_coordinator(protocol_mode=5)  # ABBA
+        coordinator.data["running_step"] = 4  # Cooldown
+        select = VevorHeaterModeSelect(coordinator)
+
+        assert len(select.options) == 2
+        assert "Ventilation" not in select.options
+
+    def test_non_abba_never_shows_ventilation(self):
+        """Test non-ABBA protocols never show Ventilation option."""
+        for protocol in [1, 2, 4, 6]:  # AA55, AA55Encrypted, AA66, CBFF
+            coordinator = create_mock_coordinator(protocol_mode=protocol)
+            coordinator.data["running_step"] = 0  # Standby
+            select = VevorHeaterModeSelect(coordinator)
+
+            assert "Ventilation" not in select.options
+
+    def test_current_option_ventilation_when_ventilating(self):
+        """Test current_option returns Ventilation when running_step is ventilation."""
+        coordinator = create_mock_coordinator(protocol_mode=5)  # ABBA
+        coordinator.data["running_step"] = 6  # Ventilation
+        coordinator.data["running_mode"] = 1  # Level mode (should be overridden)
+        select = VevorHeaterModeSelect(coordinator)
+
+        assert select.current_option == "Ventilation"
+
+    @pytest.mark.asyncio
+    async def test_async_select_option_ventilation(self):
+        """Test selecting ventilation mode for ABBA."""
+        coordinator = create_mock_coordinator(protocol_mode=5)  # ABBA
+        coordinator.data["running_step"] = 0  # Standby
+        select = VevorHeaterModeSelect(coordinator)
+
+        await select.async_select_option("Ventilation")
+
+        coordinator.async_set_mode.assert_called_once_with(3)  # RUNNING_MODE_VENTILATION
 
     @pytest.mark.asyncio
     async def test_async_added_to_hass(self):

@@ -123,6 +123,14 @@ def create_mock_coordinator() -> VevorHeaterCoordinator:
     coordinator._consecutive_failures = 0
     coordinator._max_stale_cycles = 3
     coordinator._is_abba_device = False
+    coordinator._connection_attempts = 0
+    coordinator._last_connection_attempt = 0.0
+    coordinator._client = None
+    coordinator._ble_device = ble_device
+    coordinator._characteristic = None
+    coordinator._active_char_uuid = None
+    coordinator._abba_write_char = None
+    coordinator._notification_data = None
 
     # Volatile fields for clear/restore/save
     coordinator._VOLATILE_FIELDS = (
@@ -2171,6 +2179,94 @@ class TestAutoOffsetCalculation:
         # Offset unchanged, should not call
         coordinator.async_set_heater_offset.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_auto_offset_fahrenheit_external_sensor(self):
+        """Test auto offset correctly converts Fahrenheit external sensor to Celsius.
+
+        Issue #31: External sensor in Fahrenheit was not converted before offset calculation.
+        Example: External=52.1°F (11.2°C), Heater=12°C → offset should be ~-1, not +40.
+        """
+        from custom_components.vevor_heater.const import CONF_EXTERNAL_TEMP_SENSOR, CONF_AUTO_OFFSET_MAX
+
+        coordinator = create_mock_coordinator()
+        coordinator.data["auto_offset_enabled"] = True
+        coordinator.data["cab_temperature_raw"] = 12  # Heater reads 12°C
+        coordinator.config_entry.data = {
+            "address": "AA:BB:CC:DD:EE:FF",
+            CONF_EXTERNAL_TEMP_SENSOR: "sensor.temp",
+            CONF_AUTO_OFFSET_MAX: 5,
+        }
+        coordinator._last_auto_offset_time = 0
+        coordinator._current_heater_offset = 0
+
+        # External sensor reports 53.6°F which is ~12°C
+        mock_state = MagicMock()
+        mock_state.state = "53.6"
+        mock_state.attributes = {"unit_of_measurement": "°F"}
+        coordinator.hass.states.get = MagicMock(return_value=mock_state)
+        coordinator.async_set_heater_offset = AsyncMock()
+
+        await coordinator._async_calculate_auto_offset()
+
+        # 53.6°F = 12°C, heater=12°C, difference=0 → no offset needed
+        coordinator.async_set_heater_offset.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_auto_offset_fahrenheit_with_difference(self):
+        """Test auto offset with Fahrenheit sensor and significant difference."""
+        from custom_components.vevor_heater.const import CONF_EXTERNAL_TEMP_SENSOR, CONF_AUTO_OFFSET_MAX
+
+        coordinator = create_mock_coordinator()
+        coordinator.data["auto_offset_enabled"] = True
+        coordinator.data["cab_temperature_raw"] = 15  # Heater reads 15°C
+        coordinator.config_entry.data = {
+            "address": "AA:BB:CC:DD:EE:FF",
+            CONF_EXTERNAL_TEMP_SENSOR: "sensor.temp",
+            CONF_AUTO_OFFSET_MAX: 5,
+        }
+        coordinator._last_auto_offset_time = 0
+        coordinator._current_heater_offset = 0
+
+        # External sensor reports 50°F which is 10°C
+        # 50°F = (50-32) * 5/9 = 10°C
+        mock_state = MagicMock()
+        mock_state.state = "50"
+        mock_state.attributes = {"unit_of_measurement": "°F"}
+        coordinator.hass.states.get = MagicMock(return_value=mock_state)
+        coordinator.async_set_heater_offset = AsyncMock()
+
+        await coordinator._async_calculate_auto_offset()
+
+        # External=10°C, heater=15°C, difference=-5 → offset=-5
+        coordinator.async_set_heater_offset.assert_called_once_with(-5)
+
+    @pytest.mark.asyncio
+    async def test_auto_offset_celsius_unit_explicit(self):
+        """Test auto offset with explicit Celsius unit works normally."""
+        from custom_components.vevor_heater.const import CONF_EXTERNAL_TEMP_SENSOR, CONF_AUTO_OFFSET_MAX
+
+        coordinator = create_mock_coordinator()
+        coordinator.data["auto_offset_enabled"] = True
+        coordinator.data["cab_temperature_raw"] = 25  # Heater reads 25°C
+        coordinator.config_entry.data = {
+            "address": "AA:BB:CC:DD:EE:FF",
+            CONF_EXTERNAL_TEMP_SENSOR: "sensor.temp",
+            CONF_AUTO_OFFSET_MAX: 5,
+        }
+        coordinator._last_auto_offset_time = 0
+        coordinator._current_heater_offset = 0
+
+        mock_state = MagicMock()
+        mock_state.state = "22"  # External reads 22°C
+        mock_state.attributes = {"unit_of_measurement": "°C"}
+        coordinator.hass.states.get = MagicMock(return_value=mock_state)
+        coordinator.async_set_heater_offset = AsyncMock()
+
+        await coordinator._async_calculate_auto_offset()
+
+        # External=22°C, heater=25°C, difference=-3 → offset=-3
+        coordinator.async_set_heater_offset.assert_called_once_with(-3)
+
 
 # ---------------------------------------------------------------------------
 # Connection failure handling tests
@@ -2990,3 +3086,938 @@ class TestAsyncCommands2:
         await coordinator.async_set_temperature(22)
 
         coordinator.async_request_refresh.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Tests for _ensure_connected (lines 903-1046)
+# ---------------------------------------------------------------------------
+
+class TestEnsureConnected:
+    """Tests for the _ensure_connected BLE connection method."""
+
+    @pytest.mark.asyncio
+    async def test_already_connected_returns_immediately(self):
+        """Test _ensure_connected returns immediately if already connected."""
+        coordinator = create_mock_coordinator()
+        mock_client = MagicMock()
+        mock_client.is_connected = True
+        coordinator._client = mock_client
+        coordinator._connection_attempts = 5
+
+        await coordinator._ensure_connected()
+
+        # Connection attempts should be reset
+        assert coordinator._connection_attempts == 0
+
+    @pytest.mark.asyncio
+    async def test_exponential_backoff_delay(self):
+        """Test exponential backoff is applied between connection attempts."""
+        import time
+        coordinator = create_mock_coordinator()
+        coordinator._client = None
+        coordinator._ble_device = MagicMock()
+        coordinator._ble_device.address = "AA:BB:CC:DD:EE:FF"
+        coordinator._connection_attempts = 1
+        coordinator._last_connection_attempt = time.time() - 2  # 2 seconds ago
+        coordinator._cleanup_connection = AsyncMock()
+
+        # Mock establish_connection to raise an exception
+        with patch(
+            "custom_components.vevor_heater.coordinator.establish_connection",
+            new_callable=AsyncMock,
+        ) as mock_establish:
+            mock_establish.side_effect = Exception("Connection failed")
+            coordinator._cleanup_connection = AsyncMock()
+
+            with pytest.raises(Exception, match="Connection failed"):
+                await coordinator._ensure_connected()
+
+    @pytest.mark.asyncio
+    async def test_connection_cleanup_on_stale_client(self):
+        """Test cleanup is called before new connection attempt."""
+        coordinator = create_mock_coordinator()
+        coordinator._client = MagicMock()
+        coordinator._client.is_connected = False  # Stale connection
+        coordinator._ble_device = MagicMock()
+        coordinator._ble_device.address = "AA:BB:CC:DD:EE:FF"
+        coordinator._cleanup_connection = AsyncMock()
+        coordinator._connection_attempts = 0
+
+        with patch(
+            "custom_components.vevor_heater.coordinator.establish_connection",
+            new_callable=AsyncMock,
+        ) as mock_establish:
+            mock_establish.side_effect = Exception("Test error")
+            coordinator._cleanup_connection = AsyncMock()
+
+            with pytest.raises(Exception):
+                await coordinator._ensure_connected()
+
+            # Cleanup should be called at least once
+            assert coordinator._cleanup_connection.call_count >= 1
+
+    @pytest.mark.asyncio
+    async def test_abba_device_detection(self):
+        """Test ABBA/HeaterCC device detection via fff0 service."""
+        from custom_components.vevor_heater.const import (
+            ABBA_SERVICE_UUID,
+            ABBA_NOTIFY_UUID,
+            ABBA_WRITE_UUID,
+        )
+
+        coordinator = create_mock_coordinator()
+        coordinator._client = None
+        coordinator._ble_device = MagicMock()
+        coordinator._ble_device.address = "AA:BB:CC:DD:EE:FF"
+        coordinator._cleanup_connection = AsyncMock()
+        coordinator._send_wake_up_ping = AsyncMock()
+        coordinator._is_abba_device = False
+        coordinator._abba_write_char = None
+        coordinator._characteristic = None
+        coordinator._active_char_uuid = None
+
+        # Mock BLE client with ABBA service
+        mock_client = MagicMock()
+        mock_client.is_connected = True
+
+        # Create mock characteristics
+        mock_notify_char = MagicMock()
+        mock_notify_char.uuid = ABBA_NOTIFY_UUID
+        mock_notify_char.properties = ["notify"]
+
+        mock_write_char = MagicMock()
+        mock_write_char.uuid = ABBA_WRITE_UUID
+        mock_write_char.properties = ["write"]
+
+        # Create mock service
+        mock_service = MagicMock()
+        mock_service.uuid = ABBA_SERVICE_UUID
+        mock_service.characteristics = [mock_notify_char, mock_write_char]
+
+        mock_client.services = [mock_service]
+        mock_client.start_notify = AsyncMock()
+
+        with patch(
+            "custom_components.vevor_heater.coordinator.establish_connection",
+            new_callable=AsyncMock,
+            return_value=mock_client,
+        ):
+            await coordinator._ensure_connected()
+
+        assert coordinator._is_abba_device is True
+        assert coordinator._protocol_mode == 5
+        assert coordinator._characteristic == mock_notify_char
+        assert coordinator._abba_write_char == mock_write_char
+
+    @pytest.mark.asyncio
+    async def test_abba_fallback_write_char(self):
+        """Test ABBA falls back to fff1 if fff2 not available."""
+        from custom_components.vevor_heater.const import (
+            ABBA_SERVICE_UUID,
+            ABBA_NOTIFY_UUID,
+        )
+
+        coordinator = create_mock_coordinator()
+        coordinator._client = None
+        coordinator._ble_device = MagicMock()
+        coordinator._ble_device.address = "AA:BB:CC:DD:EE:FF"
+        coordinator._cleanup_connection = AsyncMock()
+        coordinator._send_wake_up_ping = AsyncMock()
+        coordinator._is_abba_device = False
+        coordinator._abba_write_char = None
+        coordinator._characteristic = None
+        coordinator._active_char_uuid = None
+
+        # Mock BLE client with ABBA service but NO write characteristic
+        mock_client = MagicMock()
+        mock_client.is_connected = True
+
+        mock_notify_char = MagicMock()
+        mock_notify_char.uuid = ABBA_NOTIFY_UUID
+        mock_notify_char.properties = ["notify", "write"]  # fff1 has write too
+
+        mock_service = MagicMock()
+        mock_service.uuid = ABBA_SERVICE_UUID
+        mock_service.characteristics = [mock_notify_char]  # Only fff1
+
+        mock_client.services = [mock_service]
+        mock_client.start_notify = AsyncMock()
+
+        with patch(
+            "custom_components.vevor_heater.coordinator.establish_connection",
+            new_callable=AsyncMock,
+            return_value=mock_client,
+        ):
+            await coordinator._ensure_connected()
+
+        # Should fall back to using notify char for writing
+        assert coordinator._abba_write_char == mock_notify_char
+        coordinator._logger.warning.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_vevor_service_discovery(self):
+        """Test standard Vevor service/characteristic discovery."""
+        from custom_components.vevor_heater.const import (
+            SERVICE_UUID,
+            CHARACTERISTIC_UUID,
+        )
+
+        coordinator = create_mock_coordinator()
+        coordinator._client = None
+        coordinator._ble_device = MagicMock()
+        coordinator._ble_device.address = "AA:BB:CC:DD:EE:FF"
+        coordinator._cleanup_connection = AsyncMock()
+        coordinator._send_wake_up_ping = AsyncMock()
+        coordinator._is_abba_device = False
+        coordinator._abba_write_char = None
+        coordinator._characteristic = None
+        coordinator._active_char_uuid = None
+
+        mock_client = MagicMock()
+        mock_client.is_connected = True
+
+        mock_char = MagicMock()
+        mock_char.uuid = CHARACTERISTIC_UUID
+        mock_char.properties = ["notify", "write"]
+
+        mock_service = MagicMock()
+        mock_service.uuid = SERVICE_UUID
+        mock_service.characteristics = [mock_char]
+
+        mock_client.services = [mock_service]
+        mock_client.start_notify = AsyncMock()
+
+        with patch(
+            "custom_components.vevor_heater.coordinator.establish_connection",
+            new_callable=AsyncMock,
+            return_value=mock_client,
+        ):
+            await coordinator._ensure_connected()
+
+        assert coordinator._is_abba_device is False
+        assert coordinator._characteristic == mock_char
+        assert coordinator._active_char_uuid == CHARACTERISTIC_UUID
+
+    @pytest.mark.asyncio
+    async def test_no_services_discovered(self):
+        """Test handling when no services are discovered."""
+        coordinator = create_mock_coordinator()
+        coordinator._client = None
+        coordinator._ble_device = MagicMock()
+        coordinator._ble_device.address = "AA:BB:CC:DD:EE:FF"
+        coordinator._cleanup_connection = AsyncMock()
+
+        mock_client = MagicMock()
+        mock_client.is_connected = True
+        mock_client.services = None  # No services
+
+        with patch(
+            "custom_components.vevor_heater.coordinator.establish_connection",
+            new_callable=AsyncMock,
+            return_value=mock_client,
+        ):
+            with pytest.raises(Exception) as exc_info:
+                await coordinator._ensure_connected()
+            assert "No services available" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_characteristic_not_found(self):
+        """Test error when heater characteristic not found."""
+        coordinator = create_mock_coordinator()
+        coordinator._client = None
+        coordinator._ble_device = MagicMock()
+        coordinator._ble_device.address = "AA:BB:CC:DD:EE:FF"
+        coordinator._cleanup_connection = AsyncMock()
+        coordinator._is_abba_device = False
+        coordinator._abba_write_char = None
+        coordinator._characteristic = None
+        coordinator._active_char_uuid = None
+
+        mock_client = MagicMock()
+        mock_client.is_connected = True
+
+        # Service with unrelated characteristic
+        mock_service = MagicMock()
+        mock_service.uuid = "00001234-0000-1000-8000-00805f9b34fb"
+        mock_service.characteristics = []
+
+        mock_client.services = [mock_service]
+
+        with patch(
+            "custom_components.vevor_heater.coordinator.establish_connection",
+            new_callable=AsyncMock,
+            return_value=mock_client,
+        ):
+            with pytest.raises(Exception) as exc_info:
+                await coordinator._ensure_connected()
+            assert "Could not find heater characteristic" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_characteristic_no_notify(self):
+        """Test warning when characteristic doesn't support notify."""
+        from custom_components.vevor_heater.const import (
+            SERVICE_UUID,
+            CHARACTERISTIC_UUID,
+        )
+
+        coordinator = create_mock_coordinator()
+        coordinator._client = None
+        coordinator._ble_device = MagicMock()
+        coordinator._ble_device.address = "AA:BB:CC:DD:EE:FF"
+        coordinator._cleanup_connection = AsyncMock()
+        coordinator._send_wake_up_ping = AsyncMock()
+        coordinator._is_abba_device = False
+        coordinator._abba_write_char = None
+        coordinator._characteristic = None
+        coordinator._active_char_uuid = None
+
+        mock_client = MagicMock()
+        mock_client.is_connected = True
+
+        mock_char = MagicMock()
+        mock_char.uuid = CHARACTERISTIC_UUID
+        mock_char.properties = ["write"]  # No notify!
+
+        mock_service = MagicMock()
+        mock_service.uuid = SERVICE_UUID
+        mock_service.characteristics = [mock_char]
+
+        mock_client.services = [mock_service]
+
+        with patch(
+            "custom_components.vevor_heater.coordinator.establish_connection",
+            new_callable=AsyncMock,
+            return_value=mock_client,
+        ):
+            await coordinator._ensure_connected()
+
+        # Should log warning about no notify support
+        coordinator._logger.warning.assert_called()
+
+
+# ---------------------------------------------------------------------------
+# Tests for _notification_callback and _parse_response (lines 1048-1165)
+# ---------------------------------------------------------------------------
+
+class TestNotificationCallback:
+    """Tests for notification callback and response parsing."""
+
+    def test_notification_callback_logs_and_parses(self):
+        """Test _notification_callback logs data and calls _parse_response."""
+        coordinator = create_mock_coordinator()
+        coordinator._parse_response = MagicMock()
+
+        data = bytearray([0xAA, 0x55, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00])
+        coordinator._notification_callback(0, data)
+
+        coordinator._logger.info.assert_called()
+        coordinator._parse_response.assert_called_once_with(data)
+
+    def test_notification_callback_catches_parse_errors(self):
+        """Test _notification_callback catches and logs parse errors."""
+        coordinator = create_mock_coordinator()
+        coordinator._parse_response = MagicMock(side_effect=ValueError("Parse error"))
+
+        data = bytearray([0xAA, 0x55, 0x00, 0x01])
+        coordinator._notification_callback(0, data)
+
+        coordinator._logger.error.assert_called()
+
+    def test_parse_response_too_short(self):
+        """Test _parse_response handles short data."""
+        coordinator = create_mock_coordinator()
+        coordinator._notification_data = None
+
+        data = bytearray([0x00, 0x01, 0x02])  # Too short
+        coordinator._parse_response(data)
+
+        coordinator._logger.debug.assert_called()
+
+    def test_parse_response_aa77_ack_short(self):
+        """Test _parse_response handles short AA77 ACK."""
+        coordinator = create_mock_coordinator()
+        coordinator._notification_data = None
+
+        data = bytearray([0xAA, 0x77, 0x01, 0x02, 0x03])  # Short but valid AA77
+        coordinator._parse_response(data)
+
+        assert coordinator._notification_data == data
+
+    def test_parse_response_aa77_ack_full(self):
+        """Test _parse_response handles full AA77 ACK."""
+        coordinator = create_mock_coordinator()
+        coordinator._notification_data = None
+
+        data = bytearray([0xAA, 0x77] + [0x00] * 8)  # Full AA77
+        coordinator._parse_response(data)
+
+        assert coordinator._notification_data == data
+
+    def test_parse_response_unknown_protocol(self):
+        """Test _parse_response logs warning for unknown protocol."""
+        coordinator = create_mock_coordinator()
+
+        # Unknown header
+        data = bytearray([0x12, 0x34] + [0x00] * 16)
+        coordinator._parse_response(data)
+
+        coordinator._logger.warning.assert_called()
+
+    def test_parse_response_parse_error_handling(self):
+        """Test _parse_response handles protocol parse errors gracefully."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 1
+        coordinator._is_abba_device = False
+        coordinator._notification_data = None
+
+        # Create a mock protocol that raises on parse
+        mock_protocol = MagicMock()
+        mock_protocol.protocol_mode = 1
+        mock_protocol.name = "TestProtocol"
+        mock_protocol.parse = MagicMock(side_effect=ValueError("Bad data"))
+
+        # Mock _detect_protocol to return our failing protocol
+        coordinator._detect_protocol = MagicMock(
+            return_value=(mock_protocol, bytearray(18))
+        )
+
+        # Valid AA55 header but bad data
+        data = bytearray([0xAA, 0x55] + [0x00] * 16)
+        coordinator._parse_response(data)
+
+        # Should set default values on error
+        assert coordinator.data["connected"] is True
+        assert coordinator.data["running_state"] == 0
+        coordinator._logger.error.assert_called()
+
+    def test_parse_response_parsed_none(self):
+        """Test _parse_response handles None parse result."""
+        coordinator = create_mock_coordinator()
+
+        # Mock protocol that returns None
+        mock_protocol = MagicMock()
+        mock_protocol.protocol_mode = 1
+        mock_protocol.parse.return_value = None
+
+        coordinator._detect_protocol = MagicMock(return_value=(mock_protocol, bytearray(18)))
+
+        data = bytearray([0xAA, 0x55] + [0x00] * 16)
+        coordinator._parse_response(data)
+
+        assert coordinator.data["connected"] is True
+
+
+class TestDetectProtocol:
+    """Tests for protocol detection logic."""
+
+    def test_detect_cbff_protocol(self):
+        """Test CBFF protocol detection."""
+        coordinator = create_mock_coordinator()
+
+        data = bytearray([0xCB, 0xFF] + [0x00] * 30)
+        protocol, parse_data = coordinator._detect_protocol(data, 0xCBFF)
+
+        assert protocol == coordinator._protocols[6]
+        assert parse_data == data
+
+    def test_detect_abba_protocol(self):
+        """Test ABBA protocol detection."""
+        coordinator = create_mock_coordinator()
+
+        data = bytearray([0xAB, 0xBA] + [0x00] * 19)
+        protocol, parse_data = coordinator._detect_protocol(data, 0xABBA)
+
+        assert protocol == coordinator._protocols[5]
+
+    def test_detect_abba_by_device_flag(self):
+        """Test ABBA detection when device flag is set."""
+        coordinator = create_mock_coordinator()
+        coordinator._is_abba_device = True
+
+        data = bytearray([0x00, 0x00] + [0x00] * 19)
+        protocol, parse_data = coordinator._detect_protocol(data, 0x0000)
+
+        assert protocol == coordinator._protocols[5]
+
+    def test_detect_aa55_unencrypted(self):
+        """Test AA55 unencrypted protocol detection."""
+        coordinator = create_mock_coordinator()
+
+        data = bytearray(18)
+        data[0], data[1] = 0xAA, 0x55
+        protocol, parse_data = coordinator._detect_protocol(data, 0xAA55)
+
+        assert protocol == coordinator._protocols[1]
+
+    def test_detect_aa66_unencrypted(self):
+        """Test AA66 unencrypted protocol detection."""
+        coordinator = create_mock_coordinator()
+
+        data = bytearray(20)
+        data[0], data[1] = 0xAA, 0x66
+        protocol, parse_data = coordinator._detect_protocol(data, 0xAA66)
+
+        assert protocol == coordinator._protocols[3]
+
+    def test_detect_aa55_encrypted(self):
+        """Test AA55 encrypted (48 bytes) protocol detection."""
+        from diesel_heater_ble import _encrypt_data
+
+        coordinator = create_mock_coordinator()
+
+        # Create unencrypted AA55 data
+        plain = bytearray(48)
+        plain[0], plain[1] = 0xAA, 0x55
+
+        # Encrypt it
+        encrypted = _encrypt_data(plain)
+
+        protocol, parse_data = coordinator._detect_protocol(encrypted, 0)
+
+        assert protocol == coordinator._protocols[2]
+
+    def test_detect_aa66_encrypted(self):
+        """Test AA66 encrypted (48 bytes) protocol detection."""
+        from diesel_heater_ble import _encrypt_data
+
+        coordinator = create_mock_coordinator()
+
+        # Create unencrypted AA66 data
+        plain = bytearray(48)
+        plain[0], plain[1] = 0xAA, 0x66
+
+        # Encrypt it
+        encrypted = _encrypt_data(plain)
+
+        protocol, parse_data = coordinator._detect_protocol(encrypted, 0)
+
+        assert protocol == coordinator._protocols[4]
+
+    def test_detect_unknown_protocol(self):
+        """Test unknown protocol returns None."""
+        coordinator = create_mock_coordinator()
+
+        data = bytearray([0x12, 0x34] + [0x00] * 16)
+        protocol, parse_data = coordinator._detect_protocol(data, 0x1234)
+
+        assert protocol is None
+        assert parse_data is None
+
+    def test_detect_short_data(self):
+        """Test short data returns None."""
+        coordinator = create_mock_coordinator()
+
+        data = bytearray([0xAA, 0x55, 0x00])  # Too short
+        protocol, parse_data = coordinator._detect_protocol(data, 0xAA55)
+
+        assert protocol is None
+
+
+# ---------------------------------------------------------------------------
+# Tests for CBFF decryption and temp_unit detection (lines 1147-1165)
+# ---------------------------------------------------------------------------
+
+class TestCBFFDecryption:
+    """Tests for CBFF decryption status logging."""
+
+    def test_cbff_decrypted_flag_logged(self):
+        """Test CBFF decrypted flag triggers info log."""
+        coordinator = create_mock_coordinator()
+        coordinator.address = "AA:BB:CC:DD:EE:FF"
+
+        mock_protocol = MagicMock()
+        mock_protocol.protocol_mode = 6
+        mock_protocol.parse.return_value = {"_cbff_decrypted": True, "running_state": 1}
+
+        coordinator._detect_protocol = MagicMock(return_value=(mock_protocol, bytearray(32)))
+
+        data = bytearray([0xCB, 0xFF] + [0x00] * 30)
+        coordinator._parse_response(data)
+
+        # Should log decryption success
+        coordinator._logger.info.assert_called()
+
+    def test_cbff_suspect_data_logged(self):
+        """Test CBFF suspect data triggers warning log."""
+        coordinator = create_mock_coordinator()
+
+        mock_protocol = MagicMock()
+        mock_protocol.protocol_mode = 6
+        mock_protocol.parse.return_value = {
+            "_cbff_data_suspect": True,
+            "cbff_protocol_version": "1.2",
+            "running_state": 0,
+        }
+
+        coordinator._detect_protocol = MagicMock(return_value=(mock_protocol, bytearray(32)))
+
+        data = bytearray([0xCB, 0xFF] + [0x00] * 30)
+        coordinator._parse_response(data)
+
+        coordinator._logger.warning.assert_called()
+
+    def test_temp_unit_detection_fahrenheit(self):
+        """Test temp_unit detection sets Fahrenheit flag."""
+        coordinator = create_mock_coordinator()
+        coordinator._heater_uses_fahrenheit = False
+
+        mock_protocol = MagicMock()
+        mock_protocol.protocol_mode = 1
+        mock_protocol.parse.return_value = {"temp_unit": 1, "running_state": 1}
+
+        coordinator._detect_protocol = MagicMock(return_value=(mock_protocol, bytearray(18)))
+
+        data = bytearray([0xAA, 0x55] + [0x00] * 16)
+        coordinator._parse_response(data)
+
+        assert coordinator._heater_uses_fahrenheit is True
+
+    def test_temp_unit_detection_celsius(self):
+        """Test temp_unit detection sets Celsius flag."""
+        coordinator = create_mock_coordinator()
+        coordinator._heater_uses_fahrenheit = True
+
+        mock_protocol = MagicMock()
+        mock_protocol.protocol_mode = 1
+        mock_protocol.parse.return_value = {"temp_unit": 0, "running_state": 1}
+
+        coordinator._detect_protocol = MagicMock(return_value=(mock_protocol, bytearray(18)))
+
+        data = bytearray([0xAA, 0x55] + [0x00] * 16)
+        coordinator._parse_response(data)
+
+        assert coordinator._heater_uses_fahrenheit is False
+
+
+# ---------------------------------------------------------------------------
+# Tests for post-status request (lines 1338-1342)
+# ---------------------------------------------------------------------------
+
+class TestPostStatusRequest:
+    """Tests for post-command status request."""
+
+    @pytest.mark.asyncio
+    async def test_abba_post_status_sent(self):
+        """Test ABBA sends follow-up status request after command."""
+        coordinator = create_mock_coordinator()
+        coordinator._write_gatt = AsyncMock()
+        coordinator._client = MagicMock()
+        coordinator._client.is_connected = True
+        coordinator._characteristic = MagicMock()
+        coordinator._notification_data = None
+
+        # ABBA protocol needs post status
+        mock_protocol = MagicMock()
+        mock_protocol.needs_post_status = True
+        mock_protocol.name = "ABBA"
+        mock_protocol.build_command.return_value = bytearray([0xAB, 0xBA, 0x00, 0x00])
+        coordinator._protocol = mock_protocol
+
+        # Make the notification_data appear after first write
+        async def set_notification_after_write(packet):
+            coordinator._notification_data = bytearray([0x01])
+
+        coordinator._write_gatt.side_effect = set_notification_after_write
+
+        result = await coordinator._send_command(4, 5, timeout=0.2)  # Not command 1
+
+        # Should have called build_command twice (original + status)
+        assert mock_protocol.build_command.call_count == 2
+        # Second call should be status request (command 1)
+        assert mock_protocol.build_command.call_args_list[1][0][0] == 1
+
+    @pytest.mark.asyncio
+    async def test_no_post_status_for_status_command(self):
+        """Test no post-status sent when command is already a status request."""
+        coordinator = create_mock_coordinator()
+        coordinator._write_gatt = AsyncMock()
+        coordinator._client = MagicMock()
+        coordinator._client.is_connected = True
+        coordinator._characteristic = MagicMock()
+        coordinator._notification_data = None
+
+        mock_protocol = MagicMock()
+        mock_protocol.needs_post_status = True
+        mock_protocol.build_command.return_value = bytearray([0xAB, 0xBA, 0x00, 0x00])
+        coordinator._protocol = mock_protocol
+
+        # Make the notification_data appear after first write
+        async def set_notification_after_write(packet):
+            coordinator._notification_data = bytearray([0x01])
+
+        coordinator._write_gatt.side_effect = set_notification_after_write
+
+        result = await coordinator._send_command(1, 0, timeout=0.2)  # Command 1 = status request
+
+        # Should only call build_command once (no post-status for status command)
+        assert mock_protocol.build_command.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Tests for auto-offset disable (lines 1654-1656)
+# ---------------------------------------------------------------------------
+
+class TestAutoOffsetDisable:
+    """Tests for disabling auto-offset."""
+
+    @pytest.mark.asyncio
+    async def test_disable_auto_offset_resets_to_zero(self):
+        """Test disabling auto-offset resets heater offset to 0."""
+        coordinator = create_mock_coordinator()
+        coordinator._current_heater_offset = 5
+        coordinator.async_save_data = AsyncMock()
+        coordinator.async_set_heater_offset = AsyncMock()
+        coordinator._auto_offset_unsub = None
+        coordinator._async_calculate_auto_offset = AsyncMock()
+        coordinator.data["auto_offset_enabled"] = True
+
+        await coordinator.async_set_auto_offset_enabled(False)
+
+        coordinator.async_set_heater_offset.assert_called_once_with(0)
+        assert coordinator.data["auto_offset_enabled"] is False
+
+    @pytest.mark.asyncio
+    async def test_disable_auto_offset_skips_if_already_zero(self):
+        """Test disabling auto-offset doesn't call set_offset if already 0."""
+        coordinator = create_mock_coordinator()
+        coordinator._current_heater_offset = 0
+        coordinator.async_save_data = AsyncMock()
+        coordinator.async_set_heater_offset = AsyncMock()
+        coordinator._auto_offset_unsub = None
+        coordinator._async_calculate_auto_offset = AsyncMock()
+        coordinator.data["auto_offset_enabled"] = True
+
+        await coordinator.async_set_auto_offset_enabled(False)
+
+        coordinator.async_set_heater_offset.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_enable_auto_offset_triggers_calculation(self):
+        """Test enabling auto-offset triggers initial calculation."""
+        coordinator = create_mock_coordinator()
+        coordinator._current_heater_offset = 0
+        coordinator.async_save_data = AsyncMock()
+        coordinator._async_calculate_auto_offset = AsyncMock()
+        coordinator._auto_offset_unsub = None
+        coordinator.data["auto_offset_enabled"] = False
+
+        await coordinator.async_set_auto_offset_enabled(True)
+
+        coordinator._async_calculate_auto_offset.assert_called_once()
+        assert coordinator.data["auto_offset_enabled"] is True
+
+
+# ---------------------------------------------------------------------------
+# Tests for async_send_raw_command (lines 1658-1684)
+# ---------------------------------------------------------------------------
+
+class TestSendRawCommand:
+    """Tests for raw command sending."""
+
+    @pytest.mark.asyncio
+    async def test_send_raw_command_success(self):
+        """Test send_raw_command returns True on success."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator.async_request_refresh = AsyncMock()
+
+        result = await coordinator.async_send_raw_command(99, 42)
+
+        assert result is True
+        coordinator._send_command.assert_called_once_with(99, 42)
+        coordinator.async_request_refresh.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_send_raw_command_failure(self):
+        """Test send_raw_command returns False on failure."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=False)
+        coordinator.async_request_refresh = AsyncMock()
+
+        result = await coordinator.async_send_raw_command(99, 42)
+
+        assert result is False
+        coordinator._logger.warning.assert_called()
+        coordinator.async_request_refresh.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Tests for async_shutdown (lines 1686-1695)
+# ---------------------------------------------------------------------------
+
+class TestAsyncShutdown:
+    """Tests for coordinator shutdown."""
+
+    @pytest.mark.asyncio
+    async def test_shutdown_cleans_up_auto_offset_listener(self):
+        """Test shutdown cleans up external sensor listener."""
+        coordinator = create_mock_coordinator()
+        mock_unsub = MagicMock()
+        coordinator._auto_offset_unsub = mock_unsub
+        coordinator._cleanup_connection = AsyncMock()
+
+        await coordinator.async_shutdown()
+
+        mock_unsub.assert_called_once()
+        assert coordinator._auto_offset_unsub is None
+
+    @pytest.mark.asyncio
+    async def test_shutdown_without_listener(self):
+        """Test shutdown works when no listener registered."""
+        coordinator = create_mock_coordinator()
+        coordinator._auto_offset_unsub = None
+        coordinator._cleanup_connection = AsyncMock()
+
+        await coordinator.async_shutdown()
+
+        coordinator._cleanup_connection.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_shutdown_cleans_up_connection(self):
+        """Test shutdown cleans up BLE connection."""
+        coordinator = create_mock_coordinator()
+        coordinator._auto_offset_unsub = None
+        coordinator._cleanup_connection = AsyncMock()
+
+        await coordinator.async_shutdown()
+
+        coordinator._cleanup_connection.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Tests for set_xxx method failure paths (lines 1475, 1507, 1522, etc.)
+# ---------------------------------------------------------------------------
+
+class TestSetMethodFailures:
+    """Tests for set_xxx method failure paths."""
+
+    @pytest.mark.asyncio
+    async def test_set_heater_offset_failure(self):
+        """Test async_set_heater_offset logs warning on failure."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=False)
+        coordinator._current_heater_offset = 0
+        coordinator.async_request_refresh = AsyncMock()
+
+        await coordinator.async_set_heater_offset(5)
+
+        coordinator._logger.warning.assert_called()
+        # Should not update state on failure
+        assert coordinator._current_heater_offset == 0
+        coordinator.async_request_refresh.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_set_language_failure(self):
+        """Test async_set_language logs warning on failure."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=False)
+        coordinator.async_request_refresh = AsyncMock()
+        coordinator.data["language"] = 0
+
+        await coordinator.async_set_language(1)
+
+        coordinator._logger.warning.assert_called()
+        # Should not update state on failure
+        assert coordinator.data["language"] == 0
+
+    @pytest.mark.asyncio
+    async def test_set_temp_unit_failure(self):
+        """Test async_set_temp_unit logs warning on failure."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=False)
+        coordinator.async_request_refresh = AsyncMock()
+        coordinator.data["temp_unit"] = 0
+
+        await coordinator.async_set_temp_unit(True)  # Try to set Fahrenheit
+
+        coordinator._logger.warning.assert_called()
+        assert coordinator.data["temp_unit"] == 0
+
+    @pytest.mark.asyncio
+    async def test_set_altitude_unit_failure(self):
+        """Test async_set_altitude_unit logs warning on failure."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=False)
+        coordinator.async_request_refresh = AsyncMock()
+        coordinator.data["altitude_unit"] = 0
+
+        await coordinator.async_set_altitude_unit(True)  # Try to set Feet
+
+        coordinator._logger.warning.assert_called()
+        assert coordinator.data["altitude_unit"] == 0
+
+    @pytest.mark.asyncio
+    async def test_set_high_altitude_failure(self):
+        """Test async_set_high_altitude logs warning on failure."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=False)
+        coordinator._is_abba_device = True
+        coordinator.async_request_refresh = AsyncMock()
+        coordinator.data["high_altitude"] = 0
+
+        await coordinator.async_set_high_altitude(True)
+
+        coordinator._logger.warning.assert_called()
+        assert coordinator.data["high_altitude"] == 0
+
+    @pytest.mark.asyncio
+    async def test_set_high_altitude_non_abba_device(self):
+        """Test async_set_high_altitude warns on non-ABBA device."""
+        coordinator = create_mock_coordinator()
+        coordinator._is_abba_device = False
+        coordinator._send_command = AsyncMock()
+
+        await coordinator.async_set_high_altitude(True)
+
+        # Should warn and not send command
+        coordinator._logger.warning.assert_called()
+        coordinator._send_command.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_set_tank_volume_failure(self):
+        """Test async_set_tank_volume logs warning on failure."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=False)
+        coordinator.async_request_refresh = AsyncMock()
+        coordinator.data["tank_volume"] = 0
+
+        await coordinator.async_set_tank_volume(5)
+
+        coordinator._logger.warning.assert_called()
+        assert coordinator.data["tank_volume"] == 0
+
+    @pytest.mark.asyncio
+    async def test_set_pump_type_failure(self):
+        """Test async_set_pump_type logs warning on failure."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=False)
+        coordinator.async_request_refresh = AsyncMock()
+        coordinator.data["pump_type"] = 0
+
+        await coordinator.async_set_pump_type(2)
+
+        coordinator._logger.warning.assert_called()
+        assert coordinator.data["pump_type"] == 0
+
+    @pytest.mark.asyncio
+    async def test_set_backlight_failure(self):
+        """Test async_set_backlight logs warning on failure."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=False)
+        coordinator.async_request_refresh = AsyncMock()
+        coordinator.data["backlight"] = 50
+
+        await coordinator.async_set_backlight(100)
+
+        coordinator._logger.warning.assert_called()
+        assert coordinator.data["backlight"] == 50
+
+    @pytest.mark.asyncio
+    async def test_sync_time_failure(self):
+        """Test async_sync_time logs warning on failure."""
+        coordinator = create_mock_coordinator()
+        coordinator._send_command = AsyncMock(return_value=False)
+
+        await coordinator.async_sync_time()
+
+        coordinator._logger.warning.assert_called()
