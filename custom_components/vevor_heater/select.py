@@ -18,7 +18,10 @@ from .const import (
     PUMP_TYPE_OPTIONS,
     RUNNING_MODE_LEVEL,
     RUNNING_MODE_TEMPERATURE,
+    RUNNING_MODE_VENTILATION,
     RUNNING_MODE_NAMES,
+    RUNNING_STEP_STANDBY,
+    RUNNING_STEP_VENTILATION,
     TANK_VOLUME_OPTIONS,
 )
 from .coordinator import VevorHeaterCoordinator
@@ -60,15 +63,15 @@ async def async_setup_entry(
 
 
 class VevorHeaterModeSelect(SelectEntity):
-    """Select entity for Vevor Heater running mode."""
+    """Select entity for Vevor Heater running mode.
+
+    For ABBA/HeaterCC devices, includes a "Ventilation" option when the heater
+    is in standby or already ventilating. This allows fan-only operation.
+    """
 
     _attr_has_entity_name = True
     _attr_name = "Running Mode"
     _attr_icon = "mdi:cog"
-    _attr_options = [
-        RUNNING_MODE_NAMES[RUNNING_MODE_LEVEL],
-        RUNNING_MODE_NAMES[RUNNING_MODE_TEMPERATURE],
-    ]
 
     def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
         """Initialize the select entity."""
@@ -82,6 +85,26 @@ class VevorHeaterModeSelect(SelectEntity):
         self._attr_unique_id = f"{coordinator.address}_running_mode"
 
     @property
+    def options(self) -> list[str]:
+        """Return available running mode options.
+
+        For ABBA devices, include Ventilation when heater is in standby or ventilating.
+        This follows Xev's suggestion in Issue #30 for dynamic options.
+        """
+        base_options = [
+            RUNNING_MODE_NAMES[RUNNING_MODE_LEVEL],
+            RUNNING_MODE_NAMES[RUNNING_MODE_TEMPERATURE],
+        ]
+
+        # Add Ventilation option for ABBA devices when in standby or already ventilating
+        if self.coordinator.protocol_mode == 5:  # ABBA protocol
+            running_step = self.coordinator.data.get("running_step")
+            if running_step in (RUNNING_STEP_STANDBY, RUNNING_STEP_VENTILATION):
+                base_options.append(RUNNING_MODE_NAMES[RUNNING_MODE_VENTILATION])
+
+        return base_options
+
+    @property
     def available(self) -> bool:
         """Return if entity is available."""
         return self.coordinator.data.get("connected", False)
@@ -89,6 +112,11 @@ class VevorHeaterModeSelect(SelectEntity):
     @property
     def current_option(self) -> str | None:
         """Return the current running mode."""
+        # Check if currently ventilating (ABBA specific)
+        running_step = self.coordinator.data.get("running_step")
+        if running_step == RUNNING_STEP_VENTILATION:
+            return RUNNING_MODE_NAMES[RUNNING_MODE_VENTILATION]
+
         mode = self.coordinator.data.get("running_mode")
         if mode is not None:
             return RUNNING_MODE_NAMES.get(mode)
