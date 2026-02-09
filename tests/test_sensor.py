@@ -1,4 +1,4 @@
-"""Tests for Vevor Heater sensor platform."""
+"""Tests for Diesel Heater sensor platform."""
 from __future__ import annotations
 
 import pytest
@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 # Import stubs first
 from . import conftest  # noqa: F401
 
-from custom_components.vevor_heater.sensor import (
+from custom_components.diesel_heater.sensor import (
     VevorCabTemperatureSensor,
     VevorCaseTemperatureSensor,
     VevorSupplyVoltageSensor,
@@ -36,7 +36,7 @@ from custom_components.vevor_heater.sensor import (
     VevorShutdownTempDiffSensor,
     async_setup_entry,
 )
-from custom_components.vevor_heater.const import (
+from custom_components.diesel_heater.const import (
     ERROR_NAMES,
     RUNNING_MODE_NAMES,
     RUNNING_STEP_NAMES,

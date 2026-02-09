@@ -1,4 +1,4 @@
-"""Tests for Vevor Heater config flow.
+"""Tests for Diesel Heater config flow.
 
 Tests cover all flow paths: bluetooth discovery, user selection,
 manual MAC entry, and options flow.
@@ -10,11 +10,11 @@ from unittest.mock import MagicMock, patch
 
 from tests.conftest import _AbortFlow
 
-from custom_components.vevor_heater.config_flow import (
+from custom_components.diesel_heater.config_flow import (
     VevorHeaterConfigFlow,
     VevorHeaterOptionsFlowHandler,
 )
-from custom_components.vevor_heater.const import (
+from custom_components.diesel_heater.const import (
     CONF_AUTO_OFFSET_MAX,
     CONF_EXTERNAL_TEMP_SENSOR,
     CONF_PIN,
@@ -33,7 +33,7 @@ MOCK_ADDRESS = "AA:BB:CC:DD:EE:FF"
 
 def _make_ble_discovery(
     address=MOCK_ADDRESS,
-    name="Vevor Heater",
+    name="Diesel Heater",
     service_uuids=None,
     manufacturer_data=None,
 ):
@@ -135,7 +135,7 @@ class TestUserStep:
         flow = VevorHeaterConfigFlow()
 
         with patch(
-            "custom_components.vevor_heater.config_flow.bluetooth"
+            "custom_components.diesel_heater.config_flow.bluetooth"
         ) as mock_bt:
             mock_bt.async_discovered_service_info.return_value = []
             result = await flow.async_step_user()
@@ -152,7 +152,7 @@ class TestUserStep:
         )
 
         with patch(
-            "custom_components.vevor_heater.config_flow.bluetooth"
+            "custom_components.diesel_heater.config_flow.bluetooth"
         ) as mock_bt:
             mock_bt.async_discovered_service_info.return_value = [discovery]
             result = await flow.async_step_user()
@@ -170,7 +170,7 @@ class TestUserStep:
         )
 
         with patch(
-            "custom_components.vevor_heater.config_flow.bluetooth"
+            "custom_components.diesel_heater.config_flow.bluetooth"
         ) as mock_bt:
             mock_bt.async_discovered_service_info.return_value = [discovery]
             result = await flow.async_step_user()
@@ -187,7 +187,7 @@ class TestUserStep:
         )
 
         with patch(
-            "custom_components.vevor_heater.config_flow.bluetooth"
+            "custom_components.diesel_heater.config_flow.bluetooth"
         ) as mock_bt:
             mock_bt.async_discovered_service_info.return_value = [discovery]
             result = await flow.async_step_user()
@@ -203,7 +203,7 @@ class TestUserStep:
         )
 
         with patch(
-            "custom_components.vevor_heater.config_flow.bluetooth"
+            "custom_components.diesel_heater.config_flow.bluetooth"
         ) as mock_bt:
             mock_bt.async_discovered_service_info.return_value = [discovery]
             result = await flow.async_step_user()
@@ -220,7 +220,7 @@ class TestUserStep:
         )
 
         with patch(
-            "custom_components.vevor_heater.config_flow.bluetooth"
+            "custom_components.diesel_heater.config_flow.bluetooth"
         ) as mock_bt:
             mock_bt.async_discovered_service_info.return_value = [discovery]
             result = await flow.async_step_user()
@@ -233,7 +233,7 @@ class TestUserStep:
         discovery = _make_ble_discovery(service_uuids=[SERVICE_UUID])
 
         with patch(
-            "custom_components.vevor_heater.config_flow.bluetooth"
+            "custom_components.diesel_heater.config_flow.bluetooth"
         ) as mock_bt:
             mock_bt.async_discovered_service_info.return_value = [discovery]
             result = await flow.async_step_user()
@@ -251,7 +251,7 @@ class TestUserStep:
         new_discovery = _make_ble_discovery(service_uuids=[SERVICE_UUID])
 
         with patch(
-            "custom_components.vevor_heater.config_flow.bluetooth"
+            "custom_components.diesel_heater.config_flow.bluetooth"
         ) as mock_bt:
             mock_bt.async_discovered_service_info.return_value = [new_discovery]
             result = await flow.async_step_user()
@@ -304,7 +304,7 @@ class TestUserStep:
         )
 
         with patch(
-            "custom_components.vevor_heater.config_flow.bluetooth"
+            "custom_components.diesel_heater.config_flow.bluetooth"
         ) as mock_bt:
             mock_bt.async_discovered_service_info.return_value = [d1, d2]
             result = await flow.async_step_user()

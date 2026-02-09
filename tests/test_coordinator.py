@@ -1,4 +1,4 @@
-"""Tests for Vevor Heater Coordinator.
+"""Tests for Diesel Heater Coordinator.
 
 Tests the coordinator logic without requiring actual BLE connections.
 Focuses on data processing, fuel/runtime tracking, and protocol handling.
@@ -14,8 +14,8 @@ import pytest
 from . import conftest  # noqa: F401
 
 # Now we can import the coordinator
-from custom_components.vevor_heater.coordinator import VevorHeaterCoordinator
-from custom_components.vevor_heater.const import (
+from custom_components.diesel_heater.coordinator import VevorHeaterCoordinator
+from custom_components.diesel_heater.const import (
     FUEL_CONSUMPTION_TABLE,
     RUNNING_STEP_RUNNING,
     STORAGE_KEY_TOTAL_FUEL,
@@ -1721,7 +1721,7 @@ class TestHeaterLoggerAdapter:
 
     def test_process_prefixes_message(self):
         """Test that process() prefixes messages with heater ID."""
-        from custom_components.vevor_heater.coordinator import _HeaterLoggerAdapter
+        from custom_components.diesel_heater.coordinator import _HeaterLoggerAdapter
         import logging
 
         base_logger = logging.getLogger("test")
@@ -1734,7 +1734,7 @@ class TestHeaterLoggerAdapter:
 
     def test_process_preserves_kwargs(self):
         """Test that process() preserves kwargs."""
-        from custom_components.vevor_heater.coordinator import _HeaterLoggerAdapter
+        from custom_components.diesel_heater.coordinator import _HeaterLoggerAdapter
         import logging
 
         base_logger = logging.getLogger("test")
@@ -1927,7 +1927,7 @@ class TestExternalTempSensor:
     @pytest.mark.asyncio
     async def test_setup_external_temp_with_sensor(self):
         """Test setup with external sensor configured."""
-        from custom_components.vevor_heater.const import CONF_EXTERNAL_TEMP_SENSOR
+        from custom_components.diesel_heater.const import CONF_EXTERNAL_TEMP_SENSOR
 
         coordinator = create_mock_coordinator()
         coordinator.config_entry.data = {
@@ -1939,7 +1939,7 @@ class TestExternalTempSensor:
 
         # Mock async_track_state_change_event
         mock_unsub = MagicMock()
-        with patch("custom_components.vevor_heater.coordinator.async_track_state_change_event", return_value=mock_unsub) as mock_track:
+        with patch("custom_components.diesel_heater.coordinator.async_track_state_change_event", return_value=mock_unsub) as mock_track:
             await coordinator._setup_external_temp_listener()
 
             mock_track.assert_called_once()
@@ -1994,7 +1994,7 @@ class TestAutoOffsetCalculation:
     async def test_auto_offset_throttled(self):
         """Test auto offset is throttled."""
         import time
-        from custom_components.vevor_heater.const import CONF_EXTERNAL_TEMP_SENSOR
+        from custom_components.diesel_heater.const import CONF_EXTERNAL_TEMP_SENSOR
 
         coordinator = create_mock_coordinator()
         coordinator.data["auto_offset_enabled"] = True
@@ -2012,7 +2012,7 @@ class TestAutoOffsetCalculation:
     @pytest.mark.asyncio
     async def test_auto_offset_external_sensor_unavailable(self):
         """Test auto offset when external sensor is unavailable."""
-        from custom_components.vevor_heater.const import CONF_EXTERNAL_TEMP_SENSOR
+        from custom_components.diesel_heater.const import CONF_EXTERNAL_TEMP_SENSOR
 
         coordinator = create_mock_coordinator()
         coordinator.data["auto_offset_enabled"] = True
@@ -2035,7 +2035,7 @@ class TestAutoOffsetCalculation:
     @pytest.mark.asyncio
     async def test_auto_offset_invalid_external_value(self):
         """Test auto offset with invalid external sensor value."""
-        from custom_components.vevor_heater.const import CONF_EXTERNAL_TEMP_SENSOR
+        from custom_components.diesel_heater.const import CONF_EXTERNAL_TEMP_SENSOR
 
         coordinator = create_mock_coordinator()
         coordinator.data["auto_offset_enabled"] = True
@@ -2057,7 +2057,7 @@ class TestAutoOffsetCalculation:
     @pytest.mark.asyncio
     async def test_auto_offset_no_heater_temp(self):
         """Test auto offset when heater raw temp is not available."""
-        from custom_components.vevor_heater.const import CONF_EXTERNAL_TEMP_SENSOR
+        from custom_components.diesel_heater.const import CONF_EXTERNAL_TEMP_SENSOR
 
         coordinator = create_mock_coordinator()
         coordinator.data["auto_offset_enabled"] = True
@@ -2080,7 +2080,7 @@ class TestAutoOffsetCalculation:
     @pytest.mark.asyncio
     async def test_auto_offset_small_difference_ignored(self):
         """Test auto offset ignores small temperature differences."""
-        from custom_components.vevor_heater.const import CONF_EXTERNAL_TEMP_SENSOR
+        from custom_components.diesel_heater.const import CONF_EXTERNAL_TEMP_SENSOR
 
         coordinator = create_mock_coordinator()
         coordinator.data["auto_offset_enabled"] = True
@@ -2104,7 +2104,7 @@ class TestAutoOffsetCalculation:
     @pytest.mark.asyncio
     async def test_auto_offset_applies_offset(self):
         """Test auto offset applies when difference is significant."""
-        from custom_components.vevor_heater.const import CONF_EXTERNAL_TEMP_SENSOR, CONF_AUTO_OFFSET_MAX
+        from custom_components.diesel_heater.const import CONF_EXTERNAL_TEMP_SENSOR, CONF_AUTO_OFFSET_MAX
 
         coordinator = create_mock_coordinator()
         coordinator.data["auto_offset_enabled"] = True
@@ -2130,7 +2130,7 @@ class TestAutoOffsetCalculation:
     @pytest.mark.asyncio
     async def test_auto_offset_clamped_to_max(self):
         """Test auto offset is clamped to max value."""
-        from custom_components.vevor_heater.const import CONF_EXTERNAL_TEMP_SENSOR, CONF_AUTO_OFFSET_MAX
+        from custom_components.diesel_heater.const import CONF_EXTERNAL_TEMP_SENSOR, CONF_AUTO_OFFSET_MAX
 
         coordinator = create_mock_coordinator()
         coordinator.data["auto_offset_enabled"] = True
@@ -2156,7 +2156,7 @@ class TestAutoOffsetCalculation:
     @pytest.mark.asyncio
     async def test_auto_offset_no_change_skipped(self):
         """Test auto offset skips sending when offset unchanged."""
-        from custom_components.vevor_heater.const import CONF_EXTERNAL_TEMP_SENSOR, CONF_AUTO_OFFSET_MAX
+        from custom_components.diesel_heater.const import CONF_EXTERNAL_TEMP_SENSOR, CONF_AUTO_OFFSET_MAX
 
         coordinator = create_mock_coordinator()
         coordinator.data["auto_offset_enabled"] = True
@@ -2186,7 +2186,7 @@ class TestAutoOffsetCalculation:
         Issue #31: External sensor in Fahrenheit was not converted before offset calculation.
         Example: External=52.1°F (11.2°C), Heater=12°C → offset should be ~-1, not +40.
         """
-        from custom_components.vevor_heater.const import CONF_EXTERNAL_TEMP_SENSOR, CONF_AUTO_OFFSET_MAX
+        from custom_components.diesel_heater.const import CONF_EXTERNAL_TEMP_SENSOR, CONF_AUTO_OFFSET_MAX
 
         coordinator = create_mock_coordinator()
         coordinator.data["auto_offset_enabled"] = True
@@ -2214,7 +2214,7 @@ class TestAutoOffsetCalculation:
     @pytest.mark.asyncio
     async def test_auto_offset_fahrenheit_with_difference(self):
         """Test auto offset with Fahrenheit sensor and significant difference."""
-        from custom_components.vevor_heater.const import CONF_EXTERNAL_TEMP_SENSOR, CONF_AUTO_OFFSET_MAX
+        from custom_components.diesel_heater.const import CONF_EXTERNAL_TEMP_SENSOR, CONF_AUTO_OFFSET_MAX
 
         coordinator = create_mock_coordinator()
         coordinator.data["auto_offset_enabled"] = True
@@ -2243,7 +2243,7 @@ class TestAutoOffsetCalculation:
     @pytest.mark.asyncio
     async def test_auto_offset_celsius_unit_explicit(self):
         """Test auto offset with explicit Celsius unit works normally."""
-        from custom_components.vevor_heater.const import CONF_EXTERNAL_TEMP_SENSOR, CONF_AUTO_OFFSET_MAX
+        from custom_components.diesel_heater.const import CONF_EXTERNAL_TEMP_SENSOR, CONF_AUTO_OFFSET_MAX
 
         coordinator = create_mock_coordinator()
         coordinator.data["auto_offset_enabled"] = True
@@ -2534,7 +2534,7 @@ class TestStatisticsImportDetailed:
         """Test _import_statistics when recorder not available."""
         coordinator = create_mock_coordinator()
 
-        with patch("custom_components.vevor_heater.coordinator.get_instance", return_value=None):
+        with patch("custom_components.diesel_heater.coordinator.get_instance", return_value=None):
             await coordinator._import_statistics("2024-01-15", 2.5)
 
         # Should just return without error
@@ -2546,7 +2546,7 @@ class TestStatisticsImportDetailed:
         coordinator = create_mock_coordinator()
         mock_recorder = MagicMock()
 
-        with patch("custom_components.vevor_heater.coordinator.get_instance", return_value=mock_recorder):
+        with patch("custom_components.diesel_heater.coordinator.get_instance", return_value=mock_recorder):
             await coordinator._import_statistics("not-a-date", 2.5)
 
         coordinator._logger.error.assert_called()
@@ -2557,8 +2557,8 @@ class TestStatisticsImportDetailed:
         coordinator = create_mock_coordinator()
         mock_recorder = MagicMock()
 
-        with patch("custom_components.vevor_heater.coordinator.get_instance", return_value=mock_recorder):
-            with patch("custom_components.vevor_heater.coordinator.async_add_external_statistics", side_effect=Exception("Stats error")):
+        with patch("custom_components.diesel_heater.coordinator.get_instance", return_value=mock_recorder):
+            with patch("custom_components.diesel_heater.coordinator.async_add_external_statistics", side_effect=Exception("Stats error")):
                 await coordinator._import_statistics("2024-01-15", 2.5)
 
         coordinator._logger.warning.assert_called()
@@ -2582,7 +2582,7 @@ class TestStatisticsImportDetailed:
         """Test _import_runtime_statistics when recorder not available."""
         coordinator = create_mock_coordinator()
 
-        with patch("custom_components.vevor_heater.coordinator.get_instance", return_value=None):
+        with patch("custom_components.diesel_heater.coordinator.get_instance", return_value=None):
             await coordinator._import_runtime_statistics("2024-01-15", 4.5)
 
         coordinator._logger.debug.assert_called()
@@ -2593,7 +2593,7 @@ class TestStatisticsImportDetailed:
         coordinator = create_mock_coordinator()
         mock_recorder = MagicMock()
 
-        with patch("custom_components.vevor_heater.coordinator.get_instance", return_value=mock_recorder):
+        with patch("custom_components.diesel_heater.coordinator.get_instance", return_value=mock_recorder):
             await coordinator._import_runtime_statistics("invalid", 4.5)
 
         coordinator._logger.error.assert_called()
@@ -2604,8 +2604,8 @@ class TestStatisticsImportDetailed:
         coordinator = create_mock_coordinator()
         mock_recorder = MagicMock()
 
-        with patch("custom_components.vevor_heater.coordinator.get_instance", return_value=mock_recorder):
-            with patch("custom_components.vevor_heater.coordinator.async_add_external_statistics", side_effect=Exception("Stats error")):
+        with patch("custom_components.diesel_heater.coordinator.get_instance", return_value=mock_recorder):
+            with patch("custom_components.diesel_heater.coordinator.async_add_external_statistics", side_effect=Exception("Stats error")):
                 await coordinator._import_runtime_statistics("2024-01-15", 4.5)
 
         coordinator._logger.warning.assert_called()
@@ -3123,7 +3123,7 @@ class TestEnsureConnected:
 
         # Mock establish_connection to raise an exception
         with patch(
-            "custom_components.vevor_heater.coordinator.establish_connection",
+            "custom_components.diesel_heater.coordinator.establish_connection",
             new_callable=AsyncMock,
         ) as mock_establish:
             mock_establish.side_effect = Exception("Connection failed")
@@ -3144,7 +3144,7 @@ class TestEnsureConnected:
         coordinator._connection_attempts = 0
 
         with patch(
-            "custom_components.vevor_heater.coordinator.establish_connection",
+            "custom_components.diesel_heater.coordinator.establish_connection",
             new_callable=AsyncMock,
         ) as mock_establish:
             mock_establish.side_effect = Exception("Test error")
@@ -3159,7 +3159,7 @@ class TestEnsureConnected:
     @pytest.mark.asyncio
     async def test_abba_device_detection(self):
         """Test ABBA/HeaterCC device detection via fff0 service."""
-        from custom_components.vevor_heater.const import (
+        from custom_components.diesel_heater.const import (
             ABBA_SERVICE_UUID,
             ABBA_NOTIFY_UUID,
             ABBA_WRITE_UUID,
@@ -3198,7 +3198,7 @@ class TestEnsureConnected:
         mock_client.start_notify = AsyncMock()
 
         with patch(
-            "custom_components.vevor_heater.coordinator.establish_connection",
+            "custom_components.diesel_heater.coordinator.establish_connection",
             new_callable=AsyncMock,
             return_value=mock_client,
         ):
@@ -3212,7 +3212,7 @@ class TestEnsureConnected:
     @pytest.mark.asyncio
     async def test_abba_fallback_write_char(self):
         """Test ABBA falls back to fff1 if fff2 not available."""
-        from custom_components.vevor_heater.const import (
+        from custom_components.diesel_heater.const import (
             ABBA_SERVICE_UUID,
             ABBA_NOTIFY_UUID,
         )
@@ -3244,7 +3244,7 @@ class TestEnsureConnected:
         mock_client.start_notify = AsyncMock()
 
         with patch(
-            "custom_components.vevor_heater.coordinator.establish_connection",
+            "custom_components.diesel_heater.coordinator.establish_connection",
             new_callable=AsyncMock,
             return_value=mock_client,
         ):
@@ -3257,7 +3257,7 @@ class TestEnsureConnected:
     @pytest.mark.asyncio
     async def test_vevor_service_discovery(self):
         """Test standard Vevor service/characteristic discovery."""
-        from custom_components.vevor_heater.const import (
+        from custom_components.diesel_heater.const import (
             SERVICE_UUID,
             CHARACTERISTIC_UUID,
         )
@@ -3288,7 +3288,7 @@ class TestEnsureConnected:
         mock_client.start_notify = AsyncMock()
 
         with patch(
-            "custom_components.vevor_heater.coordinator.establish_connection",
+            "custom_components.diesel_heater.coordinator.establish_connection",
             new_callable=AsyncMock,
             return_value=mock_client,
         ):
@@ -3312,7 +3312,7 @@ class TestEnsureConnected:
         mock_client.services = None  # No services
 
         with patch(
-            "custom_components.vevor_heater.coordinator.establish_connection",
+            "custom_components.diesel_heater.coordinator.establish_connection",
             new_callable=AsyncMock,
             return_value=mock_client,
         ):
@@ -3344,7 +3344,7 @@ class TestEnsureConnected:
         mock_client.services = [mock_service]
 
         with patch(
-            "custom_components.vevor_heater.coordinator.establish_connection",
+            "custom_components.diesel_heater.coordinator.establish_connection",
             new_callable=AsyncMock,
             return_value=mock_client,
         ):
@@ -3355,7 +3355,7 @@ class TestEnsureConnected:
     @pytest.mark.asyncio
     async def test_characteristic_no_notify(self):
         """Test warning when characteristic doesn't support notify."""
-        from custom_components.vevor_heater.const import (
+        from custom_components.diesel_heater.const import (
             SERVICE_UUID,
             CHARACTERISTIC_UUID,
         )
@@ -3385,7 +3385,7 @@ class TestEnsureConnected:
         mock_client.services = [mock_service]
 
         with patch(
-            "custom_components.vevor_heater.coordinator.establish_connection",
+            "custom_components.diesel_heater.coordinator.establish_connection",
             new_callable=AsyncMock,
             return_value=mock_client,
         ):

@@ -1,4 +1,4 @@
-"""Tests for Vevor Heater __init__.py.
+"""Tests for Diesel Heater __init__.py.
 
 Tests the setup, unload, migration, and service registration logic.
 """
@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 # Import stubs first
 from . import conftest  # noqa: F401
 
-from custom_components.vevor_heater import (
+from custom_components.diesel_heater import (
     _migrate_entity_unique_ids,
     _safe_update_unique_id,
     _UNIQUE_ID_MIGRATIONS,
@@ -104,9 +104,9 @@ class TestMigrateEntityUniqueIds:
         registry.entities = {entity.entity_id: entity}
 
         with patch(
-            "custom_components.vevor_heater.er.async_get", return_value=registry
+            "custom_components.diesel_heater.er.async_get", return_value=registry
         ), patch(
-            "custom_components.vevor_heater.er.async_entries_for_config_entry",
+            "custom_components.diesel_heater.er.async_entries_for_config_entry",
             return_value=[entity],
         ):
             _migrate_entity_unique_ids(hass, entry)
@@ -128,9 +128,9 @@ class TestMigrateEntityUniqueIds:
         registry.entities = {entity.entity_id: entity}
 
         with patch(
-            "custom_components.vevor_heater.er.async_get", return_value=registry
+            "custom_components.diesel_heater.er.async_get", return_value=registry
         ), patch(
-            "custom_components.vevor_heater.er.async_entries_for_config_entry",
+            "custom_components.diesel_heater.er.async_entries_for_config_entry",
             return_value=[entity],
         ):
             _migrate_entity_unique_ids(hass, entry)
@@ -152,9 +152,9 @@ class TestMigrateEntityUniqueIds:
         registry.entities = {entity.entity_id: entity}
 
         with patch(
-            "custom_components.vevor_heater.er.async_get", return_value=registry
+            "custom_components.diesel_heater.er.async_get", return_value=registry
         ), patch(
-            "custom_components.vevor_heater.er.async_entries_for_config_entry",
+            "custom_components.diesel_heater.er.async_entries_for_config_entry",
             return_value=[entity],
         ):
             _migrate_entity_unique_ids(hass, entry)
@@ -177,9 +177,9 @@ class TestMigrateEntityUniqueIds:
         registry.entities = {entity.entity_id: entity}
 
         with patch(
-            "custom_components.vevor_heater.er.async_get", return_value=registry
+            "custom_components.diesel_heater.er.async_get", return_value=registry
         ), patch(
-            "custom_components.vevor_heater.er.async_entries_for_config_entry",
+            "custom_components.diesel_heater.er.async_entries_for_config_entry",
             return_value=[entity],
         ):
             _migrate_entity_unique_ids(hass, entry)
@@ -240,9 +240,9 @@ class TestMigrationEdgeCases:
         registry.entities = {}
 
         with patch(
-            "custom_components.vevor_heater.er.async_get", return_value=registry
+            "custom_components.diesel_heater.er.async_get", return_value=registry
         ), patch(
-            "custom_components.vevor_heater.er.async_entries_for_config_entry",
+            "custom_components.diesel_heater.er.async_entries_for_config_entry",
             return_value=[entity],
         ):
             _migrate_entity_unique_ids(hass, entry)
@@ -273,9 +273,9 @@ class TestMigrationEdgeCases:
         registry.async_update_entity.side_effect = remove_entity_side_effect
 
         with patch(
-            "custom_components.vevor_heater.er.async_get", return_value=registry
+            "custom_components.diesel_heater.er.async_get", return_value=registry
         ), patch(
-            "custom_components.vevor_heater.er.async_entries_for_config_entry",
+            "custom_components.diesel_heater.er.async_entries_for_config_entry",
             return_value=[entity],
         ):
             _migrate_entity_unique_ids(hass, entry)
@@ -306,9 +306,9 @@ class TestMigrationEdgeCases:
         registry.async_update_entity.side_effect = remove_entity_side_effect
 
         with patch(
-            "custom_components.vevor_heater.er.async_get", return_value=registry
+            "custom_components.diesel_heater.er.async_get", return_value=registry
         ), patch(
-            "custom_components.vevor_heater.er.async_entries_for_config_entry",
+            "custom_components.diesel_heater.er.async_entries_for_config_entry",
             return_value=[entity],
         ):
             _migrate_entity_unique_ids(hass, entry)
@@ -338,9 +338,9 @@ class TestMigrationEdgeCases:
         registry.async_update_entity.side_effect = update_side_effect
 
         with patch(
-            "custom_components.vevor_heater.er.async_get", return_value=registry
+            "custom_components.diesel_heater.er.async_get", return_value=registry
         ), patch(
-            "custom_components.vevor_heater.er.async_entries_for_config_entry",
+            "custom_components.diesel_heater.er.async_entries_for_config_entry",
             return_value=[entity],
         ):
             _migrate_entity_unique_ids(hass, entry)
@@ -363,9 +363,9 @@ class TestMigrationEdgeCases:
         registry.entities = {entity.entity_id: entity}
 
         with patch(
-            "custom_components.vevor_heater.er.async_get", return_value=registry
+            "custom_components.diesel_heater.er.async_get", return_value=registry
         ), patch(
-            "custom_components.vevor_heater.er.async_entries_for_config_entry",
+            "custom_components.diesel_heater.er.async_entries_for_config_entry",
             return_value=[entity],
         ):
             _migrate_entity_unique_ids(hass, entry)
@@ -382,7 +382,7 @@ class TestMigrationEdgeCases:
 import pytest
 from unittest.mock import AsyncMock
 
-from custom_components.vevor_heater import (
+from custom_components.diesel_heater import (
     async_setup_entry,
     async_unload_entry,
     PLATFORMS,
@@ -408,9 +408,9 @@ class TestAsyncSetupEntry:
         entry.data = {CONF_ADDRESS: "AA:BB:CC:DD:EE:FF"}
 
         with patch(
-            "custom_components.vevor_heater.bluetooth"
+            "custom_components.diesel_heater.bluetooth"
         ) as mock_bt, patch(
-            "custom_components.vevor_heater._migrate_entity_unique_ids"
+            "custom_components.diesel_heater._migrate_entity_unique_ids"
         ):
             mock_bt.async_ble_device_from_address.return_value = None
 
@@ -434,11 +434,11 @@ class TestAsyncSetupEntry:
         mock_coordinator.async_config_entry_first_refresh = AsyncMock()
 
         with patch(
-            "custom_components.vevor_heater.bluetooth"
+            "custom_components.diesel_heater.bluetooth"
         ) as mock_bt, patch(
-            "custom_components.vevor_heater._migrate_entity_unique_ids"
+            "custom_components.diesel_heater._migrate_entity_unique_ids"
         ), patch(
-            "custom_components.vevor_heater.VevorHeaterCoordinator",
+            "custom_components.diesel_heater.VevorHeaterCoordinator",
             return_value=mock_coordinator
         ):
             mock_bt.async_ble_device_from_address.return_value = mock_ble_device
@@ -470,11 +470,11 @@ class TestAsyncSetupEntry:
         )
 
         with patch(
-            "custom_components.vevor_heater.bluetooth"
+            "custom_components.diesel_heater.bluetooth"
         ) as mock_bt, patch(
-            "custom_components.vevor_heater._migrate_entity_unique_ids"
+            "custom_components.diesel_heater._migrate_entity_unique_ids"
         ), patch(
-            "custom_components.vevor_heater.VevorHeaterCoordinator",
+            "custom_components.diesel_heater.VevorHeaterCoordinator",
             return_value=mock_coordinator
         ):
             mock_bt.async_ble_device_from_address.return_value = mock_ble_device
@@ -503,11 +503,11 @@ class TestAsyncSetupEntry:
         )
 
         with patch(
-            "custom_components.vevor_heater.bluetooth"
+            "custom_components.diesel_heater.bluetooth"
         ) as mock_bt, patch(
-            "custom_components.vevor_heater._migrate_entity_unique_ids"
+            "custom_components.diesel_heater._migrate_entity_unique_ids"
         ), patch(
-            "custom_components.vevor_heater.VevorHeaterCoordinator",
+            "custom_components.diesel_heater.VevorHeaterCoordinator",
             return_value=mock_coordinator
         ):
             mock_bt.async_ble_device_from_address.return_value = mock_ble_device
@@ -522,7 +522,7 @@ class TestSendCommandService:
 
     def _create_coordinator_mock(self, address="AA:BB:CC:DD:EE:FF"):
         """Create a mock that passes isinstance check for VevorHeaterCoordinator."""
-        from custom_components.vevor_heater.coordinator import VevorHeaterCoordinator
+        from custom_components.diesel_heater.coordinator import VevorHeaterCoordinator
 
         mock_coordinator = MagicMock()
         mock_coordinator.async_load_data = AsyncMock()
@@ -556,11 +556,11 @@ class TestSendCommandService:
         mock_coordinator = self._create_coordinator_mock()
 
         with patch(
-            "custom_components.vevor_heater.bluetooth"
+            "custom_components.diesel_heater.bluetooth"
         ) as mock_bt, patch(
-            "custom_components.vevor_heater._migrate_entity_unique_ids"
+            "custom_components.diesel_heater._migrate_entity_unique_ids"
         ), patch(
-            "custom_components.vevor_heater.VevorHeaterCoordinator",
+            "custom_components.diesel_heater.VevorHeaterCoordinator",
             return_value=mock_coordinator
         ):
             mock_bt.async_ble_device_from_address.return_value = mock_ble_device
@@ -601,11 +601,11 @@ class TestSendCommandService:
         mock_coordinator = self._create_coordinator_mock()
 
         with patch(
-            "custom_components.vevor_heater.bluetooth"
+            "custom_components.diesel_heater.bluetooth"
         ) as mock_bt, patch(
-            "custom_components.vevor_heater._migrate_entity_unique_ids"
+            "custom_components.diesel_heater._migrate_entity_unique_ids"
         ), patch(
-            "custom_components.vevor_heater.VevorHeaterCoordinator",
+            "custom_components.diesel_heater.VevorHeaterCoordinator",
             return_value=mock_coordinator
         ):
             mock_bt.async_ble_device_from_address.return_value = mock_ble_device
@@ -643,11 +643,11 @@ class TestSendCommandService:
         mock_coordinator = self._create_coordinator_mock()
 
         with patch(
-            "custom_components.vevor_heater.bluetooth"
+            "custom_components.diesel_heater.bluetooth"
         ) as mock_bt, patch(
-            "custom_components.vevor_heater._migrate_entity_unique_ids"
+            "custom_components.diesel_heater._migrate_entity_unique_ids"
         ), patch(
-            "custom_components.vevor_heater.VevorHeaterCoordinator",
+            "custom_components.diesel_heater.VevorHeaterCoordinator",
             return_value=mock_coordinator
         ):
             mock_bt.async_ble_device_from_address.return_value = mock_ble_device
@@ -688,11 +688,11 @@ class TestSendCommandService:
         )
 
         with patch(
-            "custom_components.vevor_heater.bluetooth"
+            "custom_components.diesel_heater.bluetooth"
         ) as mock_bt, patch(
-            "custom_components.vevor_heater._migrate_entity_unique_ids"
+            "custom_components.diesel_heater._migrate_entity_unique_ids"
         ), patch(
-            "custom_components.vevor_heater.VevorHeaterCoordinator",
+            "custom_components.diesel_heater.VevorHeaterCoordinator",
             return_value=mock_coordinator
         ):
             mock_bt.async_ble_device_from_address.return_value = mock_ble_device
@@ -727,11 +727,11 @@ class TestSendCommandService:
         mock_coordinator = self._create_coordinator_mock()
 
         with patch(
-            "custom_components.vevor_heater.bluetooth"
+            "custom_components.diesel_heater.bluetooth"
         ) as mock_bt, patch(
-            "custom_components.vevor_heater._migrate_entity_unique_ids"
+            "custom_components.diesel_heater._migrate_entity_unique_ids"
         ), patch(
-            "custom_components.vevor_heater.VevorHeaterCoordinator",
+            "custom_components.diesel_heater.VevorHeaterCoordinator",
             return_value=mock_coordinator
         ):
             mock_bt.async_ble_device_from_address.return_value = mock_ble_device

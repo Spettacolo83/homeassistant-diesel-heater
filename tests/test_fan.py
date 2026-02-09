@@ -1,4 +1,4 @@
-"""Tests for Vevor Heater fan platform."""
+"""Tests for Diesel Heater fan platform."""
 from __future__ import annotations
 
 import pytest
@@ -7,12 +7,12 @@ from unittest.mock import MagicMock, AsyncMock, patch
 # Import stubs first
 from . import conftest  # noqa: F401
 
-from custom_components.vevor_heater.fan import (
+from custom_components.diesel_heater.fan import (
     VevorHeaterFan,
     ORDERED_LEVELS,
     async_setup_entry,
 )
-from custom_components.vevor_heater.const import (
+from custom_components.diesel_heater.const import (
     RUNNING_MODE_LEVEL,
     RUNNING_MODE_TEMPERATURE,
     RUNNING_MODE_MANUAL,

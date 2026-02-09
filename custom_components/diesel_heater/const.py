@@ -1,4 +1,4 @@
-"""Constants for the Vevor Diesel Heater integration."""
+"""Constants for the Diesel Heater integration."""
 from typing import Final
 
 # Re-export all protocol constants from the bundled library.
@@ -54,10 +54,13 @@ from .diesel_heater_ble.const import (  # noqa: F401
 # Integration-specific constants (Home Assistant only)
 # ---------------------------------------------------------------------------
 
-DOMAIN: Final = "vevor_heater"
+DOMAIN: Final = "diesel_heater"
+
+# Old domain for migration from previous versions
+OLD_DOMAIN: Final = "vevor_heater"
 
 # BLE Service and Characteristic UUIDs
-# Some Vevor heaters use ffe0 instead of fff0
+# Some heaters use ffe0 instead of fff0
 SERVICE_UUID: Final = "0000ffe0-0000-1000-8000-00805f9b34fb"
 CHARACTERISTIC_UUID: Final = "0000ffe1-0000-1000-8000-00805f9b34fb"
 NOTIFY_UUID: Final = "0000ffe2-0000-1000-8000-00805f9b34fb"

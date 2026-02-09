@@ -14,7 +14,7 @@ import pytest
 # We need to mock bleak before importing find_heater
 sys.modules['bleak'] = MagicMock()
 
-from custom_components.vevor_heater.find_heater import (
+from custom_components.diesel_heater.find_heater import (
     save_scan,
     load_scan,
     compare_scans,
@@ -303,7 +303,7 @@ class TestScanDevices:
     async def test_scan_devices_returns_dict(self):
         """Test scan_devices returns a dictionary."""
         # Import with mocked bleak
-        from custom_components.vevor_heater.find_heater import scan_devices
+        from custom_components.diesel_heater.find_heater import scan_devices
 
         mock_device = MagicMock()
         mock_device.name = "Test Device"
@@ -316,7 +316,7 @@ class TestScanDevices:
             "AA:BB:CC:DD:EE:FF": (mock_device, mock_adv)
         }
 
-        with patch('custom_components.vevor_heater.find_heater.BleakScanner') as mock_scanner:
+        with patch('custom_components.diesel_heater.find_heater.BleakScanner') as mock_scanner:
             mock_scanner.discover = AsyncMock(return_value=mock_result)
 
             result = await scan_devices()
@@ -329,9 +329,9 @@ class TestScanDevices:
     @pytest.mark.asyncio
     async def test_scan_devices_empty_result(self):
         """Test scan_devices with no devices found."""
-        from custom_components.vevor_heater.find_heater import scan_devices
+        from custom_components.diesel_heater.find_heater import scan_devices
 
-        with patch('custom_components.vevor_heater.find_heater.BleakScanner') as mock_scanner:
+        with patch('custom_components.diesel_heater.find_heater.BleakScanner') as mock_scanner:
             mock_scanner.discover = AsyncMock(return_value={})
 
             result = await scan_devices()
@@ -341,7 +341,7 @@ class TestScanDevices:
     @pytest.mark.asyncio
     async def test_scan_devices_unknown_name(self):
         """Test scan_devices with device that has no name."""
-        from custom_components.vevor_heater.find_heater import scan_devices
+        from custom_components.diesel_heater.find_heater import scan_devices
 
         mock_device = MagicMock()
         mock_device.name = None  # No name
@@ -354,7 +354,7 @@ class TestScanDevices:
             "AA:BB:CC:DD:EE:FF": (mock_device, mock_adv)
         }
 
-        with patch('custom_components.vevor_heater.find_heater.BleakScanner') as mock_scanner:
+        with patch('custom_components.diesel_heater.find_heater.BleakScanner') as mock_scanner:
             mock_scanner.discover = AsyncMock(return_value=mock_result)
 
             result = await scan_devices()
@@ -373,7 +373,7 @@ class TestMain:
     @pytest.mark.asyncio
     async def test_main_no_args_shows_usage(self):
         """Test main with no arguments shows usage and exits."""
-        from custom_components.vevor_heater.find_heater import main
+        from custom_components.diesel_heater.find_heater import main
 
         with patch.object(sys, 'argv', ['find_heater.py']):
             with pytest.raises(SystemExit) as exc_info:
@@ -384,7 +384,7 @@ class TestMain:
     @pytest.mark.asyncio
     async def test_main_invalid_arg_shows_usage(self):
         """Test main with invalid argument shows usage and exits."""
-        from custom_components.vevor_heater.find_heater import main
+        from custom_components.diesel_heater.find_heater import main
 
         with patch.object(sys, 'argv', ['find_heater.py', 'invalid']):
             with pytest.raises(SystemExit) as exc_info:
@@ -395,14 +395,14 @@ class TestMain:
     @pytest.mark.asyncio
     async def test_main_before_mode(self):
         """Test main in 'before' mode."""
-        from custom_components.vevor_heater.find_heater import main
+        from custom_components.diesel_heater.find_heater import main
 
         mock_devices = {"AA:BB:CC:DD:EE:FF": {"name": "Test", "rssi": -50, "services": []}}
 
         with patch.object(sys, 'argv', ['find_heater.py', 'before']), \
              patch('builtins.input', return_value=''), \
-             patch('custom_components.vevor_heater.find_heater.scan_devices', AsyncMock(return_value=mock_devices)), \
-             patch('custom_components.vevor_heater.find_heater.save_scan') as mock_save:
+             patch('custom_components.diesel_heater.find_heater.scan_devices', AsyncMock(return_value=mock_devices)), \
+             patch('custom_components.diesel_heater.find_heater.save_scan') as mock_save:
 
             await main()
 
@@ -414,10 +414,10 @@ class TestMain:
     @pytest.mark.asyncio
     async def test_main_after_mode_no_before_file(self):
         """Test main in 'after' mode when before file doesn't exist."""
-        from custom_components.vevor_heater.find_heater import main
+        from custom_components.diesel_heater.find_heater import main
 
         with patch.object(sys, 'argv', ['find_heater.py', 'after']), \
-             patch('custom_components.vevor_heater.find_heater.Path') as mock_path:
+             patch('custom_components.diesel_heater.find_heater.Path') as mock_path:
 
             mock_path.return_value.exists.return_value = False
 
@@ -429,18 +429,18 @@ class TestMain:
     @pytest.mark.asyncio
     async def test_main_after_mode_with_before_file(self):
         """Test main in 'after' mode with existing before file."""
-        from custom_components.vevor_heater.find_heater import main
+        from custom_components.diesel_heater.find_heater import main
 
         before_data = {"AA:BB:CC:DD:EE:FF": {"name": "Heater", "rssi": -50, "services": []}}
         after_data = {"11:22:33:44:55:66": {"name": "Other", "rssi": -70, "services": []}}
 
         with patch.object(sys, 'argv', ['find_heater.py', 'after']), \
              patch('builtins.input', return_value=''), \
-             patch('custom_components.vevor_heater.find_heater.Path') as mock_path, \
-             patch('custom_components.vevor_heater.find_heater.scan_devices', AsyncMock(return_value=after_data)), \
-             patch('custom_components.vevor_heater.find_heater.save_scan'), \
-             patch('custom_components.vevor_heater.find_heater.load_scan', return_value=before_data), \
-             patch('custom_components.vevor_heater.find_heater.compare_scans') as mock_compare:
+             patch('custom_components.diesel_heater.find_heater.Path') as mock_path, \
+             patch('custom_components.diesel_heater.find_heater.scan_devices', AsyncMock(return_value=after_data)), \
+             patch('custom_components.diesel_heater.find_heater.save_scan'), \
+             patch('custom_components.diesel_heater.find_heater.load_scan', return_value=before_data), \
+             patch('custom_components.diesel_heater.find_heater.compare_scans') as mock_compare:
 
             mock_path.return_value.exists.return_value = True
 

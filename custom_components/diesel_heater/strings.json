@@ -17,7 +17,7 @@
         },
         "data_description": {
           "temperature_offset": "Calibration offset for interior temperature sensor. Use negative value if readings are too high, positive if too low. Range: -20 to +20°C.",
-          "pin": "4-digit PIN for heater authentication. Factory default is 1234. If you changed the PIN in the Vevor app, enter your custom PIN here."
+          "pin": "4-digit PIN for heater authentication. Factory default is 1234. If you changed the PIN in the heater app, enter your custom PIN here."
         }
       },
       "user": {
@@ -26,10 +26,10 @@
           "temperature_offset": "Temperature Offset (°C)",
           "pin": "PIN Code"
         },
-        "description": "Select your Vevor Diesel Heater from the list.",
+        "description": "Select your Diesel Heater from the list.",
         "data_description": {
           "temperature_offset": "Calibration offset for interior temperature sensor. Use negative value if readings are too high, positive if too low. Range: -20 to +20°C.",
-          "pin": "4-digit PIN for heater authentication. Factory default is 1234. If you changed the PIN in the Vevor app, enter your custom PIN here."
+          "pin": "4-digit PIN for heater authentication. Factory default is 1234. If you changed the PIN in the heater app, enter your custom PIN here."
         }
       },
       "manual": {
@@ -38,10 +38,10 @@
           "temperature_offset": "Temperature Offset (°C)",
           "pin": "PIN Code"
         },
-        "description": "Enter the Bluetooth MAC address of your Vevor heater (e.g., A4:C1:37:24:B8:64). You can find this in the Bluetooth logs or using a BLE scanner app.",
+        "description": "Enter the Bluetooth MAC address of your heater (e.g., A4:C1:37:24:B8:64). You can find this in the Bluetooth logs or using a BLE scanner app.",
         "data_description": {
           "temperature_offset": "Calibration offset for interior temperature sensor. Use negative value if readings are too high, positive if too low. Range: -20 to +20°C.",
-          "pin": "4-digit PIN for heater authentication. Factory default is 1234. If you changed the PIN in the Vevor app, enter your custom PIN here."
+          "pin": "4-digit PIN for heater authentication. Factory default is 1234. If you changed the PIN in the heater app, enter your custom PIN here."
         }
       }
     },

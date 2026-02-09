@@ -1,4 +1,4 @@
-"""Tests for Vevor Heater select platform."""
+"""Tests for Diesel Heater select platform."""
 from __future__ import annotations
 
 import pytest
@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, AsyncMock
 # Import stubs first
 from . import conftest  # noqa: F401
 
-from custom_components.vevor_heater.select import (
+from custom_components.diesel_heater.select import (
     VevorHeaterModeSelect,
     VevorHeaterLanguageSelect,
     VevorHeaterPumpTypeSelect,

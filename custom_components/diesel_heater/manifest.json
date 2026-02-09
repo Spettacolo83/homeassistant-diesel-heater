@@ -1,12 +1,12 @@
 {
-  "domain": "vevor_heater",
-  "name": "Vevor Diesel Heater",
+  "domain": "diesel_heater",
+  "name": "Diesel Heater",
   "codeowners": ["@Spettacolo83"],
   "config_flow": true,
   "dependencies": ["bluetooth"],
-  "documentation": "https://github.com/Spettacolo83/homeassistant-vevor-heater",
+  "documentation": "https://github.com/Spettacolo83/homeassistant-diesel-heater",
   "integration_type": "device",
-  "issue_tracker": "https://github.com/Spettacolo83/homeassistant-vevor-heater/issues",
+  "issue_tracker": "https://github.com/Spettacolo83/homeassistant-diesel-heater/issues",
   "iot_class": "local_polling",
   "loggers": ["diesel_heater_ble"],
   "requirements": ["bleak>=0.21.0", "bleak-retry-connector>=3.4.0"],
@@ -20,5 +20,5 @@
       "service_uuid": "0000fff0-0000-1000-8000-00805f9b34fb"
     }
   ],
-  "version": "1.0.27-beta.27"
+  "version": "2.0.0"
 }
