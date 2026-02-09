@@ -1,11 +1,9 @@
 """Constants for the Diesel Heater integration."""
 from typing import Final
 
-# Re-export all protocol constants from the bundled library.
+# Re-export all protocol constants from the diesel-heater-ble PyPI package.
 # This allows entity files to keep using `from .const import X` unchanged.
-# Note: For HACS, we bundle diesel_heater_ble inside the integration.
-# Once published to PyPI, this can be changed to external import.
-from .diesel_heater_ble.const import (  # noqa: F401
+from diesel_heater_ble.const import (  # noqa: F401
     ABBA_CMD_AUTO,
     ABBA_CMD_CONST_TEMP,
     ABBA_CMD_GET_AUTO_CONFIG,
