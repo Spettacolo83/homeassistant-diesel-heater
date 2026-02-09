@@ -449,6 +449,10 @@ class ProtocolABBA(HeaterProtocol):
         elif command == 2:
             if argument == 2:
                 return self._build_abba("baab04bbac0000")  # Const temp mode
+            elif argument == 3:
+                # Ventilation mode (fan-only) - 0xA4
+                # Only works when heater is in standby/off state
+                return self._build_abba("baab04bba40000")
             else:
                 return self._build_abba("baab04bbad0000")  # Other mode
         elif command == 15:
@@ -463,6 +467,9 @@ class ProtocolABBA(HeaterProtocol):
                 return self._build_abba("baab04bba90000")  # Meters
         elif command == 99:
             return self._build_abba("baab04bba50000")  # High altitude toggle
+        elif command == 101:
+            # Ventilation command (direct) - 0xA4
+            return self._build_abba("baab04bba40000")
         else:
             # Unknown command — send status request as fallback
             return self._build_abba("baab04cc000000")
@@ -475,12 +482,22 @@ class ProtocolABBA(HeaterProtocol):
         return bytearray(cmd_bytes) + bytearray([checksum])
 
 
-class ProtocolCBFF(VevorCommandMixin, HeaterProtocol):
+class ProtocolCBFF(HeaterProtocol):
     """CBFF/Sunster v2.1 protocol (mode=6, 47 bytes).
 
     Newer protocol used by Sunster TB10Pro WiFi and similar heaters.
-    Heater sends 47-byte CBFF notifications; commands use AA55 format,
+    Heater sends 47-byte CBFF notifications; commands use FEAA format,
     heater ACKs with AA77.
+
+    FEAA Command Format (reverse-engineered by @Xev):
+    - Bytes 0-1: FEAA header
+    - Byte 2: version_num (0=heater, 10=AC)
+    - Byte 3: package_num (0)
+    - Bytes 4-5: total_length (uint16 LE)
+    - Byte 6: cmd_1 (command code, +128 for request)
+    - Byte 7: cmd_2 (0=read, 1=response, 2=cmd w/o payload, 3=cmd w/ payload)
+    - Bytes 8+: payload (command-specific)
+    - Last byte: checksum (sum of all previous bytes & 0xFF)
 
     Some CBFF heaters send encrypted data using double-XOR:
       key1 = "passwordA2409PW" (15 bytes, hardcoded)
@@ -502,6 +519,87 @@ class ProtocolCBFF(VevorCommandMixin, HeaterProtocol):
         Used as key2 for CBFF double-XOR decryption.
         """
         self._device_sn = sn
+
+    def build_command(self, command: int, argument: int, passkey: int) -> bytearray:
+        """Build FEAA command packet for CBFF/Sunster heaters.
+
+        Command mapping:
+        - cmd 0: Status request (FEAA cmd_1=0x80, cmd_2=0x00)
+        - cmd 1: Status request (same as 0)
+        - cmd 3: Power on/off (FEAA cmd_1=0x81, cmd_2=0x03, payload=arg)
+        - cmd 4: Set temperature (FEAA cmd_1=0x81, cmd_2=0x03, payload=[2, temp])
+        - cmd 5: Set level (FEAA cmd_1=0x81, cmd_2=0x03, payload=[1, level])
+        - cmd 14-21: Config commands (use AA55 fallback for compatibility)
+        """
+        # Status request
+        if command in (0, 1):
+            return self._build_feaa(cmd_1=0x80, cmd_2=0x00)
+
+        # Power on/off (cmd 3: argument=1 for on, 0 for off)
+        if command == 3:
+            return self._build_feaa(cmd_1=0x81, cmd_2=0x03, payload=bytes([argument]))
+
+        # Set temperature (cmd 4)
+        if command == 4:
+            # run_mode=2 (temperature mode), run_param=temp
+            return self._build_feaa(cmd_1=0x81, cmd_2=0x03, payload=bytes([2, argument]))
+
+        # Set level (cmd 5)
+        if command == 5:
+            # run_mode=1 (level mode), run_param=level
+            return self._build_feaa(cmd_1=0x81, cmd_2=0x03, payload=bytes([1, argument]))
+
+        # Set mode (cmd 2)
+        if command == 2:
+            # run_mode: 1=level, 2=temp
+            return self._build_feaa(cmd_1=0x81, cmd_2=0x02)
+
+        # Config commands (14-21): Fall back to AA55 for now
+        # These may need FEAA format with cmd_1=0x83 (settings) in the future
+        if command in (14, 15, 16, 17, 19, 20, 21):
+            return self._build_aa55_fallback(command, argument, passkey)
+
+        # Default: status request
+        return self._build_feaa(cmd_1=0x80, cmd_2=0x00)
+
+    @staticmethod
+    def _build_feaa(cmd_1: int, cmd_2: int, payload: bytes = b"") -> bytearray:
+        """Build FEAA packet with checksum.
+
+        Format: FEAA + version + pkg_num + length(2) + cmd_1 + cmd_2 + payload + checksum
+        """
+        # Base length: header(2) + version(1) + pkg_num(1) + length(2) + cmd_1(1) + cmd_2(1) = 8
+        # Plus payload + checksum
+        total_length = 8 + len(payload) + 1
+
+        packet = bytearray([
+            0xFE, 0xAA,          # Header
+            0x00,                # version_num (0=heater)
+            0x00,                # package_num
+            total_length & 0xFF, # length LSB
+            (total_length >> 8) & 0xFF,  # length MSB
+            cmd_1,               # command code
+            cmd_2,               # command type
+        ])
+        packet.extend(payload)
+
+        # Checksum: sum of all bytes & 0xFF
+        checksum = sum(packet) & 0xFF
+        packet.append(checksum)
+
+        return packet
+
+    @staticmethod
+    def _build_aa55_fallback(command: int, argument: int, passkey: int) -> bytearray:
+        """Build 8-byte AA55 command packet (fallback for config commands)."""
+        packet = bytearray([0xAA, 0x55, 0, 0, 0, 0, 0, 0])
+        packet[2] = passkey // 100
+        packet[3] = passkey % 100
+        packet[4] = command % 256
+        packet[5] = argument % 256
+        packet[6] = (argument // 256) % 256
+        packet[7] = (packet[2] + packet[3] + packet[4] + packet[5] + packet[6]) % 256
+        return packet
 
     def parse(self, data: bytearray) -> dict[str, Any] | None:
         if len(data) < 46:

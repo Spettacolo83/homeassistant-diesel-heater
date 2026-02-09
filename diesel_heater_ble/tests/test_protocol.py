@@ -1296,15 +1296,71 @@ class TestProtocolCBFF:
         assert "cab_temperature" not in result
         assert "supply_voltage" not in result
 
-    def test_build_command_uses_aa55(self):
-        """CBFF uses standard AA55 command format."""
+    def test_build_command_uses_feaa(self):
+        """CBFF uses FEAA command format (not AA55)."""
         pkt = self.proto.build_command(1, 0, 1234)
-        assert pkt[0] == 0xAA
-        assert pkt[1] == 0x55
+        assert pkt[0] == 0xFE
+        assert pkt[1] == 0xAA
+        # FEAA format: header(2) + version_num(1) + package_num(1) + length(2) + cmd_1(1) + cmd_2(1) + checksum(1) = 9
+        assert len(pkt) == 9
+
+    def test_feaa_status_request(self):
+        """FEAA status request uses cmd_1=0x80, cmd_2=0x00."""
+        pkt = self.proto.build_command(0, 0, 1234)
+        assert pkt[0:2] == bytes([0xFE, 0xAA])
+        assert pkt[6] == 0x80  # cmd_1 = status request
+        assert pkt[7] == 0x00  # cmd_2 = read
+        # Verify checksum (sum of all bytes except last)
+        assert pkt[-1] == sum(pkt[:-1]) & 0xFF
+
+    def test_feaa_power_on(self):
+        """FEAA power on uses cmd_1=0x81, cmd_2=0x03, payload=1."""
+        pkt = self.proto.build_command(3, 1, 1234)  # cmd 3, arg 1 = power on
+        assert pkt[0:2] == bytes([0xFE, 0xAA])
+        assert pkt[6] == 0x81  # cmd_1 = set power
+        assert pkt[7] == 0x03  # cmd_2 = command with payload
+        assert pkt[8] == 1    # payload = on
+        assert pkt[-1] == sum(pkt[:-1]) & 0xFF
+
+    def test_feaa_power_off(self):
+        """FEAA power off uses cmd_1=0x81, cmd_2=0x03, payload=0."""
+        pkt = self.proto.build_command(3, 0, 1234)  # cmd 3, arg 0 = power off
+        assert pkt[0:2] == bytes([0xFE, 0xAA])
+        assert pkt[6] == 0x81  # cmd_1 = set power
+        assert pkt[7] == 0x03  # cmd_2 = command with payload
+        assert pkt[8] == 0    # payload = off
+        assert pkt[-1] == sum(pkt[:-1]) & 0xFF
+
+    def test_feaa_set_temperature(self):
+        """FEAA set temperature uses cmd_1=0x81, cmd_2=0x03, payload=[mode, temp]."""
+        pkt = self.proto.build_command(4, 25, 1234)  # cmd 4, arg 25 = set temp 25C
+        assert pkt[0:2] == bytes([0xFE, 0xAA])
+        assert pkt[6] == 0x81  # cmd_1 = control command
+        assert pkt[7] == 0x03  # cmd_2 = command with payload
+        assert pkt[8] == 2    # running_mode = temperature mode
+        assert pkt[9] == 25   # temperature
+        assert pkt[-1] == sum(pkt[:-1]) & 0xFF
+
+    def test_feaa_set_level(self):
+        """FEAA set level uses cmd_1=0x81, cmd_2=0x03, payload=[mode, level]."""
+        pkt = self.proto.build_command(5, 5, 1234)  # cmd 5, arg 5 = set level 5
+        assert pkt[0:2] == bytes([0xFE, 0xAA])
+        assert pkt[6] == 0x81  # cmd_1 = control command
+        assert pkt[7] == 0x03  # cmd_2 = command with payload
+        assert pkt[8] == 1    # running_mode = level mode
+        assert pkt[9] == 5    # level
+        assert pkt[-1] == sum(pkt[:-1]) & 0xFF
+
+    def test_feaa_config_fallback_to_aa55(self):
+        """FEAA config commands fall back to AA55 for compatibility."""
+        # Set offset (cmd 14) should use AA55 fallback
+        pkt = self.proto.build_command(14, 2, 1234)
+        assert pkt[0:2] == bytes([0xAA, 0x55])
         assert len(pkt) == 8
 
     def test_is_heater_protocol(self):
         assert isinstance(self.proto, HeaterProtocol)
 
-    def test_is_vevor_command_mixin(self):
-        assert isinstance(self.proto, VevorCommandMixin)
+    def test_is_not_vevor_command_mixin(self):
+        """CBFF no longer inherits VevorCommandMixin - uses FEAA directly."""
+        assert not isinstance(self.proto, VevorCommandMixin)

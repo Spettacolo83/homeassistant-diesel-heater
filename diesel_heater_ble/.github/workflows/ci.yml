@@ -28,10 +28,10 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Lint with ruff
-        run: ruff check diesel_heater_ble/
+        run: ruff check src/diesel_heater_ble/
 
       - name: Run tests
-        run: pytest tests/ -v --cov=diesel_heater_ble --cov-report=term-missing
+        run: PYTHONPATH=src pytest tests/ -v --cov=diesel_heater_ble --cov-report=term-missing
 
   publish:
     needs: test

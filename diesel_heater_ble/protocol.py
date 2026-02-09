@@ -527,8 +527,8 @@ class ProtocolCBFF(HeaterProtocol):
         - cmd 0: Status request (FEAA cmd_1=0x80, cmd_2=0x00)
         - cmd 1: Status request (same as 0)
         - cmd 3: Power on/off (FEAA cmd_1=0x81, cmd_2=0x03, payload=arg)
-        - cmd 4: Set temperature (FEAA cmd_1=0x83, cmd_2=0x03, payload=mode,temp)
-        - cmd 5: Set level (FEAA cmd_1=0x83, cmd_2=0x03, payload=mode,level)
+        - cmd 4: Set temperature (FEAA cmd_1=0x81, cmd_2=0x03, payload=[2, temp])
+        - cmd 5: Set level (FEAA cmd_1=0x81, cmd_2=0x03, payload=[1, level])
         - cmd 14-21: Config commands (use AA55 fallback for compatibility)
         """
         # Status request
