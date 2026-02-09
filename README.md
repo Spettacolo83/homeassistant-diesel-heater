@@ -1,18 +1,18 @@
 <p align="center">
-  <img src="custom_components/vevor_heater/icon.png" alt="VEVOR Logo" width="100"/>
+  <img src="custom_components/diesel_heater/icon.png" alt="Diesel Heater Logo" width="100"/>
 </p>
 
-<h1 align="center">Vevor Diesel Heater - Home Assistant Integration</h1>
+<h1 align="center">Diesel Heater - Home Assistant Integration</h1>
 
 <p align="center">
   <a href="https://github.com/hacs/integration"><img src="https://img.shields.io/badge/HACS-Custom-41BDF5.svg" alt="HACS"></a>
-  <a href="https://github.com/Spettacolo83/homeassistant-vevor-heater/releases"><img src="https://img.shields.io/github/release/Spettacolo83/homeassistant-vevor-heater.svg" alt="GitHub release"></a>
-  <a href="https://github.com/Spettacolo83/homeassistant-vevor-heater/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Spettacolo83/homeassistant-vevor-heater.svg" alt="License"></a>
+  <a href="https://github.com/Spettacolo83/homeassistant-diesel-heater/releases"><img src="https://img.shields.io/github/release/Spettacolo83/homeassistant-diesel-heater.svg" alt="GitHub release"></a>
+  <a href="https://github.com/Spettacolo83/homeassistant-diesel-heater/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Spettacolo83/homeassistant-diesel-heater.svg" alt="License"></a>
 </p>
 
-> This is a maintained fork of the original [homeassistant-vevor-heater](https://github.com/MSDATDE/homeassistant-vevor-heater) by [@MSDATDE](https://github.com/MSDATDE), enhanced with HACS 2.0+ compatibility and additional improvements.
+> This is a maintained fork of the original [homeassistant-vevor-heater](https://github.com/MSDATDE/homeassistant-vevor-heater) by [@MSDATDE](https://github.com/MSDATDE), enhanced with HACS 2.0+ compatibility, multi-brand support, and additional improvements.
 
-Control your Vevor/BYD/HeaterCC/Sunster Diesel Heater from Home Assistant via Bluetooth. Supports AirHeaterBLE (AA55/AA66), AirHeaterCC (ABBA), and Sunster (CBFF) protocol heaters.
+Control your Vevor/BYD/HeaterCC/Sunster diesel heater from Home Assistant via Bluetooth. Supports AirHeaterBLE (AA55/AA66), AirHeaterCC (ABBA), and Sunster (CBFF) protocol heaters.
 
 ## Features
 
@@ -65,7 +65,7 @@ This integration supports **multiple protocols** and has been tested with variou
 | CBFF | 50% | Sunster | Double XOR encryption variant |
 
 ABBA and CBFF protocols are recent findings in newer Vevor and Chinabasto heaters. CBFF appeared in Sunster Bluetooth+WiFi heaters, but more heaters may use this protocol.
-We are actively developing them based on community feedback. If you own one, please check the [Issues](https://github.com/Spettacolo83/homeassistant-vevor-heater/issues), beta test, and report any problems.
+We are actively developing them based on community feedback. If you own one, please check the [Issues](https://github.com/Spettacolo83/homeassistant-diesel-heater/issues), beta test, and report any problems.
 
 ### Bluetooth Service UUIDs
 
@@ -99,16 +99,16 @@ Full control over your heater including temperature, level, and mode selection:
 1. Open HACS in Home Assistant
 2. Go to "Integrations"
 3. Click the three dots menu → "Custom repositories"
-4. Add this repository: `https://github.com/Spettacolo83/homeassistant-vevor-heater`
+4. Add this repository: `https://github.com/Spettacolo83/homeassistant-diesel-heater`
 5. Category: "Integration"
 6. Click "Add"
-7. Search for "Vevor Diesel Heater" and install
+7. Search for "Diesel Heater" and install
 8. Restart Home Assistant
 
 ### Manual Installation
 
-1. Download the latest release from [GitHub](https://github.com/Spettacolo83/homeassistant-vevor-heater/releases)
-2. Copy the `custom_components/vevor_heater` folder to your Home Assistant's `custom_components` directory
+1. Download the latest release from [GitHub](https://github.com/Spettacolo83/homeassistant-diesel-heater/releases)
+2. Copy the `custom_components/diesel_heater` folder to your Home Assistant's `custom_components` directory
 3. Restart Home Assistant
 
 ## Troubleshooting
@@ -163,14 +163,15 @@ Full control over your heater including temperature, level, and mode selection:
 logger:
   default: info
   logs:
-    custom_components.vevor_heater: debug
+    custom_components.diesel_heater: debug
+    diesel_heater_ble: debug
 ```
 
 ### Temperature Not Changing
 
 **1. Check Running Mode**
 > Temperature control only works in **Temperature Mode**.
-- Use `select.vevor_heater_running_mode` to switch to "Temperature Mode"
+- Use `select.diesel_heater_running_mode` to switch to "Temperature Mode"
 - In "Level Mode", the heater uses fixed power levels instead
 
 **2. Protocol Compatibility**
@@ -209,7 +210,7 @@ Before adding the integration, you need to find your heater's Bluetooth MAC addr
 
 1. Go to **Settings** → **Devices & Services**
 2. Click **"+ Add Integration"**
-3. Search for **"Vevor Diesel Heater"**
+3. Search for **"Diesel Heater"**
 4. The integration will auto-discover nearby heaters, or you can enter the MAC address manually
 5. Enter your heater's **PIN** (default: `1234`, change if you set a custom PIN via the Vevor app)
 6. Click **"Submit"**
@@ -232,16 +233,16 @@ Entities are created **conditionally based on the detected BLE protocol**. Only 
 
 | Platform | Entity | Description |
 |----------|--------|-------------|
-| Climate | `climate.vevor_heater` | Thermostat control (8-36°C), presets (Away, Comfort) |
-| Fan | `fan.vevor_heater_heater_level` | Level control as fan entity (1-10) |
-| Switch | `switch.vevor_heater_power` | Simple ON/OFF control |
-| Switch | `switch.vevor_heater_auto_offset` | Auto Temperature Offset toggle *(Config)* |
-| Select | `select.vevor_heater_running_mode` | Mode selector (Off, Level, Temperature) |
-| Number | `number.vevor_heater_level` | Set heater power level (1-10) |
-| Number | `number.vevor_heater_target_temperature` | Set target temperature (8-36°C) |
-| Number | `number.vevor_heater_tank_capacity` | Set tank capacity for fuel estimation *(Config)* |
-| Button | `button.vevor_heater_sync_time` | Sync heater clock with HA time *(Config)* |
-| Button | `button.vevor_heater_reset_est_fuel_remaining` | Reset estimated fuel after refuel *(Config)* |
+| Climate | `climate.diesel_heater` | Thermostat control (8-36°C), presets (Away, Comfort) |
+| Fan | `fan.diesel_heater_heater_level` | Level control as fan entity (1-10) |
+| Switch | `switch.diesel_heater_power` | Simple ON/OFF control |
+| Switch | `switch.diesel_heater_auto_offset` | Auto Temperature Offset toggle *(Config)* |
+| Select | `select.diesel_heater_running_mode` | Mode selector (Off, Level, Temperature) |
+| Number | `number.diesel_heater_level` | Set heater power level (1-10) |
+| Number | `number.diesel_heater_target_temperature` | Set target temperature (8-36°C) |
+| Number | `number.diesel_heater_tank_capacity` | Set tank capacity for fuel estimation *(Config)* |
+| Button | `button.diesel_heater_sync_time` | Sync heater clock with HA time *(Config)* |
+| Button | `button.diesel_heater_reset_est_fuel_remaining` | Reset estimated fuel after refuel *(Config)* |
 | Sensor | Case Temperature, Interior Temperature, Voltage, Running Step/Mode, Set Level, Altitude, Error Code | Basic heater sensors |
 | Sensor | Estimated Hourly/Daily/Total Fuel, Fuel Remaining, Fuel Since Refuel | Fuel tracking (computed locally) |
 | Sensor | Daily/Total Runtime, History sensors | Runtime tracking (computed locally) |
@@ -293,21 +294,21 @@ Create a nice dashboard with these cards:
 1. **Climate Card** - For temperature control
    ```yaml
    type: thermostat
-   entity: climate.vevor_heater
+   entity: climate.diesel_heater
    ```
 
 2. **Mode Selector** - To switch modes
    ```yaml
    type: entities
    entities:
-     - entity: select.vevor_heater_running_mode
+     - entity: select.diesel_heater_running_mode
    ```
 
 3. **Heater Level Control** - For manual power control
    ```yaml
    type: entities
    entities:
-     - entity: fan.vevor_heater_heater_level
+     - entity: fan.diesel_heater_heater_level
    ```
 
 4. **Sensor Overview**
@@ -315,10 +316,10 @@ Create a nice dashboard with these cards:
    type: entities
    title: Heater Status
    entities:
-     - entity: sensor.vevor_diesel_heater_interior_temperature
-     - entity: sensor.vevor_diesel_heater_case_temperature
-     - entity: sensor.vevor_diesel_heater_supply_voltage
-     - entity: binary_sensor.vevor_diesel_heater_active
+     - entity: sensor.diesel_heater_interior_temperature
+     - entity: sensor.diesel_heater_case_temperature
+     - entity: sensor.diesel_heater_supply_voltage
+     - entity: binary_sensor.diesel_heater_active
    ```
 
 ### Fuel Consumption History Graph
@@ -335,7 +336,7 @@ The integration automatically imports daily fuel consumption data into Home Assi
 ```yaml
 type: statistics-graph
 entities:
-  - sensor.vevor_diesel_heater_daily_fuel_consumed
+  - sensor.diesel_heater_daily_fuel_consumed
 stat_types:
   - sum
 period: day
@@ -348,7 +349,7 @@ title: Daily Fuel Consumption (Last 7 Days)
 ```yaml
 type: statistics-graph
 entities:
-  - sensor.vevor_diesel_heater_daily_fuel_consumed
+  - sensor.diesel_heater_daily_fuel_consumed
 stat_types:
   - sum
 period: day
@@ -377,7 +378,7 @@ all_series_config:
   type: column
   opacity: 0.8
 series:
-  - entity: sensor.vevor_diesel_heater_daily_fuel_history
+  - entity: sensor.diesel_heater_daily_fuel_history
     data_generator: |
       return Object.entries(entity.attributes.history || {})
         .slice(0, 7)
@@ -407,7 +408,7 @@ all_series_config:
   stroke_width: 2
   curve: smooth
 series:
-  - entity: sensor.vevor_diesel_heater_daily_fuel_history
+  - entity: sensor.diesel_heater_daily_fuel_history
     data_generator: |
       return Object.entries(entity.attributes.history || {})
         .reverse()
@@ -429,11 +430,11 @@ header:
   title: Fuel Consumption Trends
   show: true
 series:
-  - entity: sensor.vevor_diesel_heater_daily_fuel_history
+  - entity: sensor.diesel_heater_daily_fuel_history
     attribute: last_7_days
     name: Last 7 Days
     type: column
-  - entity: sensor.vevor_diesel_heater_daily_fuel_history
+  - entity: sensor.diesel_heater_daily_fuel_history
     attribute: last_30_days
     name: Last 30 Days
     type: column
@@ -452,15 +453,15 @@ yaxis:
 type: entities
 title: Fuel History
 entities:
-  - entity: sensor.vevor_diesel_heater_daily_fuel_history
+  - entity: sensor.diesel_heater_daily_fuel_history
     type: attribute
     attribute: last_7_days
     name: Last 7 Days Total
-  - entity: sensor.vevor_diesel_heater_daily_fuel_history
+  - entity: sensor.diesel_heater_daily_fuel_history
     type: attribute
     attribute: last_30_days
     name: Last 30 Days Total
-  - entity: sensor.vevor_diesel_heater_daily_fuel_history
+  - entity: sensor.diesel_heater_daily_fuel_history
     type: attribute
     attribute: days_tracked
     name: Days Tracked
@@ -471,7 +472,7 @@ entities:
 type: markdown
 title: Daily Fuel History
 content: |
-  {% set history = state_attr('sensor.vevor_diesel_heater_daily_fuel_history', 'history') %}
+  {% set history = state_attr('sensor.diesel_heater_daily_fuel_history', 'history') %}
   {% if history %}
   | Date | Liters |
   |------|--------|
@@ -591,7 +592,17 @@ This integration communicates via Bluetooth LE and supports 6 protocol variants 
 
 ## Changelog
 
-### Version 1.0.27 (Latest)
+### Version 2.0.0 (Latest)
+- **BREAKING: Integration renamed from `vevor_heater` to `diesel_heater`**
+  - Better reflects multi-brand support (Vevor, BYD, HeaterCC, Sunster, and other Chinese diesel heaters)
+  - **Automatic migration**: Storage files and entity history are preserved when upgrading
+  - New domain: `diesel_heater`, new service: `diesel_heater.send_command`
+  - Entity IDs will be regenerated with new domain prefix (e.g., `sensor.diesel_heater_interior_temperature`)
+  - HACS users: Remove old integration, add new repository URL, install fresh
+- **Repository renamed** to `homeassistant-diesel-heater`
+- **PyPI Library**: Protocol code extracted to standalone `diesel-heater-ble` package on PyPI
+
+### Version 1.0.27
 - **Conditional Entity Creation**: Entities are now created only if the detected BLE protocol supports them (Issue #28)
   - AA55/AA66 basic protocols only create core entities
   - Extended entities (backlight, offset, CO) only for encrypted protocols and CBFF
@@ -635,7 +646,7 @@ This integration communicates via Bluetooth LE and supports 6 protocol variants 
 - **Climate Presets**: Added Away and Comfort presets with configurable temperatures
 - **Entity Organization**: Diagnostic sensors moved to diagnostic category, configuration entities to config category
 - **Improved Error Handling**: Better error detection and reporting for all protocols
-- **Debug Service**: `vevor_heater.send_command` for raw BLE command debugging
+- **Debug Service**: `diesel_heater.send_command` for raw BLE command debugging
   - Target specific heaters by MAC address
   - Supports negative argument values (-128 to 127)
 - Special thanks to @Xev and @postal for extensive testing and ABBA protocol research
@@ -761,7 +772,7 @@ This integration communicates via Bluetooth LE and supports 6 protocol variants 
 
 ### Version 1.0.7
 - **New Feature**: Historical Daily Fuel Consumption Tracking
-  - Added `sensor.vevor_diesel_heater_daily_fuel_history` to track daily fuel consumption over time
+  - Added `sensor.diesel_heater_daily_fuel_history` to track daily fuel consumption over time
   - Stores last 30 days of consumption data with automatic cleanup
   - History persists across Home Assistant restarts
   - Daily values automatically saved to history at midnight before reset
@@ -863,12 +874,13 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Support
 
 If you encounter issues, please:
-1. Check the [Issues](https://github.com/Spettacolo83/homeassistant-vevor-heater/issues) page
+1. Check the [Issues](https://github.com/Spettacolo83/homeassistant-diesel-heater/issues) page
 2. Enable debug logging and include logs in your report:
    ```yaml
    logger:
      logs:
-       custom_components.vevor_heater: debug
+       custom_components.diesel_heater: debug
+       diesel_heater_ble: debug
    ```
 3. Provide your heater model, protocol type (AA55/AA66/ABBA), and which app works with your heater (AirHeaterBLE or AirHeaterCC)
 
