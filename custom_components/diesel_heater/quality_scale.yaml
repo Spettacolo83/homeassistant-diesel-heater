@@ -29,7 +29,7 @@ rules:
   config-flow: done
 
   # Dependencies are available on PyPI (not bundled)
-  dependency-transparency: todo  # diesel-heater-ble pending PyPI publication
+  dependency-transparency: done  # diesel-heater-ble v0.1.1 published on PyPI
 
   # Documentation exists for actions/services
   docs-actions: todo

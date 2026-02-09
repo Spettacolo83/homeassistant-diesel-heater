@@ -9,7 +9,7 @@
   "issue_tracker": "https://github.com/Spettacolo83/homeassistant-diesel-heater/issues",
   "iot_class": "local_polling",
   "loggers": ["diesel_heater_ble"],
-  "requirements": ["bleak>=0.21.0", "bleak-retry-connector>=3.4.0"],
+  "requirements": ["diesel-heater-ble>=0.1.1"],
   "bluetooth": [
     {
       "connectable": true,
