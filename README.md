@@ -1,5 +1,7 @@
 <p align="center">
-  <img src="custom_components/diesel_heater/icon.png" alt="Diesel Heater Logo" width="100"/>
+  <img src="custom_components/diesel_heater/icon.png" alt="Diesel Heater Icon" width="80"/>
+  &nbsp;&nbsp;&nbsp;
+  <img src="docs/images/logo.png" alt="Diesel Heater Logo" height="80"/>
 </p>
 
 <h1 align="center">Diesel Heater - Home Assistant Integration</h1>
