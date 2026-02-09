@@ -414,10 +414,23 @@ class _ConfigEntryNotReady(Exception):
 
 class _HomeAssistantError(Exception):
     """Stub for homeassistant.exceptions.HomeAssistantError."""
-    pass
+
+    def __init__(
+        self,
+        message: str = "",
+        *args,
+        translation_domain: str | None = None,
+        translation_key: str | None = None,
+        translation_placeholders: dict | None = None,
+        **kwargs,
+    ):
+        super().__init__(message, *args)
+        self.translation_domain = translation_domain
+        self.translation_key = translation_key
+        self.translation_placeholders = translation_placeholders or {}
 
 
-class _ServiceValidationError(Exception):
+class _ServiceValidationError(_HomeAssistantError):
     """Stub for homeassistant.exceptions.ServiceValidationError."""
     pass
 
