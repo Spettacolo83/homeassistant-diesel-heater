@@ -270,7 +270,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: VevorHeaterConfigEntry) 
 
             if not target_coords:
                 raise ServiceValidationError(
-                    f"No matching heater found for device_id: {device_id}"
+                    translation_domain=DOMAIN,
+                    translation_key="no_heater_found",
+                    translation_placeholders={"device_id": device_id or "all"},
                 )
 
             for coord in target_coords:
@@ -279,7 +281,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: VevorHeaterConfigEntry) 
                     await coord.async_send_raw_command(command, argument)
                 except Exception as err:
                     raise HomeAssistantError(
-                        f"Failed to send command to heater {coord.address}: {err}"
+                        translation_domain=DOMAIN,
+                        translation_key="command_failed",
+                        translation_placeholders={
+                            "address": coord.address,
+                            "error": str(err),
+                        },
                     ) from err
 
         hass.services.async_register(

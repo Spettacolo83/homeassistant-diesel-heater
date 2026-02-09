@@ -1,4 +1,12 @@
 {
+  "exceptions": {
+    "no_heater_found": {
+      "message": "No matching heater found for device: {device_id}"
+    },
+    "command_failed": {
+      "message": "Failed to send command to heater {address}: {error}"
+    }
+  },
   "config": {
     "step": {
       "confirm": {
