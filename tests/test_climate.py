@@ -1,4 +1,4 @@
-"""Tests for Vevor Heater climate platform."""
+"""Tests for Diesel Heater climate platform."""
 from __future__ import annotations
 
 import pytest
@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, AsyncMock
 # Import stubs first
 from . import conftest  # noqa: F401
 
-from custom_components.vevor_heater.climate import VevorHeaterClimate, async_setup_entry
+from custom_components.diesel_heater.climate import VevorHeaterClimate, async_setup_entry
 
 
 def create_mock_coordinator() -> MagicMock:
@@ -632,7 +632,7 @@ class TestClimateAsyncSetPresetModeFull:
     async def test_async_set_preset_mode_away(self):
         """Test async_set_preset_mode with PRESET_AWAY."""
         # Import from the same place climate.py imports
-        from custom_components.vevor_heater.climate import PRESET_AWAY
+        from custom_components.diesel_heater.climate import PRESET_AWAY
 
         coordinator = create_mock_coordinator()
         config_entry = create_mock_config_entry()
@@ -649,7 +649,7 @@ class TestClimateAsyncSetPresetModeFull:
     @pytest.mark.asyncio
     async def test_async_set_preset_mode_comfort(self):
         """Test async_set_preset_mode with PRESET_COMFORT."""
-        from custom_components.vevor_heater.climate import PRESET_COMFORT
+        from custom_components.diesel_heater.climate import PRESET_COMFORT
 
         coordinator = create_mock_coordinator()
         config_entry = create_mock_config_entry()
@@ -666,7 +666,7 @@ class TestClimateAsyncSetPresetModeFull:
     @pytest.mark.asyncio
     async def test_async_set_preset_mode_none(self):
         """Test async_set_preset_mode with PRESET_NONE."""
-        from custom_components.vevor_heater.climate import PRESET_NONE
+        from custom_components.diesel_heater.climate import PRESET_NONE
 
         coordinator = create_mock_coordinator()
         config_entry = create_mock_config_entry()
@@ -687,7 +687,7 @@ class TestClimateAsyncSetPresetModeFull:
     @pytest.mark.asyncio
     async def test_async_set_preset_mode_clears_none_flag_on_away(self):
         """Test setting preset clears _user_cleared_preset flag."""
-        from custom_components.vevor_heater.climate import PRESET_AWAY
+        from custom_components.diesel_heater.climate import PRESET_AWAY
 
         coordinator = create_mock_coordinator()
         config_entry = create_mock_config_entry()
@@ -701,7 +701,7 @@ class TestClimateAsyncSetPresetModeFull:
     @pytest.mark.asyncio
     async def test_async_set_preset_mode_clears_none_flag_on_comfort(self):
         """Test setting comfort preset clears _user_cleared_preset flag."""
-        from custom_components.vevor_heater.climate import PRESET_COMFORT
+        from custom_components.diesel_heater.climate import PRESET_COMFORT
 
         coordinator = create_mock_coordinator()
         config_entry = create_mock_config_entry()
@@ -812,7 +812,7 @@ class TestClimateAsyncSetTemperatureFull:
     @pytest.mark.asyncio
     async def test_async_set_temperature_auto_selects_away_preset(self):
         """Test async_set_temperature auto-selects PRESET_AWAY if temp matches."""
-        from custom_components.vevor_heater.climate import PRESET_AWAY
+        from custom_components.diesel_heater.climate import PRESET_AWAY
 
         coordinator = create_mock_coordinator()
         config_entry = create_mock_config_entry()
@@ -827,7 +827,7 @@ class TestClimateAsyncSetTemperatureFull:
     @pytest.mark.asyncio
     async def test_async_set_temperature_auto_selects_comfort_preset(self):
         """Test async_set_temperature auto-selects PRESET_COMFORT if temp matches."""
-        from custom_components.vevor_heater.climate import PRESET_COMFORT
+        from custom_components.diesel_heater.climate import PRESET_COMFORT
 
         coordinator = create_mock_coordinator()
         config_entry = create_mock_config_entry()
@@ -882,7 +882,7 @@ class TestClimateAsyncSetHvacModeFull:
     @pytest.mark.asyncio
     async def test_async_set_hvac_mode_heat(self):
         """Test async_set_hvac_mode with HEAT."""
-        from custom_components.vevor_heater.climate import HVACMode
+        from custom_components.diesel_heater.climate import HVACMode
 
         coordinator = create_mock_coordinator()
         config_entry = create_mock_config_entry()
@@ -895,7 +895,7 @@ class TestClimateAsyncSetHvacModeFull:
     @pytest.mark.asyncio
     async def test_async_set_hvac_mode_off(self):
         """Test async_set_hvac_mode with OFF."""
-        from custom_components.vevor_heater.climate import HVACMode
+        from custom_components.diesel_heater.climate import HVACMode
 
         coordinator = create_mock_coordinator()
         config_entry = create_mock_config_entry()
@@ -950,7 +950,7 @@ class TestClimateEdgeCases:
 
     def test_preset_mode_away_detection(self):
         """Test preset mode correctly detects away."""
-        from custom_components.vevor_heater.climate import PRESET_AWAY
+        from custom_components.diesel_heater.climate import PRESET_AWAY
 
         coordinator = create_mock_coordinator()
         coordinator.data["set_temp"] = 8
@@ -964,7 +964,7 @@ class TestClimateEdgeCases:
 
     def test_preset_mode_comfort_detection(self):
         """Test preset mode correctly detects comfort."""
-        from custom_components.vevor_heater.climate import PRESET_COMFORT
+        from custom_components.diesel_heater.climate import PRESET_COMFORT
 
         coordinator = create_mock_coordinator()
         coordinator.data["set_temp"] = 21

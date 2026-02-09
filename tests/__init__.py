@@ -1,1 +1,1 @@
-"""Tests for the Vevor Heater integration."""
+"""Tests for the Diesel Heater integration."""

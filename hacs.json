@@ -1,8 +1,8 @@
 {
-  "name": "Vevor Diesel Heater",
+  "name": "Diesel Heater",
   "content_in_root": false,
-  "filename": "vevor_heater",
+  "filename": "diesel_heater",
   "render_readme": true,
   "homeassistant": "2024.1.0",
-  "logo": "https://raw.githubusercontent.com/Spettacolo83/homeassistant-vevor-heater/main/custom_components/vevor_heater/icon.png"
+  "logo": "https://raw.githubusercontent.com/Spettacolo83/homeassistant-diesel-heater/main/custom_components/diesel_heater/icon.png"
 }

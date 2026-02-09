@@ -1,8 +1,13 @@
-"""The Vevor Diesel Heater integration."""
+"""The Diesel Heater integration.
+
+Supports Vevor, BYD, HeaterCC, Sunster and other Chinese diesel heaters via BLE.
+"""
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import shutil
 from typing import Any
 
 import voluptuous as vol
@@ -17,12 +22,15 @@ from homeassistant.exceptions import (
     ServiceValidationError,
 )
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
-from .const import DOMAIN
+from .const import DOMAIN, OLD_DOMAIN
 from .coordinator import VevorHeaterCoordinator
 
-VevorHeaterConfigEntry = ConfigEntry[VevorHeaterCoordinator]
+DieselHeaterConfigEntry = ConfigEntry[VevorHeaterCoordinator]
+# Backwards compatibility alias for existing platform modules
+VevorHeaterConfigEntry = DieselHeaterConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -66,6 +74,44 @@ PLATFORMS: list[Platform] = [
     Platform.SENSOR,
     Platform.SWITCH,
 ]
+
+
+async def async_migrate_from_old_domain(hass: HomeAssistant) -> None:
+    """Migrate from old vevor_heater domain to diesel_heater.
+
+    This function handles:
+    1. Migrating persistent data files
+    2. Entity registry updates happen automatically via unique_id
+    """
+    # Migrate persistent data files from old domain to new domain
+    old_storage_dir = hass.config.path(".storage")
+
+    # List of storage files that might exist
+    storage_files = [
+        f"{OLD_DOMAIN}.fuel_data",
+        f"{OLD_DOMAIN}.runtime_data",
+    ]
+
+    for old_filename in storage_files:
+        old_path = os.path.join(old_storage_dir, old_filename)
+        if os.path.exists(old_path):
+            new_filename = old_filename.replace(OLD_DOMAIN, DOMAIN)
+            new_path = os.path.join(old_storage_dir, new_filename)
+
+            if not os.path.exists(new_path):
+                _LOGGER.info(
+                    "Migrating storage file: %s -> %s",
+                    old_filename,
+                    new_filename,
+                )
+                try:
+                    shutil.copy2(old_path, new_path)
+                except Exception as err:
+                    _LOGGER.warning(
+                        "Failed to migrate storage file %s: %s",
+                        old_filename,
+                        err,
+                    )
 
 
 def _safe_update_unique_id(
@@ -182,25 +228,32 @@ def _migrate_entity_unique_ids(
                 break
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: VevorHeaterConfigEntry) -> bool:
-    """Set up Vevor Diesel Heater from a config entry."""
+async def async_setup(hass: HomeAssistant, config: dict) -> bool:
+    """Set up the Diesel Heater integration."""
+    # Migrate storage files from old domain if they exist
+    await async_migrate_from_old_domain(hass)
+    return True
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: DieselHeaterConfigEntry) -> bool:
+    """Set up Diesel Heater from a config entry."""
     address: str = entry.data[CONF_ADDRESS]
 
-    _LOGGER.debug("Setting up Vevor Heater with address: %s", address)
+    _LOGGER.debug("Setting up Diesel Heater with address: %s", address)
 
     # Migrate entity unique_ids from older versions (preserves history)
     _migrate_entity_unique_ids(hass, entry)
-    
+
     # Get BLE device from Home Assistant's bluetooth integration
     ble_device = bluetooth.async_ble_device_from_address(
         hass, address.upper(), connectable=True
     )
-    
+
     if not ble_device:
         raise ConfigEntryNotReady(
-            f"Could not find Vevor Heater with address {address}"
+            f"Could not find Diesel Heater with address {address}"
         )
-    
+
     # Create coordinator
     coordinator = VevorHeaterCoordinator(hass, ble_device, entry)
 
@@ -215,21 +268,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: VevorHeaterConfigEntry) 
             coordinator.async_config_entry_first_refresh(),
             timeout=30.0
         )
-        _LOGGER.info("Successfully connected to Vevor Heater at %s", address)
+        _LOGGER.info("Successfully connected to Diesel Heater at %s", address)
     except asyncio.TimeoutError:
         _LOGGER.warning(
-            "Initial connection to Vevor Heater at %s timed out after 30 seconds. "
+            "Initial connection to Diesel Heater at %s timed out after 30 seconds. "
             "Setup will complete anyway and retry in background. "
             "Entities will show as unavailable until connection succeeds. "
-            "Make sure the heater is powered on, in Bluetooth range, and the Vevor app is disconnected.",
+            "Make sure the heater is powered on, in Bluetooth range, and the app is disconnected.",
             address
         )
     except Exception as err:
         _LOGGER.warning(
-            "Initial connection to Vevor Heater at %s failed: %s. "
+            "Initial connection to Diesel Heater at %s failed: %s. "
             "Setup will complete anyway and retry in background. "
             "Entities will show as unavailable until connection succeeds. "
-            "Make sure the heater is powered on, in Bluetooth range, and the Vevor app is disconnected.",
+            "Make sure the heater is powered on, in Bluetooth range, and the app is disconnected.",
             address,
             err
         )
@@ -300,7 +353,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: VevorHeaterConfigEntry) 
     return True
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: VevorHeaterConfigEntry) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: DieselHeaterConfigEntry) -> bool:
     """Unload a config entry."""
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         coordinator: VevorHeaterCoordinator = entry.runtime_data

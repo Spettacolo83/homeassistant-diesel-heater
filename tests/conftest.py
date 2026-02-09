@@ -1,7 +1,7 @@
-"""Shared test fixtures for Vevor Heater tests.
+"""Shared test fixtures for Diesel Heater tests.
 
 For pure-Python tests (protocol, helpers) we stub out the homeassistant
-package so that ``custom_components.vevor_heater`` can be imported without
+package so that ``custom_components.diesel_heater`` can be imported without
 having Home Assistant installed.
 """
 from __future__ import annotations
