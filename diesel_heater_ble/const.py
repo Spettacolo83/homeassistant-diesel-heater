@@ -11,7 +11,11 @@ PROTOCOL_HEADER_AA66: Final = 0xAA66  # Protocol type 2 (Vevor encrypted)
 PROTOCOL_HEADER_ABBA: Final = 0xABBA  # Protocol type 5 (HeaterCC/ABBA)
 PROTOCOL_HEADER_BAAB: Final = 0xBAAB  # ABBA command header (reversed)
 PROTOCOL_HEADER_CBFF: Final = 0xCBFF  # Protocol type 6 (Sunster/v2.1)
-PROTOCOL_HEADER_AA77: Final = 0xAA77  # Sunster command ACK header
+PROTOCOL_HEADER_AA77: Final = 0xAA77  # Sunster V2.1 locked state / ACK header
+PROTOCOL_HEADER_FEAA: Final = 0xFEAA  # Sunster V2.1 command header
+
+# Sunster V2.1 double-XOR encryption key (15 bytes)
+SUNSTER_V21_KEY: Final = b"passwordA2409PW"
 
 # Hcalory Protocol headers
 PROTOCOL_HEADER_HCALORY: Final = 0x0002  # Hcalory MVP1/MVP2 protocol ID
