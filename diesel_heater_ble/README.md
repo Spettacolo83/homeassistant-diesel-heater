@@ -9,12 +9,13 @@ over Bluetooth Low Energy (BLE). No dependency on Home Assistant.
 
 | Protocol | Mode | Description |
 |----------|------|-------------|
-| AA55 | 1 | Unencrypted, 18-20 bytes (Vevor/Hcalory) |
-| AA55enc | 2 | Encrypted, 48 bytes XOR (Vevor/Hcalory) |
+| AA55 | 1 | Unencrypted, 18-20 bytes (Vevor) |
+| AA55enc | 2 | Encrypted, 48 bytes XOR (Vevor) |
 | AA66 | 3 | Unencrypted, 20 bytes (BYD variant) |
-| AA66enc | 4 | Encrypted, 48 bytes XOR (Vevor/Hcalory) |
+| AA66enc | 4 | Encrypted, 48 bytes XOR (Vevor) |
 | ABBA | 5 | HeaterCC protocol, 21+ bytes, own command format |
 | CBFF | 6 | Sunster v2.1, 47 bytes, optional double-XOR encryption |
+| Hcalory | 7 | MVP1/MVP2 protocol, variable length with checksum |
 
 ## Installation
 
@@ -54,6 +55,7 @@ All protocol classes implement the `HeaterProtocol` interface:
 - `ProtocolAA66Encrypted` - AA66 with XOR encryption
 - `ProtocolABBA` - ABBA/HeaterCC protocol
 - `ProtocolCBFF` - CBFF/Sunster v2.1 protocol
+- `ProtocolHcalory` - Hcalory MVP1/MVP2 protocol
 
 ### Methods
 

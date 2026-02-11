@@ -13,6 +13,19 @@ PROTOCOL_HEADER_BAAB: Final = 0xBAAB  # ABBA command header (reversed)
 PROTOCOL_HEADER_CBFF: Final = 0xCBFF  # Protocol type 6 (Sunster/v2.1)
 PROTOCOL_HEADER_AA77: Final = 0xAA77  # Sunster command ACK header
 
+# Hcalory Protocol headers
+PROTOCOL_HEADER_HCALORY: Final = 0x0002  # Hcalory MVP1/MVP2 protocol ID
+
+# Hcalory Service UUIDs
+HCALORY_MVP1_SERVICE_UUID: Final = "0000fff0-0000-1000-8000-00805f9b34fb"
+HCALORY_MVP2_SERVICE_UUID: Final = "0000bd39-0000-1000-8000-00805f9b34fb"
+
+# Hcalory Characteristic UUIDs
+HCALORY_MVP1_WRITE_UUID: Final = "0000fff2-0000-1000-8000-00805f9b34fb"
+HCALORY_MVP1_NOTIFY_UUID: Final = "0000fff1-0000-1000-8000-00805f9b34fb"
+HCALORY_MVP2_WRITE_UUID: Final = "0000bdf7-0000-1000-8000-00805f9b34fb"
+HCALORY_MVP2_NOTIFY_UUID: Final = "0000bdf8-0000-1000-8000-00805f9b34fb"
+
 # XOR encryption key for encrypted protocols
 ENCRYPTION_KEY: Final = [112, 97, 115, 115, 119, 111, 114, 100]  # "password"
 
@@ -135,3 +148,74 @@ MIN_LEVEL: Final = 1
 MAX_LEVEL: Final = 10
 MIN_TEMP_CELSIUS: Final = 8
 MAX_TEMP_CELSIUS: Final = 36
+
+# Hcalory specific limits (6 gear levels instead of 10)
+HCALORY_MIN_LEVEL: Final = 1
+HCALORY_MAX_LEVEL: Final = 6
+
+# Hcalory device states (byte position 18-19 in response)
+HCALORY_STATE_STANDBY: Final = 0x00
+HCALORY_STATE_HEATING_TEMP_AUTO: Final = 0x01
+HCALORY_STATE_HEATING_MANUAL_GEAR: Final = 0x02
+HCALORY_STATE_NATURAL_WIND: Final = 0x03
+HCALORY_STATE_MACHINE_FAULT: Final = 0xFF
+
+HCALORY_STATE_NAMES: Final = {
+    HCALORY_STATE_STANDBY: "Standby",
+    HCALORY_STATE_HEATING_TEMP_AUTO: "Temperature Mode",
+    HCALORY_STATE_HEATING_MANUAL_GEAR: "Gear Mode",
+    HCALORY_STATE_NATURAL_WIND: "Fan Only",
+    HCALORY_STATE_MACHINE_FAULT: "Fault",
+}
+
+# Hcalory operative states (from status flags parsing)
+HCALORY_OP_STATE_STOPPED: Final = 0x00
+HCALORY_OP_STATE_HEATING: Final = 0x01
+HCALORY_OP_STATE_COOLING: Final = 0x10
+HCALORY_OP_STATE_NATURAL_WIND: Final = 0x11
+
+# Hcalory error codes (when device_state = 0xFF)
+HCALORY_ERROR_NONE: Final = 0
+HCALORY_ERROR_IGNITION: Final = 1
+HCALORY_ERROR_FLAME_OUT: Final = 2
+HCALORY_ERROR_OVERHEAT: Final = 3
+HCALORY_ERROR_FAN: Final = 4
+HCALORY_ERROR_PUMP: Final = 5
+HCALORY_ERROR_SENSOR: Final = 6
+HCALORY_ERROR_VOLTAGE_LOW: Final = 7
+HCALORY_ERROR_VOLTAGE_HIGH: Final = 8
+HCALORY_ERROR_COMMUNICATION: Final = 9
+HCALORY_ERROR_CO_HIGH: Final = 10
+HCALORY_ERROR_CO_CRITICAL: Final = 11
+
+HCALORY_ERROR_NAMES: Final = {
+    HCALORY_ERROR_NONE: "No fault",
+    HCALORY_ERROR_IGNITION: "E01 - Ignition failure",
+    HCALORY_ERROR_FLAME_OUT: "E02 - Flame out",
+    HCALORY_ERROR_OVERHEAT: "E03 - Overheat",
+    HCALORY_ERROR_FAN: "E04 - Fan failure",
+    HCALORY_ERROR_PUMP: "E05 - Pump failure",
+    HCALORY_ERROR_SENSOR: "E06 - Sensor failure",
+    HCALORY_ERROR_VOLTAGE_LOW: "E07 - Low voltage",
+    HCALORY_ERROR_VOLTAGE_HIGH: "E08 - High voltage",
+    HCALORY_ERROR_COMMUNICATION: "E09 - Communication error",
+    HCALORY_ERROR_CO_HIGH: "E10 - CO concentration high",
+    HCALORY_ERROR_CO_CRITICAL: "E11 - CO concentration critical",
+}
+
+# Hcalory command types
+HCALORY_CMD_SET_GEAR: Final = 0x0607
+HCALORY_CMD_SET_TEMP: Final = 0x0706
+HCALORY_CMD_POWER: Final = 0x0E04
+HCALORY_CMD_QUERY_STATE: Final = 0x0A0A
+HCALORY_CMD_SET_ALTITUDE: Final = 0x0909
+
+# Hcalory power command arguments (for CMD_POWER)
+HCALORY_POWER_QUERY: Final = 0x00
+HCALORY_POWER_ON: Final = 0x01
+HCALORY_POWER_OFF: Final = 0x02
+HCALORY_POWER_AUTO_ON: Final = 0x03
+HCALORY_POWER_AUTO_OFF: Final = 0x04
+HCALORY_POWER_CELSIUS: Final = 0x0A
+HCALORY_POWER_FAHRENHEIT: Final = 0x0B
+HCALORY_POWER_QUERY_ALTITUDE: Final = 0x0D

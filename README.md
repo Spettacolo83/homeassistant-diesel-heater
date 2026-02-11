@@ -12,7 +12,7 @@
 
 > This is a maintained fork of the original [homeassistant-vevor-heater](https://github.com/MSDATDE/homeassistant-vevor-heater) by [@MSDATDE](https://github.com/MSDATDE), enhanced with HACS 2.0+ compatibility, multi-brand support, and additional improvements.
 
-Control your Vevor/BYD/HeaterCC/Sunster diesel heater from Home Assistant via Bluetooth. Supports AirHeaterBLE (AA55/AA66), AirHeaterCC (ABBA), and Sunster (CBFF) protocol heaters.
+Control your Vevor/BYD/HeaterCC/Sunster/Hcalory diesel heater from Home Assistant via Bluetooth. Supports AirHeaterBLE (AA55/AA66), AirHeaterCC (ABBA), Sunster (CBFF), and Hcalory (MVP1/MVP2) protocol heaters.
 
 ## Features
 
@@ -27,7 +27,7 @@ Control your Vevor/BYD/HeaterCC/Sunster diesel heater from Home Assistant via Bl
 - 🔌 **Bluetooth LE** - Direct local connection, no cloud required
 - ⚡ **Real-time Updates** - 30-second polling interval
 - 💾 **Data Persistence** - Fuel consumption data saved across restarts
-- 🌐 **Multi-Protocol Support** - Works with AA55, AA66, ABBA, and CBFF protocol heaters
+- 🌐 **Multi-Protocol Support** - Works with AA55, AA66, ABBA, CBFF, and Hcalory protocol heaters
 - 🛠️ **Configuration Settings** - AirHeaterBLE-like settings:
   - Language, Temperature Unit, Altitude Unit
   - Tank Volume, Pump Type, Temperature Offset
@@ -63,14 +63,15 @@ This integration supports **multiple protocols** and has been tested with variou
 | AA66 Encrypted | 95% | AirHeaterBLE | XOR encrypted, Fahrenheit internal |
 | ABBA | 80% | AirHeaterCC | Different command structure |
 | CBFF | 50% | Sunster | Double XOR encryption variant |
+| Hcalory MVP2 | 70% | Hcalory | New protocol for HBU1S and similar |
 
-ABBA and CBFF protocols are recent findings in newer Vevor and Chinabasto heaters. CBFF appeared in Sunster Bluetooth+WiFi heaters, but more heaters may use this protocol.
-We are actively developing them based on community feedback. If you own one, please check the [Issues](https://github.com/Spettacolo83/homeassistant-diesel-heater/issues), beta test, and report any problems.
+ABBA, CBFF, and Hcalory protocols are used by various heater brands. If you own a heater that uses one of these protocols, please check the [Issues](https://github.com/Spettacolo83/homeassistant-diesel-heater/issues), beta test, and report any problems.
 
 ### Bluetooth Service UUIDs
 
 - **FFE0** Service: `0000ffe0-0000-1000-8000-00805f9b34fb` (AA55/AA66 heaters)
-- **FFF0** Service: `0000fff0-0000-1000-8000-00805f9b34fb` (ABBA/HeaterCC and CBFF/Sunster heaters)
+- **FFF0** Service: `0000fff0-0000-1000-8000-00805f9b34fb` (ABBA/HeaterCC, CBFF/Sunster, Hcalory MVP1)
+- **BD39** Service: `0000bd39-0000-1000-8000-00805f9b34fb` (Hcalory MVP2 heaters like HBU1S)
 
 ### Tested Heaters
 
@@ -78,7 +79,8 @@ We are actively developing them based on community feedback. If you own one, ple
 - BYD Diesel Heaters
 - HeaterCC compatible heaters
 - Sunster TB10Pro WiFi
-- Generic Chinese diesel heaters using AirHeaterBLE, AirHeaterCC, or Sunster apps
+- Hcalory HBU1S and similar models
+- Generic Chinese diesel heaters using AirHeaterBLE, AirHeaterCC, Sunster, or Hcalory apps
 
 ## Screenshots
 

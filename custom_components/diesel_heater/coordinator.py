@@ -46,6 +46,9 @@ from .const import (
     DEFAULT_TEMPERATURE_OFFSET,
     DOMAIN,
     FUEL_CONSUMPTION_TABLE,
+    HCALORY_MVP2_NOTIFY_UUID,
+    HCALORY_MVP2_SERVICE_UUID,
+    HCALORY_MVP2_WRITE_UUID,
     MAX_HEATER_OFFSET,
     MAX_HISTORY_DAYS,
     MIN_HEATER_OFFSET,
@@ -79,6 +82,7 @@ from diesel_heater_ble import (
     ProtocolAA66Encrypted,
     ProtocolABBA,
     ProtocolCBFF,
+    ProtocolHcalory,
     _decrypt_data,
     _u8_to_number,
 )
@@ -137,9 +141,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             4: ProtocolAA66Encrypted(),
             5: ProtocolABBA(),
             6: cbff,
+            7: ProtocolHcalory(),
         }
         self._is_abba_device = False  # True if using ABBA/HeaterCC protocol
         self._abba_write_char = None  # ABBA devices use separate write characteristic
+        self._is_hcalory_device = False  # True if using Hcalory MVP1/MVP2 protocol
+        self._hcalory_write_char = None  # Hcalory devices use separate write characteristic
         self._connection_attempts = 0
         self._last_connection_attempt = 0.0
         self._consecutive_failures = 0  # Track consecutive update failures
@@ -962,46 +969,81 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 await self._cleanup_connection()
                 raise BleakError("No services available")
 
-            # Get characteristic - try Vevor UUIDs first, then ABBA
+            # Get characteristic - try Vevor UUIDs first, then ABBA, then Hcalory
             self._characteristic = None
             self._active_char_uuid = None
             self._is_abba_device = False
             self._abba_write_char = None
+            self._is_hcalory_device = False
+            self._hcalory_write_char = None
 
-            # First, check for ABBA/HeaterCC device (service fff0)
+            # First, check for Hcalory MVP2 device (service bd39)
             for service in self._client.services:
-                if service.uuid.lower() == ABBA_SERVICE_UUID.lower():
-                    self._logger.info("🔍 Detected ABBA/HeaterCC heater (service fff0)")
-                    self._is_abba_device = True
-                    self._protocol_mode = 5  # ABBA protocol
-                    self._protocol = self._protocols[5]
+                if service.uuid.lower() == HCALORY_MVP2_SERVICE_UUID.lower():
+                    self._logger.info("🔍 Detected Hcalory MVP2 heater (service bd39)")
+                    self._is_hcalory_device = True
+                    self._protocol_mode = 7  # Hcalory protocol
+                    self._protocol = self._protocols[7]
+                    # Set MVP2 flag on the protocol
+                    if hasattr(self._protocol, 'set_mvp_version'):
+                        self._protocol.set_mvp_version(True)
 
                     # Log all characteristics in this service for debugging
                     char_list = [f"{c.uuid} (props: {c.properties})" for c in service.characteristics]
-                    self._logger.info("📋 ABBA service characteristics: %s", char_list)
+                    self._logger.info("📋 Hcalory service characteristics: %s", char_list)
 
                     # Find notify and write characteristics
                     for char in service.characteristics:
-                        if char.uuid.lower() == ABBA_NOTIFY_UUID.lower():
+                        if char.uuid.lower() == HCALORY_MVP2_NOTIFY_UUID.lower():
                             self._characteristic = char
-                            self._active_char_uuid = ABBA_NOTIFY_UUID
-                            self._logger.info("✅ Found ABBA notify characteristic (fff1): %s", char.uuid)
-                        elif char.uuid.lower() == ABBA_WRITE_UUID.lower():
-                            self._abba_write_char = char
-                            self._logger.info("✅ Found ABBA write characteristic (fff2): %s", char.uuid)
+                            self._active_char_uuid = HCALORY_MVP2_NOTIFY_UUID
+                            self._logger.info("✅ Found Hcalory notify characteristic (bdf8): %s", char.uuid)
+                        elif char.uuid.lower() == HCALORY_MVP2_WRITE_UUID.lower():
+                            self._hcalory_write_char = char
+                            self._logger.info("✅ Found Hcalory write characteristic (bdf7): %s", char.uuid)
 
                     # Warning if write characteristic not found
-                    if not self._abba_write_char:
+                    if not self._hcalory_write_char:
                         self._logger.warning(
-                            "⚠️ ABBA device but fff2 write characteristic not found! "
-                            "Will try writing to fff1 as fallback."
+                            "⚠️ Hcalory device but bdf7 write characteristic not found!"
                         )
-                        # Fall back to using fff1 for writing if fff2 not available
-                        self._abba_write_char = self._characteristic
                     break
 
-            # If not ABBA, try Vevor UUIDs
-            if not self._is_abba_device:
+            # Second, check for ABBA/HeaterCC device (service fff0)
+            if not self._is_hcalory_device:
+                for service in self._client.services:
+                    if service.uuid.lower() == ABBA_SERVICE_UUID.lower():
+                        self._logger.info("🔍 Detected ABBA/HeaterCC heater (service fff0)")
+                        self._is_abba_device = True
+                        self._protocol_mode = 5  # ABBA protocol
+                        self._protocol = self._protocols[5]
+
+                        # Log all characteristics in this service for debugging
+                        char_list = [f"{c.uuid} (props: {c.properties})" for c in service.characteristics]
+                        self._logger.info("📋 ABBA service characteristics: %s", char_list)
+
+                        # Find notify and write characteristics
+                        for char in service.characteristics:
+                            if char.uuid.lower() == ABBA_NOTIFY_UUID.lower():
+                                self._characteristic = char
+                                self._active_char_uuid = ABBA_NOTIFY_UUID
+                                self._logger.info("✅ Found ABBA notify characteristic (fff1): %s", char.uuid)
+                            elif char.uuid.lower() == ABBA_WRITE_UUID.lower():
+                                self._abba_write_char = char
+                                self._logger.info("✅ Found ABBA write characteristic (fff2): %s", char.uuid)
+
+                        # Warning if write characteristic not found
+                        if not self._abba_write_char:
+                            self._logger.warning(
+                                "⚠️ ABBA device but fff2 write characteristic not found! "
+                                "Will try writing to fff1 as fallback."
+                            )
+                            # Fall back to using fff1 for writing if fff2 not available
+                            self._abba_write_char = self._characteristic
+                        break
+
+            # If not ABBA or Hcalory, try Vevor UUIDs
+            if not self._is_abba_device and not self._is_hcalory_device:
                 # Define UUID pairs to try: (service_uuid, characteristic_uuid)
                 uuid_pairs = [
                     (SERVICE_UUID, CHARACTERISTIC_UUID),
@@ -1078,6 +1120,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         For encrypted protocols, data_to_parse is already decrypted.
         """
+        # Hcalory protocol (MVP1/MVP2) - detected by service UUID or header 0x0002
+        if self._is_hcalory_device or header == 0x0002:
+            return self._protocols[7], data
+
         if header == PROTOCOL_HEADER_CBFF:
             return self._protocols[6], data
 
@@ -1272,7 +1318,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         Uses response=False to avoid authorization issues with BLE
         proxies (e.g., ESPHome BLE proxy). The heater sends a notification as response.
         """
-        if self._is_abba_device and self._abba_write_char:
+        if self._is_hcalory_device and self._hcalory_write_char:
+            write_char = self._hcalory_write_char
+            protocol_name = "Hcalory"
+        elif self._is_abba_device and self._abba_write_char:
             write_char = self._abba_write_char
             protocol_name = "ABBA"
         else:
@@ -1285,7 +1334,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     async def _send_wake_up_ping(self) -> None:
         """Send a wake-up ping to the device to ensure it's responsive."""
         try:
-            if self._client and (self._characteristic or self._abba_write_char):
+            if self._client and (self._characteristic or self._abba_write_char or self._hcalory_write_char):
                 packet = self._build_command_packet(1)
                 await self._write_gatt(packet)
                 await asyncio.sleep(0.5)
@@ -1297,10 +1346,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """Build command packet for the heater.
 
         Delegates to the active protocol's command builder.
-        Falls back to ABBA if _is_abba_device, else AA55.
+        Falls back to Hcalory if _is_hcalory_device, ABBA if _is_abba_device, else AA55.
         """
         if self._protocol:
             protocol = self._protocol
+        elif self._is_hcalory_device:
+            protocol = self._protocols[7]
         elif self._is_abba_device:
             protocol = self._protocols[5]
         else:

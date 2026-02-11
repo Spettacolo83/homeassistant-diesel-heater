@@ -10,6 +10,7 @@ Protocols supported:
   - AA66 encrypted (48 bytes, XOR)
   - ABBA/HeaterCC (21+ bytes, own command format)
   - CBFF/Sunster v2.1 (47 bytes, optional double-XOR encryption)
+  - Hcalory MVP1/MVP2 (variable length, checksum)
 """
 from .protocol import (
     HeaterProtocol,
@@ -19,6 +20,7 @@ from .protocol import (
     ProtocolAA66Encrypted,
     ProtocolABBA,
     ProtocolCBFF,
+    ProtocolHcalory,
     VevorCommandMixin,
     _decrypt_data,
     _encrypt_data,
@@ -34,6 +36,7 @@ __all__ = [
     "ProtocolAA66Encrypted",
     "ProtocolABBA",
     "ProtocolCBFF",
+    "ProtocolHcalory",
     "VevorCommandMixin",
     "_decrypt_data",
     "_encrypt_data",
