@@ -1396,6 +1396,131 @@ class TestProtocolCBFF:
         """CBFF no longer uses VevorCommandMixin (uses FEAA instead)."""
         assert not isinstance(self.proto, VevorCommandMixin)
 
+    # -----------------------------------------------------------------------
+    # V2.1 Encrypted Mode Tests
+    # -----------------------------------------------------------------------
+
+    def test_v21_mode_default_false(self):
+        """V2.1 mode is disabled by default."""
+        assert self.proto.v21_mode is False
+
+    def test_set_v21_mode(self):
+        """Can enable and disable V2.1 mode."""
+        self.proto.set_v21_mode(True)
+        assert self.proto.v21_mode is True
+        self.proto.set_v21_mode(False)
+        assert self.proto.v21_mode is False
+
+    def test_build_handshake_basic(self):
+        """Handshake command builds correctly."""
+        self.proto.set_device_sn("E466E5BC086D")
+        pkt = self.proto.build_handshake(1234)
+        # Handshake is always encrypted, so we can't check raw bytes
+        # Just verify it's a bytearray with reasonable length
+        assert isinstance(pkt, bytearray)
+        assert len(pkt) > 8  # At least header + payload + checksum
+
+    def test_build_handshake_pin_encoding(self):
+        """Handshake PIN is encoded as [PIN % 100, PIN // 100]."""
+        # Build unencrypted handshake (no device_sn)
+        proto = ProtocolCBFF()
+        pkt = proto.build_handshake(1234)  # Should be [34, 12]
+        # Without encryption, we can verify the payload
+        # Packet: FEAA + ver + pkg + len(2) + cmd1(0x86) + cmd2(0x00) + payload(2) + checksum
+        assert pkt[0] == 0xFE
+        assert pkt[1] == 0xAA
+        assert pkt[6] == 0x86  # CMD1 for password/handshake
+        assert pkt[7] == 0x00  # CMD2
+        assert pkt[8] == 34    # 1234 % 100
+        assert pkt[9] == 12    # 1234 // 100
+
+    def test_v21_encrypt_decrypt_roundtrip(self):
+        """Double-XOR encryption/decryption is symmetric."""
+        device_sn = "E466E5BC086D"
+        original = bytearray([0xFE, 0xAA, 0x00, 0x00, 0x09, 0x00, 0x80, 0x00, 0x27])
+        encrypted = ProtocolCBFF._encrypt_cbff(original, device_sn)
+        decrypted = ProtocolCBFF._decrypt_cbff(encrypted, device_sn)
+        assert decrypted == original
+
+    def test_v21_known_power_off_encryption(self):
+        """Verify Power OFF encryption matches @Xev's documented example.
+
+        From documentation:
+        Raw:       FE AA 00 00 09 00 01 00 B8
+        Encrypted: CB FF 45 45 3B 5A 31 27 C9
+        """
+        device_sn = "E466E5BC086D"
+        raw = bytearray([0xFE, 0xAA, 0x00, 0x00, 0x09, 0x00, 0x01, 0x00, 0xB8])
+        encrypted = ProtocolCBFF._encrypt_cbff(raw, device_sn)
+        expected = bytearray([0xCB, 0xFF, 0x45, 0x45, 0x3B, 0x5A, 0x31, 0x27, 0xC9])
+        assert encrypted == expected
+
+    def test_v21_command_encrypted_when_enabled(self):
+        """Commands are encrypted when V2.1 mode is enabled."""
+        self.proto.set_device_sn("E466E5BC086D")
+        self.proto.set_v21_mode(False)
+        unencrypted = self.proto.build_command(0, 0, 1234)  # Status request
+
+        self.proto.set_v21_mode(True)
+        encrypted = self.proto.build_command(0, 0, 1234)
+
+        # Encrypted packet should be different
+        assert encrypted != unencrypted
+        # Header should be encrypted (not FEAA anymore)
+        assert encrypted[:2] != bytearray([0xFE, 0xAA])
+
+    def test_v21_power_on_with_payload(self):
+        """V2.1 Power ON includes mode/param/time payload."""
+        proto = ProtocolCBFF()
+        proto.set_v21_mode(True)
+        # Without device_sn, we can see the unencrypted structure
+        pkt = proto.build_command(3, 1, 1234)  # Power ON
+
+        # Check packet structure (before encryption, since no device_sn)
+        assert pkt[0] == 0xFE
+        assert pkt[1] == 0xAA
+        assert pkt[6] == 0x81  # CMD1 for control
+        assert pkt[7] == 0x01  # CMD2 for power on
+        # Payload: [mode, param, time_l, time_h] = [1, 5, 0xFF, 0xFF]
+        assert pkt[8] == 1     # run_mode (level)
+        assert pkt[9] == 5     # run_param (level 5)
+        assert pkt[10] == 0xFF # remain_time low
+        assert pkt[11] == 0xFF # remain_time high
+
+    def test_v21_power_off_no_payload(self):
+        """V2.1 Power OFF is a simple command without payload."""
+        proto = ProtocolCBFF()
+        proto.set_v21_mode(True)
+        pkt = proto.build_command(3, 0, 1234)  # Power OFF
+
+        assert pkt[6] == 0x81  # CMD1 for control
+        assert pkt[7] == 0x00  # CMD2 for power off
+        # Length should be 9 bytes (no payload)
+        length = pkt[4] | (pkt[5] << 8)
+        assert length == 9
+
+    def test_v21_set_temperature_with_payload(self):
+        """V2.1 set temperature includes mode/param/time payload."""
+        proto = ProtocolCBFF()
+        proto.set_v21_mode(True)
+        pkt = proto.build_command(4, 25, 1234)  # Set temp to 25°C
+
+        assert pkt[8] == 2     # run_mode (temperature)
+        assert pkt[9] == 25    # run_param (25°C)
+        assert pkt[10] == 0xFF # remain_time low
+        assert pkt[11] == 0xFF # remain_time high
+
+    def test_v21_set_level_with_payload(self):
+        """V2.1 set level includes mode/param/time payload."""
+        proto = ProtocolCBFF()
+        proto.set_v21_mode(True)
+        pkt = proto.build_command(5, 7, 1234)  # Set level 7
+
+        assert pkt[8] == 1     # run_mode (level)
+        assert pkt[9] == 7     # run_param (level 7)
+        assert pkt[10] == 0xFF # remain_time low
+        assert pkt[11] == 0xFF # remain_time high
+
 
 # ---------------------------------------------------------------------------
 # ProtocolHcalory (mode=7, MVP1/MVP2, variable length)

@@ -45,6 +45,7 @@ from .const import (
     RUNNING_MODE_LEVEL,
     RUNNING_MODE_MANUAL,
     RUNNING_MODE_TEMPERATURE,
+    SUNSTER_V21_KEY,
 )
 
 
@@ -518,10 +519,15 @@ class ProtocolCBFF(HeaterProtocol):
     - Bytes 8+: payload (command-specific)
     - Last byte: checksum (sum of all previous bytes & 0xFF)
 
-    Some CBFF heaters send encrypted data using double-XOR:
+    V2.1 Protocol (AA77 beacon):
+    When the heater sends 0xAA77, it's in "locked state" and requires:
+    1. Handshake command (CMD1=0x06) with PIN
+    2. All commands must be encrypted using double-XOR
+
+    Encryption (discovered by @Xev from the Sunster app):
       key1 = "passwordA2409PW" (15 bytes, hardcoded)
       key2 = BLE MAC address without colons, uppercased (12 bytes)
-    Discovered by @Xev from the Sunster app source code.
+      Apply key1 first, then key2 (XOR is order-dependent with different key lengths)
 
     Byte mapping (reverse-engineered from Sunster app by @Xev).
     """
@@ -531,13 +537,48 @@ class ProtocolCBFF(HeaterProtocol):
 
     def __init__(self) -> None:
         self._device_sn: str | None = None
+        self._v21_mode: bool = False  # Enable V2.1 encrypted mode
 
     def set_device_sn(self, sn: str) -> None:
         """Set the device serial number (BLE MAC without colons, uppercased).
 
-        Used as key2 for CBFF double-XOR decryption.
+        Used as key2 for CBFF double-XOR encryption/decryption.
         """
         self._device_sn = sn
+
+    def set_v21_mode(self, enabled: bool) -> None:
+        """Enable or disable V2.1 encrypted mode.
+
+        When enabled, all outgoing commands will be encrypted with double-XOR.
+        This should be enabled when the heater sends AA77 (locked state).
+        """
+        self._v21_mode = enabled
+
+    @property
+    def v21_mode(self) -> bool:
+        """Return True if V2.1 encrypted mode is enabled."""
+        return self._v21_mode
+
+    def build_handshake(self, passkey: int) -> bytearray:
+        """Build V2.1 handshake/authentication command.
+
+        The handshake is required when the heater sends AA77 (locked state).
+        The PIN is encoded as two bytes: [PIN % 100, PIN // 100].
+
+        Args:
+            passkey: 4-digit PIN code (0000-9999)
+
+        Returns:
+            Encrypted FEAA handshake packet
+        """
+        # PIN encoding: e.g., 1234 -> [34, 12]
+        payload = bytes([passkey % 100, passkey // 100])
+        packet = self._build_feaa(cmd_1=0x86, cmd_2=0x00, payload=payload)
+
+        # Handshake is always encrypted in V2.1
+        if self._device_sn:
+            return self._encrypt_cbff(packet, self._device_sn)
+        return packet
 
     def build_command(self, command: int, argument: int, passkey: int) -> bytearray:
         """Build FEAA command packet for CBFF/Sunster heaters.
@@ -549,37 +590,60 @@ class ProtocolCBFF(HeaterProtocol):
         - cmd 4: Set temperature (FEAA cmd_1=0x81, cmd_2=0x03, payload=[2, temp])
         - cmd 5: Set level (FEAA cmd_1=0x81, cmd_2=0x03, payload=[1, level])
         - cmd 14-21: Config commands (use AA55 fallback for compatibility)
+
+        In V2.1 mode, commands are encrypted with double-XOR before sending.
         """
         # Status request
         if command in (0, 1):
-            return self._build_feaa(cmd_1=0x80, cmd_2=0x00)
+            packet = self._build_feaa(cmd_1=0x80, cmd_2=0x00)
 
         # Power on/off (cmd 3: argument=1 for on, 0 for off)
-        if command == 3:
-            return self._build_feaa(cmd_1=0x81, cmd_2=0x03, payload=bytes([argument]))
+        elif command == 3:
+            # V2.1: Power ON needs mode+param+time, OFF is simpler
+            if self._v21_mode and argument == 1:
+                # Power ON with default settings: mode=1 (level), param=5, time=0xFFFF (infinite)
+                payload = bytes([1, 5, 0xFF, 0xFF])
+                packet = self._build_feaa(cmd_1=0x81, cmd_2=0x01, payload=payload)
+            elif self._v21_mode and argument == 0:
+                # Power OFF: 9-byte packet (no payload needed)
+                packet = self._build_feaa(cmd_1=0x81, cmd_2=0x00)
+            else:
+                packet = self._build_feaa(cmd_1=0x81, cmd_2=0x03, payload=bytes([argument]))
 
         # Set temperature (cmd 4)
-        if command == 4:
-            # run_mode=2 (temperature mode), run_param=temp
-            return self._build_feaa(cmd_1=0x81, cmd_2=0x03, payload=bytes([2, argument]))
+        elif command == 4:
+            if self._v21_mode:
+                # V2.1: mode=2 (temp), param=temp, time=0xFFFF
+                payload = bytes([2, argument, 0xFF, 0xFF])
+                packet = self._build_feaa(cmd_1=0x81, cmd_2=0x01, payload=payload)
+            else:
+                packet = self._build_feaa(cmd_1=0x81, cmd_2=0x03, payload=bytes([2, argument]))
 
         # Set level (cmd 5)
-        if command == 5:
-            # run_mode=1 (level mode), run_param=level
-            return self._build_feaa(cmd_1=0x81, cmd_2=0x03, payload=bytes([1, argument]))
+        elif command == 5:
+            if self._v21_mode:
+                # V2.1: mode=1 (level), param=level, time=0xFFFF
+                payload = bytes([1, argument, 0xFF, 0xFF])
+                packet = self._build_feaa(cmd_1=0x81, cmd_2=0x01, payload=payload)
+            else:
+                packet = self._build_feaa(cmd_1=0x81, cmd_2=0x03, payload=bytes([1, argument]))
 
         # Set mode (cmd 2)
-        if command == 2:
-            # run_mode: 1=level, 2=temp
-            return self._build_feaa(cmd_1=0x81, cmd_2=0x02)
+        elif command == 2:
+            packet = self._build_feaa(cmd_1=0x81, cmd_2=0x02)
 
         # Config commands (14-21): Fall back to AA55 for now
-        # These may need FEAA format with cmd_1=0x83 (settings) in the future
-        if command in (14, 15, 16, 17, 19, 20, 21):
+        elif command in (14, 15, 16, 17, 19, 20, 21):
             return self._build_aa55_fallback(command, argument, passkey)
 
         # Default: status request
-        return self._build_feaa(cmd_1=0x80, cmd_2=0x00)
+        else:
+            packet = self._build_feaa(cmd_1=0x80, cmd_2=0x00)
+
+        # Encrypt if V2.1 mode is enabled
+        if self._v21_mode and self._device_sn:
+            return self._encrypt_cbff(packet, self._device_sn)
+        return packet
 
     @staticmethod
     def _build_feaa(cmd_1: int, cmd_2: int, payload: bytes = b"") -> bytearray:
@@ -660,13 +724,15 @@ class ProtocolCBFF(HeaterProtocol):
         return voltage > 100 or voltage < 0 or abs(cab_temp) > 500
 
     @staticmethod
-    def _decrypt_cbff(data: bytearray, device_sn: str) -> bytearray:
-        """Decrypt CBFF data using double-XOR (key1 + key2).
+    def _encrypt_cbff(data: bytearray, device_sn: str) -> bytearray:
+        """Encrypt CBFF data using double-XOR (key1 + key2).
+
+        This is symmetric with decryption (XOR is its own inverse).
 
         key1 = "passwordA2409PW" (15 bytes, hardcoded in Sunster app)
         key2 = device_sn.upper() (BLE MAC without colons)
         """
-        key1 = bytearray(b"passwordA2409PW")
+        key1 = bytearray(SUNSTER_V21_KEY)
         key2 = bytearray(device_sn.upper().encode("ascii"))
         out = bytearray(data)
 
@@ -681,6 +747,16 @@ class ProtocolCBFF(HeaterProtocol):
             j = (j + 1) % len(key2)
 
         return out
+
+    @staticmethod
+    def _decrypt_cbff(data: bytearray, device_sn: str) -> bytearray:
+        """Decrypt CBFF data using double-XOR (key1 + key2).
+
+        Same algorithm as encrypt (XOR is symmetric).
+        key1 = "passwordA2409PW" (15 bytes, hardcoded in Sunster app)
+        key2 = device_sn.upper() (BLE MAC without colons)
+        """
+        return ProtocolCBFF._encrypt_cbff(data, device_sn)
 
     @staticmethod
     def _parse_cbff_fields(data: bytearray) -> dict[str, Any]:

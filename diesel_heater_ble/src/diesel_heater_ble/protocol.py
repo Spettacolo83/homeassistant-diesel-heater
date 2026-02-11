@@ -23,9 +23,29 @@ from .const import (
     ABBA_STATUS_MAP,
     CBFF_RUN_STATE_OFF,
     ENCRYPTION_KEY,
+    HCALORY_CMD_POWER,
+    HCALORY_CMD_QUERY_STATE,
+    HCALORY_CMD_SET_ALTITUDE,
+    HCALORY_CMD_SET_GEAR,
+    HCALORY_CMD_SET_TEMP,
+    HCALORY_MAX_LEVEL,
+    HCALORY_MIN_LEVEL,
+    HCALORY_POWER_AUTO_OFF,
+    HCALORY_POWER_AUTO_ON,
+    HCALORY_POWER_CELSIUS,
+    HCALORY_POWER_FAHRENHEIT,
+    HCALORY_POWER_OFF,
+    HCALORY_POWER_ON,
+    HCALORY_POWER_QUERY,
+    HCALORY_STATE_HEATING_MANUAL_GEAR,
+    HCALORY_STATE_HEATING_TEMP_AUTO,
+    HCALORY_STATE_MACHINE_FAULT,
+    HCALORY_STATE_NATURAL_WIND,
+    HCALORY_STATE_STANDBY,
     RUNNING_MODE_LEVEL,
     RUNNING_MODE_MANUAL,
     RUNNING_MODE_TEMPERATURE,
+    SUNSTER_V21_KEY,
 )
 
 
@@ -499,10 +519,15 @@ class ProtocolCBFF(HeaterProtocol):
     - Bytes 8+: payload (command-specific)
     - Last byte: checksum (sum of all previous bytes & 0xFF)
 
-    Some CBFF heaters send encrypted data using double-XOR:
+    V2.1 Protocol (AA77 beacon):
+    When the heater sends 0xAA77, it's in "locked state" and requires:
+    1. Handshake command (CMD1=0x06) with PIN
+    2. All commands must be encrypted using double-XOR
+
+    Encryption (discovered by @Xev from the Sunster app):
       key1 = "passwordA2409PW" (15 bytes, hardcoded)
       key2 = BLE MAC address without colons, uppercased (12 bytes)
-    Discovered by @Xev from the Sunster app source code.
+      Apply key1 first, then key2 (XOR is order-dependent with different key lengths)
 
     Byte mapping (reverse-engineered from Sunster app by @Xev).
     """
@@ -512,13 +537,48 @@ class ProtocolCBFF(HeaterProtocol):
 
     def __init__(self) -> None:
         self._device_sn: str | None = None
+        self._v21_mode: bool = False  # Enable V2.1 encrypted mode
 
     def set_device_sn(self, sn: str) -> None:
         """Set the device serial number (BLE MAC without colons, uppercased).
 
-        Used as key2 for CBFF double-XOR decryption.
+        Used as key2 for CBFF double-XOR encryption/decryption.
         """
         self._device_sn = sn
+
+    def set_v21_mode(self, enabled: bool) -> None:
+        """Enable or disable V2.1 encrypted mode.
+
+        When enabled, all outgoing commands will be encrypted with double-XOR.
+        This should be enabled when the heater sends AA77 (locked state).
+        """
+        self._v21_mode = enabled
+
+    @property
+    def v21_mode(self) -> bool:
+        """Return True if V2.1 encrypted mode is enabled."""
+        return self._v21_mode
+
+    def build_handshake(self, passkey: int) -> bytearray:
+        """Build V2.1 handshake/authentication command.
+
+        The handshake is required when the heater sends AA77 (locked state).
+        The PIN is encoded as two bytes: [PIN % 100, PIN // 100].
+
+        Args:
+            passkey: 4-digit PIN code (0000-9999)
+
+        Returns:
+            Encrypted FEAA handshake packet
+        """
+        # PIN encoding: e.g., 1234 -> [34, 12]
+        payload = bytes([passkey % 100, passkey // 100])
+        packet = self._build_feaa(cmd_1=0x86, cmd_2=0x00, payload=payload)
+
+        # Handshake is always encrypted in V2.1
+        if self._device_sn:
+            return self._encrypt_cbff(packet, self._device_sn)
+        return packet
 
     def build_command(self, command: int, argument: int, passkey: int) -> bytearray:
         """Build FEAA command packet for CBFF/Sunster heaters.
@@ -530,37 +590,60 @@ class ProtocolCBFF(HeaterProtocol):
         - cmd 4: Set temperature (FEAA cmd_1=0x81, cmd_2=0x03, payload=[2, temp])
         - cmd 5: Set level (FEAA cmd_1=0x81, cmd_2=0x03, payload=[1, level])
         - cmd 14-21: Config commands (use AA55 fallback for compatibility)
+
+        In V2.1 mode, commands are encrypted with double-XOR before sending.
         """
         # Status request
         if command in (0, 1):
-            return self._build_feaa(cmd_1=0x80, cmd_2=0x00)
+            packet = self._build_feaa(cmd_1=0x80, cmd_2=0x00)
 
         # Power on/off (cmd 3: argument=1 for on, 0 for off)
-        if command == 3:
-            return self._build_feaa(cmd_1=0x81, cmd_2=0x03, payload=bytes([argument]))
+        elif command == 3:
+            # V2.1: Power ON needs mode+param+time, OFF is simpler
+            if self._v21_mode and argument == 1:
+                # Power ON with default settings: mode=1 (level), param=5, time=0xFFFF (infinite)
+                payload = bytes([1, 5, 0xFF, 0xFF])
+                packet = self._build_feaa(cmd_1=0x81, cmd_2=0x01, payload=payload)
+            elif self._v21_mode and argument == 0:
+                # Power OFF: 9-byte packet (no payload needed)
+                packet = self._build_feaa(cmd_1=0x81, cmd_2=0x00)
+            else:
+                packet = self._build_feaa(cmd_1=0x81, cmd_2=0x03, payload=bytes([argument]))
 
         # Set temperature (cmd 4)
-        if command == 4:
-            # run_mode=2 (temperature mode), run_param=temp
-            return self._build_feaa(cmd_1=0x81, cmd_2=0x03, payload=bytes([2, argument]))
+        elif command == 4:
+            if self._v21_mode:
+                # V2.1: mode=2 (temp), param=temp, time=0xFFFF
+                payload = bytes([2, argument, 0xFF, 0xFF])
+                packet = self._build_feaa(cmd_1=0x81, cmd_2=0x01, payload=payload)
+            else:
+                packet = self._build_feaa(cmd_1=0x81, cmd_2=0x03, payload=bytes([2, argument]))
 
         # Set level (cmd 5)
-        if command == 5:
-            # run_mode=1 (level mode), run_param=level
-            return self._build_feaa(cmd_1=0x81, cmd_2=0x03, payload=bytes([1, argument]))
+        elif command == 5:
+            if self._v21_mode:
+                # V2.1: mode=1 (level), param=level, time=0xFFFF
+                payload = bytes([1, argument, 0xFF, 0xFF])
+                packet = self._build_feaa(cmd_1=0x81, cmd_2=0x01, payload=payload)
+            else:
+                packet = self._build_feaa(cmd_1=0x81, cmd_2=0x03, payload=bytes([1, argument]))
 
         # Set mode (cmd 2)
-        if command == 2:
-            # run_mode: 1=level, 2=temp
-            return self._build_feaa(cmd_1=0x81, cmd_2=0x02)
+        elif command == 2:
+            packet = self._build_feaa(cmd_1=0x81, cmd_2=0x02)
 
         # Config commands (14-21): Fall back to AA55 for now
-        # These may need FEAA format with cmd_1=0x83 (settings) in the future
-        if command in (14, 15, 16, 17, 19, 20, 21):
+        elif command in (14, 15, 16, 17, 19, 20, 21):
             return self._build_aa55_fallback(command, argument, passkey)
 
         # Default: status request
-        return self._build_feaa(cmd_1=0x80, cmd_2=0x00)
+        else:
+            packet = self._build_feaa(cmd_1=0x80, cmd_2=0x00)
+
+        # Encrypt if V2.1 mode is enabled
+        if self._v21_mode and self._device_sn:
+            return self._encrypt_cbff(packet, self._device_sn)
+        return packet
 
     @staticmethod
     def _build_feaa(cmd_1: int, cmd_2: int, payload: bytes = b"") -> bytearray:
@@ -641,13 +724,15 @@ class ProtocolCBFF(HeaterProtocol):
         return voltage > 100 or voltage < 0 or abs(cab_temp) > 500
 
     @staticmethod
-    def _decrypt_cbff(data: bytearray, device_sn: str) -> bytearray:
-        """Decrypt CBFF data using double-XOR (key1 + key2).
+    def _encrypt_cbff(data: bytearray, device_sn: str) -> bytearray:
+        """Encrypt CBFF data using double-XOR (key1 + key2).
+
+        This is symmetric with decryption (XOR is its own inverse).
 
         key1 = "passwordA2409PW" (15 bytes, hardcoded in Sunster app)
         key2 = device_sn.upper() (BLE MAC without colons)
         """
-        key1 = bytearray(b"passwordA2409PW")
+        key1 = bytearray(SUNSTER_V21_KEY)
         key2 = bytearray(device_sn.upper().encode("ascii"))
         out = bytearray(data)
 
@@ -662,6 +747,16 @@ class ProtocolCBFF(HeaterProtocol):
             j = (j + 1) % len(key2)
 
         return out
+
+    @staticmethod
+    def _decrypt_cbff(data: bytearray, device_sn: str) -> bytearray:
+        """Decrypt CBFF data using double-XOR (key1 + key2).
+
+        Same algorithm as encrypt (XOR is symmetric).
+        key1 = "passwordA2409PW" (15 bytes, hardcoded in Sunster app)
+        key2 = device_sn.upper() (BLE MAC without colons)
+        """
+        return ProtocolCBFF._encrypt_cbff(data, device_sn)
 
     @staticmethod
     def _parse_cbff_fields(data: bytearray) -> dict[str, Any]:
@@ -800,3 +895,361 @@ class ProtocolCBFF(HeaterProtocol):
             parsed["remain_run_time"] = remain
 
         return parsed
+
+
+class ProtocolHcalory(HeaterProtocol):
+    """Hcalory MVP1/MVP2 protocol (mode=7).
+
+    Used by Hcalory HBU1S and similar heaters.
+    Completely different packet structure from AA55/ABBA/CBFF.
+
+    MVP1: Service UUID 0000FFF0-..., older models
+    MVP2: Service UUID 0000BD39-..., newer models (e.g., HBU1S)
+
+    Protocol reverse-engineered by @Xev from Hcalory APK.
+    """
+
+    protocol_mode = 7
+    name = "Hcalory"
+    needs_calibration = True
+    needs_post_status = True
+
+    def __init__(self) -> None:
+        """Initialize Hcalory protocol handler."""
+        self._is_mvp2: bool = True  # Default to MVP2, can be set by coordinator
+
+    def set_mvp_version(self, is_mvp2: bool) -> None:
+        """Set MVP version (MVP1 vs MVP2) based on service UUID detection."""
+        self._is_mvp2 = is_mvp2
+
+    def parse(self, data: bytearray) -> dict[str, Any] | None:
+        """Parse Hcalory response data.
+
+        Response structure (hex character positions from protocol docs):
+        - 0-3: device_id (4 chars)
+        - 4-7: timestamp (4 chars)
+        - 8-11: reserved (4 chars)
+        - 12-13: highland_gear (2 chars)
+        - 14-15: reserved (2 chars)
+        - 16-17: status_flags (2 chars)
+        - 18-19: device_state (2 chars)
+        - 20-21: temp_or_gear (2 chars)
+        - 22-23: auto_start_stop (2 chars)
+        - 24-27: voltage_raw (4 chars, x10)
+        - 28-29: shell_temp_sign (2 chars)
+        - 30-33: shell_temp_raw (4 chars, x10)
+        - 34-35: ambient_temp_sign (2 chars)
+        - 36-39: ambient_temp_raw (4 chars, x10)
+        - 40-45: reserved (6 chars)
+        - 46-47: scene_id (2 chars)
+        - 48-49: highland_mode (2 chars)
+        - 50-51: temp_unit (2 chars)
+        MVP2 extended (60+ chars):
+        - 52-53: height_unit (2 chars)
+        - 54-55: altitude_sign (2 chars)
+        - 56-59: altitude_raw (4 chars)
+        """
+        # Convert to hex string for character-based parsing
+        hex_str = data.hex().upper()
+
+        # Minimum length: 52 hex chars (26 bytes) for basic parsing
+        if len(hex_str) < 52:
+            return None
+
+        parsed: dict[str, Any] = {"connected": True}
+
+        try:
+            # Status flags (chars 16-17)
+            if len(hex_str) >= 18:
+                status_flags = self._parse_status_flags(hex_str[16:18])
+                parsed.update(status_flags)
+
+            # Device state (chars 18-19)
+            if len(hex_str) >= 20:
+                device_state = int(hex_str[18:20], 16)
+                parsed["hcalory_device_state"] = device_state
+
+                # Map to running_state
+                if device_state == HCALORY_STATE_STANDBY:
+                    parsed["running_state"] = 0
+                    parsed["running_step"] = 0  # Standby
+                elif device_state == HCALORY_STATE_MACHINE_FAULT:
+                    parsed["running_state"] = 0
+                    # Error code will be in operative state
+                else:
+                    parsed["running_state"] = 1
+
+                # Map to running_mode
+                if device_state == HCALORY_STATE_HEATING_TEMP_AUTO:
+                    parsed["running_mode"] = RUNNING_MODE_TEMPERATURE
+                elif device_state == HCALORY_STATE_HEATING_MANUAL_GEAR:
+                    parsed["running_mode"] = RUNNING_MODE_LEVEL
+                elif device_state == HCALORY_STATE_NATURAL_WIND:
+                    parsed["running_mode"] = RUNNING_MODE_MANUAL  # Fan-only
+                else:
+                    parsed["running_mode"] = RUNNING_MODE_MANUAL
+
+            # Temp or gear (chars 20-21)
+            if len(hex_str) >= 22:
+                temp_or_gear = int(hex_str[20:22], 16)
+                if parsed.get("running_mode") == RUNNING_MODE_TEMPERATURE:
+                    parsed["set_temp"] = max(8, min(36, temp_or_gear))
+                else:
+                    # Hcalory uses 1-6 gear levels, map to 1-10
+                    hcalory_level = max(HCALORY_MIN_LEVEL, min(HCALORY_MAX_LEVEL, temp_or_gear))
+                    # Map 1-6 to 1-10 scale (roughly: 1->2, 2->4, 3->5, 4->6, 5->8, 6->10)
+                    parsed["set_level"] = self._map_hcalory_to_standard_level(hcalory_level)
+                    parsed["hcalory_gear"] = hcalory_level
+
+            # Auto start/stop (chars 22-23)
+            if len(hex_str) >= 24:
+                parsed["auto_start_stop"] = (int(hex_str[22:24], 16) == 1)
+
+            # Voltage (chars 24-27, 4 chars = 16-bit, /10)
+            if len(hex_str) >= 28:
+                voltage_raw = int(hex_str[24:28], 16)
+                parsed["supply_voltage"] = voltage_raw / 10.0
+
+            # Shell/Case temperature sign (chars 28-29) and value (chars 30-33)
+            if len(hex_str) >= 34:
+                shell_sign = hex_str[28:30]
+                shell_value = int(hex_str[30:34], 16)
+                sign = -1 if shell_sign == "01" else 1
+                parsed["case_temperature"] = (sign * shell_value) / 10.0
+
+            # Ambient/Cabin temperature sign (chars 34-35) and value (chars 36-39)
+            if len(hex_str) >= 40:
+                ambient_sign = hex_str[34:36]
+                ambient_value = int(hex_str[36:40], 16)
+                sign = -1 if ambient_sign == "01" else 1
+                parsed["cab_temperature"] = (sign * ambient_value) / 10.0
+
+            # Highland mode (chars 48-49)
+            if len(hex_str) >= 50:
+                parsed["high_altitude"] = int(hex_str[48:50], 16)
+
+            # Temperature unit (chars 50-51)
+            if len(hex_str) >= 52:
+                parsed["temp_unit"] = int(hex_str[50:52], 16)
+
+            # MVP2 extended fields (chars 52-59)
+            if len(hex_str) >= 60:
+                # Height unit (chars 52-53)
+                parsed["altitude_unit"] = int(hex_str[52:54], 16)
+
+                # Altitude sign (chars 54-55) and value (chars 56-59)
+                altitude_sign = hex_str[54:56]
+                altitude_value = int(hex_str[56:60], 16)
+                sign = -1 if altitude_sign == "01" else 1
+                parsed["altitude"] = sign * altitude_value
+
+            # Check for error state
+            if parsed.get("hcalory_device_state") == HCALORY_STATE_MACHINE_FAULT:
+                # Error code from operative state bits
+                op_bits = parsed.get("operative_state_bits", "00")
+                parsed["error_code"] = int(op_bits, 2) if op_bits else 0
+            else:
+                parsed["error_code"] = 0
+
+        except (ValueError, IndexError):
+            # Parse error - return minimal data
+            parsed["_hcalory_parse_error"] = True
+
+        return parsed
+
+    @staticmethod
+    def _parse_status_flags(flags_hex: str) -> dict[str, Any]:
+        """Parse Hcalory status flags byte (bit-reversed).
+
+        Returns dict with:
+        - heating_is_starting: bool
+        - heating_is_stopping: bool
+        - fan_is_running: bool
+        - ignition_plug_running: bool
+        - oil_pump_running: bool
+        - operative_state_bits: str (2-char binary)
+        """
+        result: dict[str, Any] = {}
+        try:
+            flags_byte = int(flags_hex, 16)
+            # Reverse the bits
+            reversed_binary = format(flags_byte, '08b')[::-1]
+
+            result["heating_is_starting"] = reversed_binary[0] == '1'
+            result["heating_is_stopping"] = reversed_binary[1] == '1'
+            result["fan_is_running"] = reversed_binary[2] == '1'
+            result["ignition_plug_running"] = reversed_binary[3] == '1'
+            result["oil_pump_running"] = reversed_binary[4] == '1'
+            result["operative_state_bits"] = reversed_binary[6:8]
+
+            # Map operative state to running_step
+            op_state = reversed_binary[6:8]
+            if op_state == "00":
+                result["running_step"] = 0  # Stopped
+            elif op_state == "01":
+                result["running_step"] = 3  # Running/Heating
+            elif op_state == "10":
+                result["running_step"] = 4  # Cooldown
+            elif op_state == "11":
+                result["running_step"] = 6  # Fan/Natural wind
+
+        except (ValueError, IndexError):
+            pass
+
+        return result
+
+    @staticmethod
+    def _map_hcalory_to_standard_level(hcalory_level: int) -> int:
+        """Map Hcalory 1-6 gear to standard 1-10 level.
+
+        Hcalory: 1, 2, 3, 4, 5, 6
+        Standard: 2, 4, 5, 6, 8, 10
+        """
+        mapping = {1: 2, 2: 4, 3: 5, 4: 6, 5: 8, 6: 10}
+        return mapping.get(hcalory_level, max(1, min(10, hcalory_level * 2)))
+
+    @staticmethod
+    def _map_standard_to_hcalory_level(standard_level: int) -> int:
+        """Map standard 1-10 level to Hcalory 1-6 gear.
+
+        Standard: 1-2->1, 3-4->2, 5->3, 6->4, 7-8->5, 9-10->6
+        """
+        if standard_level <= 2:
+            return 1
+        elif standard_level <= 4:
+            return 2
+        elif standard_level == 5:
+            return 3
+        elif standard_level == 6:
+            return 4
+        elif standard_level <= 8:
+            return 5
+        else:
+            return 6
+
+    def build_command(self, command: int, argument: int, passkey: int) -> bytearray:
+        """Build Hcalory command packet.
+
+        Command mapping from standard Vevor commands:
+        - 0, 1: Status query
+        - 2: Set mode (not directly supported)
+        - 3: Power on/off
+        - 4: Set temperature
+        - 5: Set gear level
+        - 14: Set altitude
+        - 15: Set temp unit (Celsius/Fahrenheit)
+        """
+        # Status request
+        if command in (0, 1):
+            return self._build_hcalory_cmd(
+                HCALORY_CMD_POWER,
+                bytes([0, 0, 0, 0, 0, 0, 0, 0, HCALORY_POWER_QUERY])
+            )
+
+        # Power on/off (cmd 3)
+        if command == 3:
+            power_arg = HCALORY_POWER_ON if argument == 1 else HCALORY_POWER_OFF
+            return self._build_hcalory_cmd(
+                HCALORY_CMD_POWER,
+                bytes([0, 0, 0, 0, 0, 0, 0, 0, power_arg])
+            )
+
+        # Set temperature (cmd 4)
+        if command == 4:
+            temp = max(8, min(36, argument))
+            # Unit: 0=Celsius, 1=Fahrenheit
+            return self._build_hcalory_cmd(
+                HCALORY_CMD_SET_TEMP,
+                bytes([temp, 0])  # temp, unit=Celsius
+            )
+
+        # Set level (cmd 5)
+        if command == 5:
+            # Map standard 1-10 to Hcalory 1-6
+            hcalory_level = self._map_standard_to_hcalory_level(argument)
+            return self._build_hcalory_cmd(
+                HCALORY_CMD_SET_GEAR,
+                bytes([hcalory_level])
+            )
+
+        # Set auto start/stop (custom: cmd 22)
+        if command == 22:
+            auto_arg = HCALORY_POWER_AUTO_ON if argument == 1 else HCALORY_POWER_AUTO_OFF
+            return self._build_hcalory_cmd(
+                HCALORY_CMD_POWER,
+                bytes([0, 0, 0, 0, 0, 0, 0, 0, auto_arg])
+            )
+
+        # Set temperature unit (cmd 15)
+        if command == 15:
+            temp_unit_arg = HCALORY_POWER_FAHRENHEIT if argument == 1 else HCALORY_POWER_CELSIUS
+            return self._build_hcalory_cmd(
+                HCALORY_CMD_POWER,
+                bytes([0, 0, 0, 0, 0, 0, 0, 0, temp_unit_arg])
+            )
+
+        # Set altitude (cmd 14)
+        if command == 14:
+            # argument is altitude in meters
+            sign = 0x00 if argument >= 0 else 0x01
+            alt_abs = abs(argument)
+            unit = 0x00  # Meters
+            return self._build_hcalory_cmd(
+                HCALORY_CMD_SET_ALTITUDE,
+                bytes([sign, (alt_abs >> 8) & 0xFF, alt_abs & 0xFF, unit])
+            )
+
+        # Default: status query
+        return self._build_hcalory_cmd(
+            HCALORY_CMD_POWER,
+            bytes([0, 0, 0, 0, 0, 0, 0, 0, HCALORY_POWER_QUERY])
+        )
+
+    @staticmethod
+    def _build_hcalory_cmd(cmd_type: int, payload: bytes) -> bytearray:
+        """Build Hcalory command packet with checksum.
+
+        Format:
+        - Bytes 0-1: Protocol ID (00 02)
+        - Bytes 2-3: Reserved (00 01)
+        - Bytes 4-5: Flags (00 01 = expects response)
+        - Bytes 6-7: Command type high byte
+        - Bytes 8-9: Command type low byte
+        - Bytes 10-11: Reserved (00 00)
+        - Bytes 12-13: Payload length high byte
+        - Bytes 14-15: Payload length low byte
+        - Bytes 16-N: Payload
+        - Byte N+1: Checksum (sum of all bytes & 0xFF)
+        """
+        # Build command without checksum
+        cmd_hi = (cmd_type >> 8) & 0xFF
+        cmd_lo = cmd_type & 0xFF
+        payload_len = len(payload)
+
+        packet = bytearray([
+            0x00, 0x02,  # Protocol ID
+            0x00, 0x01,  # Reserved
+            0x00, 0x01,  # Flags (expects response)
+            0x00, cmd_hi,  # Command type high
+            cmd_lo, 0x00,  # Command type low + reserved
+            0x00, (payload_len >> 8) & 0xFF,  # Payload length high
+            payload_len & 0xFF,  # Payload length low (only use low byte for small payloads)
+        ])
+
+        # Adjust packet structure to match protocol
+        # The actual format is simpler - let me fix it based on the docs
+        packet = bytearray([
+            0x00, 0x02,  # Protocol ID
+            0x00, 0x01,  # Reserved
+            0x00, 0x01,  # Flags
+            0x00, cmd_hi, cmd_lo, 0x00,  # Command type (4 bytes: 00 XX YY 00)
+            0x00, payload_len,  # Payload length (2 bytes)
+        ])
+
+        packet.extend(payload)
+
+        # Calculate checksum (sum of all bytes & 0xFF)
+        checksum = sum(packet) & 0xFF
+        packet.append(checksum)
+
+        return packet

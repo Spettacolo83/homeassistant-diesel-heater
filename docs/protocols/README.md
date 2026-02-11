@@ -11,7 +11,7 @@ This directory contains detailed documentation for each BLE protocol variant sup
 | [AA66](AA66.md) | 3 | AirHeaterBLE | BYD/Vevor 20-byte variant |
 | [AA66 Encrypted](AA66_ENCRYPTED.md) | 4 | AirHeaterBLE | Encrypted, internal Fahrenheit |
 | [ABBA](ABBA.md) | 5 | AirHeaterCC | HeaterCC protocol |
-| [CBFF](CBFF.md) | 6 | Sunster | Double XOR encryption |
+| [CBFF](CBFF.md) | 6 | Sunster | V2.1 with double XOR encryption |
 | [Hcalory](HCALORY.md) | 7 | Hcalory | MVP1/MVP2 protocol |
 
 ## Protocol Detection
@@ -39,6 +39,8 @@ Protocol detection is performed in `coordinator.py` based on:
 | `AA66` (48 bytes) | AA66 Encrypted |
 | `BAAB` | ABBA (HeaterCC) |
 | `CBFF` | CBFF/Sunster |
+| `AA77` | Sunster V2.1 ACK / locked state beacon |
+| `FEAA` | Sunster V2.1 command header |
 | `0002` | Hcalory MVP1/MVP2 |
 
 ## Command Format

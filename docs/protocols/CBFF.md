@@ -1,4 +1,4 @@
-# CBFF Protocol (Sunster)
+# CBFF Protocol (Sunster V2.1)
 
 **Protocol Mode**: 6
 **App**: Sunster
@@ -7,6 +7,37 @@
 ## Overview
 
 The CBFF protocol is used by Sunster TB10Pro WiFi and similar heaters. It supports optional double-XOR encryption and uses a completely different packet structure with extensive configuration options.
+
+## V2.1 Encrypted Mode
+
+Some Sunster heaters require V2.1 encrypted mode. This is detected when:
+1. The heater sends `AA77` beacon (locked state)
+2. Data requires decryption to parse correctly
+
+When V2.1 mode is active:
+- All outgoing commands must be encrypted with double-XOR
+- A handshake may be required (CMD1=0x86) with PIN code
+
+### V2.1 Handshake
+
+```python
+def build_handshake(passkey: int) -> bytearray:
+    # PIN encoding: e.g., 1234 -> [34, 12]
+    payload = bytes([passkey % 100, passkey // 100])
+    packet = build_feaa(cmd_1=0x86, cmd_2=0x00, payload=payload)
+    return encrypt_cbff(packet, device_sn)
+```
+
+### V2.1 Power Commands
+
+```python
+# Power ON: mode + param + time (0xFFFF = infinite)
+payload = bytes([1, 5, 0xFF, 0xFF])  # Level mode, level 5
+packet = build_feaa(cmd_1=0x81, cmd_2=0x01, payload=payload)
+
+# Power OFF
+packet = build_feaa(cmd_1=0x81, cmd_2=0x00)
+```
 
 ## BLE Configuration
 
