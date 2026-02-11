@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/logo@2x.png" alt="Diesel Heater" height="120"/>
+  <img src="https://raw.githubusercontent.com/Spettacolo83/homeassistant-diesel-heater/main/docs/images/logo@2x.png" alt="Diesel Heater" height="120"/>
 </p>
 
 <h1 align="center">Diesel Heater - Home Assistant Integration</h1>
@@ -87,12 +87,12 @@ ABBA, CBFF, and Hcalory protocols are used by various heater brands. If you own 
 ### Fuel Consumption Sensors
 Monitor your heater's fuel consumption with real-time tracking:
 
-![Fuel Consumption Sensors](docs/images/fuel-consumption-sensors.png)
+![Fuel Consumption Sensors](https://raw.githubusercontent.com/Spettacolo83/homeassistant-diesel-heater/main/docs/images/fuel-consumption-sensors.png)
 
 ### Heater Controls
 Full control over your heater including temperature, level, and mode selection:
 
-![Heater Controls](docs/images/heater-controls.png)
+![Heater Controls](https://raw.githubusercontent.com/Spettacolo83/homeassistant-diesel-heater/main/docs/images/heater-controls.png)
 
 ## Installation
 
@@ -332,7 +332,7 @@ The integration automatically imports daily fuel consumption data into Home Assi
 
 **No installation required!** The integration automatically makes historical data available to Home Assistant's native `statistics-graph` card.
 
-![Native Statistics Graph](docs/images/fuel-statistics-graph.png)
+![Native Statistics Graph](https://raw.githubusercontent.com/Spettacolo83/homeassistant-diesel-heater/main/docs/images/fuel-statistics-graph.png)
 
 **Bar Chart - Last 7 Days:**
 ```yaml
