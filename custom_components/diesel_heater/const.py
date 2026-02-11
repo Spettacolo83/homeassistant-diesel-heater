@@ -241,3 +241,17 @@ STORAGE_KEY_AUTO_OFFSET_ENABLED: Final = "auto_offset_enabled"
 
 # History settings
 MAX_HISTORY_DAYS: Final = 30  # Keep last 30 days of daily consumption
+
+# Protocol mode names for diagnostic sensor
+# Mode 0 = unknown (before first successful data read)
+# Modes 1-7 are detected from BLE response headers
+PROTOCOL_MODE_NAMES: Final = {
+    0: "Unknown",
+    1: "AA55 (Vevor)",
+    2: "AA55 Encrypted",
+    3: "AA66 (BYD)",
+    4: "AA66 Encrypted",
+    5: "ABBA (HeaterCC)",
+    6: "CBFF (Sunster)",
+    7: "Hcalory",
+}

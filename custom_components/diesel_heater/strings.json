@@ -153,6 +153,9 @@
       },
       "shutdown_temp_diff": {
         "name": "Shutdown Temp Difference"
+      },
+      "protocol": {
+        "name": "Protocol"
       }
     },
     "binary_sensor": {

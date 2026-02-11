@@ -56,6 +56,8 @@ async def async_setup_entry(
         VevorSetLevelSensor(coordinator),
         VevorAltitudeSensor(coordinator),
         VevorErrorCodeSensor(coordinator),
+        # Diagnostic sensors
+        VevorProtocolSensor(coordinator),
         # Fuel consumption sensors (computed locally, not protocol-dependent)
         VevorHourlyFuelConsumptionSensor(coordinator),
         VevorDailyFuelConsumedSensor(coordinator),
@@ -745,3 +747,29 @@ class VevorShutdownTempDiffSensor(VevorSensorBase):
     def available(self) -> bool:
         """Return if entity is available."""
         return self.coordinator.data.get("shutdown_temp_diff") is not None
+
+
+class VevorProtocolSensor(VevorSensorBase):
+    """Detected BLE protocol sensor.
+
+    Shows which protocol variant is being used to communicate with the heater.
+    This is useful for debugging and understanding device compatibility.
+    """
+
+    _attr_icon = "mdi:protocol"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, "protocol", "Protocol")
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the detected protocol name."""
+        return self.coordinator.protocol_name
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        # Always available once coordinator is set up
+        return self.coordinator.last_update_success

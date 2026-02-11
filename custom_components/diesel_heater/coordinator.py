@@ -215,8 +215,28 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
     @property
     def protocol_mode(self) -> int:
-        """Return the detected BLE protocol mode (0=unknown, 1-6=detected)."""
+        """Return the detected BLE protocol mode (0=unknown, 1-7=detected)."""
         return self._protocol_mode
+
+    @property
+    def protocol_name(self) -> str:
+        """Return human-readable protocol name with variant details."""
+        from .const import PROTOCOL_MODE_NAMES
+
+        base_name = PROTOCOL_MODE_NAMES.get(self._protocol_mode, "Unknown")
+
+        # For Hcalory, add MVP1/MVP2 variant
+        if self._protocol_mode == 7 and self._protocol is not None:
+            if hasattr(self._protocol, '_is_mvp2'):
+                variant = "MVP2" if self._protocol._is_mvp2 else "MVP1"
+                return f"Hcalory {variant}"
+
+        # For CBFF, indicate V2.1 encrypted mode if active
+        if self._protocol_mode == 6 and self._protocol is not None:
+            if hasattr(self._protocol, 'v21_mode') and self._protocol.v21_mode:
+                return "CBFF V2.1 (Encrypted)"
+
+        return base_name
 
     async def async_load_data(self) -> None:
         """Load persistent fuel consumption and runtime data."""
