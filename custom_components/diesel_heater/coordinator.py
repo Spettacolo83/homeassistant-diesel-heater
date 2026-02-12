@@ -899,6 +899,32 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     )
                     await asyncio.sleep(1.0)
 
+            # MVP2 -> MVP1 fallback: If MVP2 query failed and protocol is Hcalory,
+            # try MVP1-style query (dpID 0E04) as some HBU1S firmware versions
+            # use bd39 service but respond to MVP1 commands
+            if (not status and
+                self._protocol and
+                hasattr(self._protocol, 'build_mvp1_query') and
+                hasattr(self._protocol, '_is_mvp2') and
+                self._protocol._is_mvp2):
+                self._logger.info(
+                    "🔄 MVP2 query failed, trying MVP1 fallback (dpID 0E04)..."
+                )
+                mvp1_packet = self._protocol.build_mvp1_query()
+                self._notification_data = None
+                await self._write_gatt(mvp1_packet)
+                self._logger.debug("MVP1 fallback packet: %s", mvp1_packet.hex())
+                # Wait for response
+                for _ in range(50):  # 5 seconds
+                    await asyncio.sleep(0.1)
+                    if self._notification_data:
+                        self._logger.info(
+                            "✅ MVP1 fallback succeeded! Switching to MVP1 mode."
+                        )
+                        self._protocol.set_mvp_version(False)  # Switch to MVP1
+                        status = True
+                        break
+
             if status:
                 self.data["connected"] = True
                 # Reset failure counter and save valid data on success
