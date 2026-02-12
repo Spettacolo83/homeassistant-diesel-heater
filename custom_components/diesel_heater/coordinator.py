@@ -899,31 +899,40 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     )
                     await asyncio.sleep(1.0)
 
-            # MVP2 -> MVP1 fallback: If MVP2 query failed and protocol is Hcalory,
-            # try MVP1-style query (dpID 0E04) as some HBU1S firmware versions
-            # use bd39 service but respond to MVP1 commands
+            # MVP1 -> MVP2 fallback: If MVP1 query failed (now the default) and
+            # protocol is Hcalory with bd39 service, try MVP2 query as fallback.
+            # The library now defaults to MVP1 query since Acropolis9064 proves it works.
             if (not status and
                 self._protocol and
-                hasattr(self._protocol, 'build_mvp1_query') and
                 hasattr(self._protocol, '_is_mvp2') and
-                self._protocol._is_mvp2):
+                self._protocol._is_mvp2 and
+                hasattr(self._protocol, 'prefer_mvp1_query') and
+                self._protocol.prefer_mvp1_query):
                 self._logger.info(
-                    "🔄 MVP2 query failed, trying MVP1 fallback (dpID 0E04)..."
+                    "🔄 MVP1 query failed, trying MVP2 fallback (dpID 0A0A)..."
                 )
-                mvp1_packet = self._protocol.build_mvp1_query()
+                # Temporarily switch to MVP2 query style
+                self._protocol.set_prefer_mvp1_query(False)
+                mvp2_packet = self._protocol.build_command(1, 0, self._passkey)
                 self._notification_data = None
-                await self._write_gatt(mvp1_packet)
-                self._logger.debug("MVP1 fallback packet: %s", mvp1_packet.hex())
-                # Wait for response
-                for _ in range(50):  # 5 seconds
-                    await asyncio.sleep(0.1)
-                    if self._notification_data:
-                        self._logger.info(
-                            "✅ MVP1 fallback succeeded! Switching to MVP1 mode."
-                        )
-                        self._protocol.set_mvp_version(False)  # Switch to MVP1
-                        status = True
-                        break
+                try:
+                    await self._write_gatt(mvp2_packet)
+                    self._logger.debug("MVP2 fallback packet: %s", mvp2_packet.hex())
+                    # Wait for response
+                    for _ in range(50):  # 5 seconds
+                        await asyncio.sleep(0.1)
+                        if self._notification_data:
+                            self._logger.info(
+                                "✅ MVP2 fallback succeeded! Using MVP2 query style."
+                            )
+                            # Keep prefer_mvp1_query=False for future queries
+                            status = True
+                            break
+                except Exception as e:
+                    self._logger.debug("MVP2 fallback write failed: %s", e)
+                # If MVP2 also failed, restore MVP1 preference for next attempt
+                if not status:
+                    self._protocol.set_prefer_mvp1_query(True)
 
             if status:
                 self.data["connected"] = True
