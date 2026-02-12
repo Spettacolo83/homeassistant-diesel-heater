@@ -1212,15 +1212,23 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         # Check for AA77 (Sunster V2.1 locked state / command ACK)
         if header == PROTOCOL_HEADER_AA77:
             self._logger.debug("AA77 received (%d bytes)", len(data))
-            # Enable V2.1 encrypted mode on CBFF protocol
+            # Enable V2.1 encrypted mode on CBFF protocol AND switch to it
             cbff_protocol = self._protocols.get(6)
             if cbff_protocol and hasattr(cbff_protocol, 'set_v21_mode'):
                 if not cbff_protocol.v21_mode:
                     self._logger.info(
                         "🔐 Sunster V2.1 mode detected (AA77 beacon). "
-                        "Enabling encrypted command mode."
+                        "Switching to CBFF encrypted protocol (mode 6)."
                     )
                     cbff_protocol.set_v21_mode(True)
+                # CRITICAL: Switch protocol mode to CBFF so commands are encrypted
+                if self._protocol_mode != 6:
+                    self._logger.info(
+                        "📡 Protocol switch: %d -> 6 (CBFF/Sunster V2.1)",
+                        self._protocol_mode
+                    )
+                    self._protocol_mode = 6
+                    self._protocol = cbff_protocol
             self._notification_data = data
             return
 
