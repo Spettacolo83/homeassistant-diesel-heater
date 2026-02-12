@@ -17,17 +17,14 @@ This module has no dependency on Home Assistant.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
-
 from datetime import datetime
+from typing import Any
 
 from .const import (
     ABBA_STATUS_MAP,
     CBFF_RUN_STATE_OFF,
     ENCRYPTION_KEY,
-    HCALORY_CMD_PASSWORD,
     HCALORY_CMD_POWER,
-    HCALORY_CMD_QUERY_STATE,
     HCALORY_CMD_SET_ALTITUDE,
     HCALORY_CMD_SET_GEAR,
     HCALORY_CMD_SET_TEMP,
@@ -50,7 +47,6 @@ from .const import (
     RUNNING_MODE_TEMPERATURE,
     SUNSTER_V21_KEY,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helper functions

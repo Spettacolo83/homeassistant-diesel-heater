@@ -6,8 +6,6 @@ exercises the parser and command builder.
 """
 from __future__ import annotations
 
-import pytest
-
 from diesel_heater_ble import (
     HeaterProtocol,
     ProtocolAA55,
@@ -23,7 +21,6 @@ from diesel_heater_ble import (
     _u8_to_number,
     _unsign_to_sign,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helper functions
@@ -1906,7 +1903,6 @@ class TestProtocolHcalory:
     def test_password_handshake_custom_pin(self):
         """Password handshake with custom PIN."""
         pkt = self.proto.build_password_handshake(5678)
-        hex_str = pkt.hex()
         # PIN 5678 -> digits 5, 6, 7, 8
         assert 0x05 in pkt
         assert 0x06 in pkt
