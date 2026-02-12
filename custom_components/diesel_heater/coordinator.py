@@ -145,6 +145,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         }
         self._is_abba_device = False  # True if using ABBA/HeaterCC protocol
         self._abba_write_char = None  # ABBA devices use separate write characteristic
+        self._v21_handshake_sent = False  # Track if Sunster V2.1 handshake was sent
         self._is_hcalory_device = False  # True if using Hcalory MVP1/MVP2 protocol
         self._hcalory_write_char = None  # Hcalory devices use separate write characteristic
         self._connection_attempts = 0
@@ -1238,6 +1239,18 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     )
                     self._protocol_mode = 6
                     self._protocol = cbff_protocol
+                # Send V2.1 handshake if not yet sent (required before commands)
+                if not self._v21_handshake_sent and hasattr(cbff_protocol, 'build_handshake'):
+                    self._logger.info(
+                        "🔑 Sending Sunster V2.1 handshake (PIN=%d)...",
+                        self._passkey
+                    )
+                    try:
+                        handshake_pkt = cbff_protocol.build_handshake(self._passkey)
+                        # Use create_task to avoid blocking notification handler
+                        asyncio.create_task(self._send_v21_handshake(handshake_pkt))
+                    except Exception as err:
+                        self._logger.warning("Failed to build V2.1 handshake: %s", err)
             self._notification_data = data
             return
 
@@ -1391,6 +1404,21 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 # Reset Hcalory MVP2 password state on disconnect
                 if self._protocol and hasattr(self._protocol, 'reset_password_state'):
                     self._protocol.reset_password_state()
+                # Reset V2.1 handshake state on reconnect
+                self._v21_handshake_sent = False
+
+    async def _send_v21_handshake(self, packet: bytearray) -> None:
+        """Send Sunster V2.1 handshake packet asynchronously."""
+        try:
+            await asyncio.sleep(0.2)  # Brief delay after AA77 received
+            await self._write_gatt(packet)
+            self._v21_handshake_sent = True
+            self._logger.info(
+                "✅ Sunster V2.1 handshake sent: %s",
+                packet.hex()
+            )
+        except Exception as err:
+            self._logger.warning("⚠️ V2.1 handshake failed: %s", err)
 
     async def _write_gatt(self, packet: bytearray) -> None:
         """Write a packet to the appropriate BLE characteristic.
