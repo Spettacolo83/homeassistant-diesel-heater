@@ -19,10 +19,13 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
+from datetime import datetime
+
 from .const import (
     ABBA_STATUS_MAP,
     CBFF_RUN_STATE_OFF,
     ENCRYPTION_KEY,
+    HCALORY_CMD_PASSWORD,
     HCALORY_CMD_POWER,
     HCALORY_CMD_QUERY_STATE,
     HCALORY_CMD_SET_ALTITUDE,
@@ -917,10 +920,25 @@ class ProtocolHcalory(HeaterProtocol):
     def __init__(self) -> None:
         """Initialize Hcalory protocol handler."""
         self._is_mvp2: bool = True  # Default to MVP2, can be set by coordinator
+        self._password_sent: bool = False  # Track if MVP2 password handshake was sent
 
     def set_mvp_version(self, is_mvp2: bool) -> None:
         """Set MVP version (MVP1 vs MVP2) based on service UUID detection."""
         self._is_mvp2 = is_mvp2
+        self._password_sent = False  # Reset password state on version change
+
+    def reset_password_state(self) -> None:
+        """Reset password handshake state (call on reconnect)."""
+        self._password_sent = False
+
+    @property
+    def needs_password_handshake(self) -> bool:
+        """Check if MVP2 password handshake is needed."""
+        return self._is_mvp2 and not self._password_sent
+
+    def mark_password_sent(self) -> None:
+        """Mark password handshake as completed."""
+        self._password_sent = True
 
     def parse(self, data: bytearray) -> dict[str, Any] | None:
         """Parse Hcalory response data.
@@ -1138,13 +1156,22 @@ class ProtocolHcalory(HeaterProtocol):
         - 5: Set gear level
         - 14: Set altitude
         - 15: Set temp unit (Celsius/Fahrenheit)
+
+        MVP1 vs MVP2 differences:
+        - MVP1: Uses dpID 0E04 for query with 9-byte payload
+        - MVP2: Uses dpID 0A0A for query with timestamp payload
         """
-        # Status request
+        # Status request - different for MVP1 vs MVP2
         if command in (0, 1):
-            return self._build_hcalory_cmd(
-                HCALORY_CMD_POWER,
-                bytes([0, 0, 0, 0, 0, 0, 0, 0, HCALORY_POWER_QUERY])
-            )
+            if self._is_mvp2:
+                # MVP2: Use 0A0A with timestamp
+                return self._build_mvp2_query_cmd()
+            else:
+                # MVP1: Use 0E04 with query byte
+                return self._build_hcalory_cmd(
+                    HCALORY_CMD_POWER,
+                    bytes([0, 0, 0, 0, 0, 0, 0, 0, HCALORY_POWER_QUERY])
+                )
 
         # Power on/off (cmd 3)
         if command == 3:
@@ -1249,6 +1276,88 @@ class ProtocolHcalory(HeaterProtocol):
         packet.extend(payload)
 
         # Calculate checksum (sum of all bytes & 0xFF)
+        checksum = sum(packet) & 0xFF
+        packet.append(checksum)
+
+        return packet
+
+    @staticmethod
+    def _to_bcd(num: int) -> int:
+        """Convert a decimal number (0-99) to a single BCD byte."""
+        return ((num // 10) << 4) | (num % 10)
+
+    def _build_mvp2_query_cmd(self) -> bytearray:
+        """Build MVP2 query state command with timestamp.
+
+        MVP2 uses dpID 0A0A with timestamp payload:
+        Template: 00 02 00 01 00 01 00 0A 0A 00 00 05 [TIMESTAMP] 00 + checksum
+
+        Timestamp is 6 bytes: HH MM SS 00 00 00 (BCD encoded)
+        """
+        now = datetime.now()
+        timestamp = bytes([
+            self._to_bcd(now.hour),
+            self._to_bcd(now.minute),
+            self._to_bcd(now.second),
+            0x00, 0x00, 0x00  # Padding
+        ])
+
+        # Build packet: header + dpID 0A0A + payload length (5) + timestamp + 00
+        packet = bytearray([
+            0x00, 0x02,  # Protocol ID
+            0x00, 0x01,  # Reserved
+            0x00, 0x01,  # Flags (expects response)
+            0x00, 0x0A, 0x0A, 0x00,  # dpID 0A0A
+            0x00, 0x05,  # Payload length = 5 (timestamp bytes used)
+        ])
+
+        # Add timestamp (first 5 bytes: HH MM SS 00 00) + trailing 00
+        packet.extend(timestamp[:5])
+        packet.append(0x00)
+
+        # Calculate checksum
+        checksum = sum(packet) & 0xFF
+        packet.append(checksum)
+
+        return packet
+
+    def build_password_handshake(self, passkey: int = 1234) -> bytearray:
+        """Build MVP2 password handshake command.
+
+        MVP2 requires password authentication before accepting commands.
+        dpID 0A0C with payload: 05 01 [D1] [D2] [D3] [D4]
+
+        Password encoding: each digit as separate byte with leading zero
+        Example: "1234" -> 01 02 03 04
+
+        Args:
+            passkey: 4-digit PIN code (default 1234)
+
+        Returns:
+            Password handshake command packet
+        """
+        # Extract individual digits from passkey
+        digits = []
+        pk = passkey
+        for _ in range(4):
+            digits.insert(0, pk % 10)
+            pk //= 10
+
+        # Build payload: 05 01 D1 D2 D3 D4
+        payload = bytes([0x05, 0x01] + digits)
+
+        # Build packet
+        packet = bytearray([
+            0x00, 0x02,  # Protocol ID
+            0x00, 0x01,  # Reserved
+            0x00, 0x01,  # Flags
+            0x00, 0x0A, 0x0C, 0x00,  # dpID 0A0C (password)
+            0x00, len(payload),  # Payload length
+        ])
+
+        packet.extend(payload)
+
+        # Calculate checksum
         checksum = sum(packet) & 0xFF
         packet.append(checksum)
 

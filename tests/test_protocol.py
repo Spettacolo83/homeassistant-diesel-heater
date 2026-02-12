@@ -1869,3 +1869,71 @@ class TestProtocolHcalory:
         pkt = self.proto.build_command(3, 1, 1234)
         expected_checksum = sum(pkt[:-1]) & 0xFF
         assert pkt[-1] == expected_checksum
+
+    def test_mvp2_query_uses_0a0a_dpid(self):
+        """MVP2 status query should use dpID 0A0A with timestamp."""
+        self.proto.set_mvp_version(True)
+        pkt = self.proto.build_command(0, 0, 1234)
+        # Should contain dpID 0A0A
+        assert 0x0A in pkt
+        # Check for 0A 0A sequence (dpID)
+        hex_str = pkt.hex()
+        assert "0a0a" in hex_str.lower()
+
+    def test_mvp1_query_uses_0e04_dpid(self):
+        """MVP1 status query should use dpID 0E04."""
+        self.proto.set_mvp_version(False)
+        pkt = self.proto.build_command(0, 0, 1234)
+        # Should contain dpID 0E04
+        hex_str = pkt.hex()
+        assert "0e04" in hex_str.lower()
+
+    def test_password_handshake_packet_structure(self):
+        """MVP2 password handshake should use dpID 0A0C."""
+        pkt = self.proto.build_password_handshake(1234)
+        # Check header
+        assert pkt[0] == 0x00
+        assert pkt[1] == 0x02
+        # Check dpID 0A0C
+        hex_str = pkt.hex()
+        assert "0a0c" in hex_str.lower()
+        # Check password encoding (1234 -> 01 02 03 04)
+        assert 0x01 in pkt
+        assert 0x02 in pkt
+        assert 0x03 in pkt
+        assert 0x04 in pkt
+
+    def test_password_handshake_custom_pin(self):
+        """Password handshake with custom PIN."""
+        pkt = self.proto.build_password_handshake(5678)
+        hex_str = pkt.hex()
+        # PIN 5678 -> digits 5, 6, 7, 8
+        assert 0x05 in pkt
+        assert 0x06 in pkt
+        assert 0x07 in pkt
+        assert 0x08 in pkt
+
+    def test_password_state_tracking(self):
+        """Test password handshake state tracking."""
+        self.proto.set_mvp_version(True)
+        # Initially needs password
+        assert self.proto.needs_password_handshake is True
+        # Mark as sent
+        self.proto.mark_password_sent()
+        assert self.proto.needs_password_handshake is False
+        # Reset state
+        self.proto.reset_password_state()
+        assert self.proto.needs_password_handshake is True
+
+    def test_mvp1_does_not_need_password(self):
+        """MVP1 should not require password handshake."""
+        self.proto.set_mvp_version(False)
+        assert self.proto.needs_password_handshake is False
+
+    def test_bcd_encoding(self):
+        """Test BCD encoding helper."""
+        # 12 in BCD is 0x12 (not 0x0C)
+        assert self.proto._to_bcd(12) == 0x12
+        assert self.proto._to_bcd(59) == 0x59
+        assert self.proto._to_bcd(0) == 0x00
+        assert self.proto._to_bcd(99) == 0x99

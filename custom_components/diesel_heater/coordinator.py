@@ -1345,6 +1345,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 self._client = None
                 self._characteristic = None
                 self._active_char_uuid = None
+                # Reset Hcalory MVP2 password state on disconnect
+                if self._protocol and hasattr(self._protocol, 'reset_password_state'):
+                    self._protocol.reset_password_state()
 
     async def _write_gatt(self, packet: bytearray) -> None:
         """Write a packet to the appropriate BLE characteristic.
@@ -1417,6 +1420,25 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 "Try reloading the integration."
             )
             return False
+
+        # For Hcalory MVP2: send password handshake if not yet done
+        if (self._protocol and
+            hasattr(self._protocol, 'needs_password_handshake') and
+            self._protocol.needs_password_handshake):
+            try:
+                password_packet = self._protocol.build_password_handshake(self._passkey)
+                self._logger.info(
+                    "🔑 Sending MVP2 password handshake: %s (PIN=%d)",
+                    password_packet.hex(), self._passkey
+                )
+                await self._write_gatt(password_packet)
+                # Wait briefly for handshake acknowledgment
+                await asyncio.sleep(0.3)
+                self._protocol.mark_password_sent()
+                self._logger.info("✅ MVP2 password handshake completed")
+            except Exception as err:
+                self._logger.warning("⚠️ MVP2 password handshake failed: %s", err)
+                # Continue anyway - some devices might not require it
 
         # Build protocol-aware command packet
         packet = self._build_command_packet(command, argument)

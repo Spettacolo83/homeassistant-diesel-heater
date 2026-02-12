@@ -208,11 +208,14 @@ HCALORY_ERROR_NAMES: Final = {
 }
 
 # Hcalory command types
+# MVP1 commands (older models with service FFF0)
 HCALORY_CMD_SET_GEAR: Final = 0x0607
 HCALORY_CMD_SET_TEMP: Final = 0x0706
-HCALORY_CMD_POWER: Final = 0x0E04
-HCALORY_CMD_QUERY_STATE: Final = 0x0A0A
+HCALORY_CMD_POWER: Final = 0x0E04  # MVP1 query/power (dpID 0E04)
 HCALORY_CMD_SET_ALTITUDE: Final = 0x0909
+# MVP2 commands (newer models with service BD39)
+HCALORY_CMD_QUERY_STATE: Final = 0x0A0A  # MVP2 query state (dpID 0A0A)
+HCALORY_CMD_PASSWORD: Final = 0x0A0C  # MVP2 password handshake (dpID 0A0C)
 
 # Hcalory power command arguments (for CMD_POWER)
 HCALORY_POWER_QUERY: Final = 0x00
