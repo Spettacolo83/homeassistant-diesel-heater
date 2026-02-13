@@ -1109,12 +1109,16 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 for service_uuid, char_uuid in uuid_pairs:
                     for service in self._client.services:
                         if service.uuid.lower() == service_uuid.lower():
+                            # Log all characteristics in this service for debugging
+                            char_list = [f"{c.uuid} (props: {c.properties})" for c in service.characteristics]
+                            self._logger.info("📋 Vevor/Sunster service %s characteristics: %s", service_uuid[-4:], char_list)
+
                             for char in service.characteristics:
                                 if char.uuid.lower() == char_uuid.lower():
                                     self._characteristic = char
                                     self._active_char_uuid = char_uuid
                                     self._logger.info(
-                                        "Found Vevor heater characteristic: %s (service: %s)",
+                                        "✅ Found Vevor heater characteristic: %s (service: %s)",
                                         char_uuid, service_uuid
                                     )
                                     break
@@ -1428,16 +1432,22 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """
         if self._is_hcalory_device and self._hcalory_write_char:
             write_char = self._hcalory_write_char
+            char_uuid = write_char.uuid
             protocol_name = "Hcalory"
         elif self._is_abba_device and self._abba_write_char:
             write_char = self._abba_write_char
+            char_uuid = write_char.uuid
             protocol_name = "ABBA"
         else:
             write_char = self._characteristic
-            protocol_name = "AAXX"
+            char_uuid = write_char.uuid if write_char else "unknown"
+            protocol_name = "Vevor/Sunster"
 
         await self._client.write_gatt_char(write_char, packet, response=False)
-        self._logger.debug("Packet %s written to %s BLE characteristic", packet.hex(), protocol_name)
+        self._logger.info(
+            "📤 Sent %d bytes to %s (char %s): %s",
+            len(packet), protocol_name, char_uuid[-4:], packet.hex()
+        )
 
     async def _send_wake_up_ping(self) -> None:
         """Send a wake-up ping to the device to ensure it's responsive."""
