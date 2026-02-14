@@ -1146,8 +1146,60 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             else:
                 self._logger.warning("Characteristic does not support notify")
 
+            # CRITICAL: For Hcalory MVP2, send password handshake BEFORE any other command
+            # The heater requires authentication before accepting any commands
+            if (self._protocol and
+                hasattr(self._protocol, 'needs_password_handshake') and
+                self._protocol.needs_password_handshake):
+                self._logger.info("🔐 MVP2 detected - sending password handshake before wake-up ping")
+                try:
+                    password_packet = self._protocol.build_password_handshake(self._passkey)
+                    self._logger.info(
+                        "🔑 Sending MVP2 password handshake: %s (PIN=%d)",
+                        password_packet.hex(), self._passkey
+                    )
+
+                    # Clear notification buffer before sending password
+                    self._notification_data = None
+                    await self._write_gatt(password_packet)
+
+                    # Wait for handshake response 0B0C (header 0x0003)
+                    handshake_timeout = 5.0  # seconds
+                    iterations = int(handshake_timeout / 0.1)
+                    handshake_received = False
+
+                    for i in range(iterations):
+                        await asyncio.sleep(0.1)
+                        if self._notification_data and len(self._notification_data) >= 8:
+                            # Check for response header 0x0003 and command 0x0B0C
+                            header = (self._notification_data[0] << 8) | self._notification_data[1]
+                            cmd = (self._notification_data[6] << 8) | self._notification_data[7]
+
+                            if header == 0x0003 and cmd == 0x0B0C:
+                                self._logger.info(
+                                    "✅ MVP2 password handshake ACK received after %.1fs: %s",
+                                    i * 0.1, self._notification_data.hex()
+                                )
+                                handshake_received = True
+                                break
+
+                    if not handshake_received:
+                        self._logger.warning(
+                            "⚠️ MVP2 password handshake response not received after %.1fs",
+                            handshake_timeout
+                        )
+                        # Don't fail - some devices might not send ACK
+
+                    self._protocol.mark_password_sent()
+                    self._logger.info("✅ MVP2 authentication completed, ready for commands")
+
+                except Exception as err:
+                    self._logger.warning("⚠️ MVP2 password handshake in connection failed: %s", err)
+                    # Continue anyway - will retry in _send_command if needed
+
             # Send a wake-up ping to ensure device is responsive
             # Some heaters go into deep sleep and need a nudge
+            # For MVP2, this is sent AFTER authentication
             self._logger.debug("Sending wake-up ping to device")
             await self._send_wake_up_ping()
 
