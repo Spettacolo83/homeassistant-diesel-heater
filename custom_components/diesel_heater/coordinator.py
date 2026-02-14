@@ -1512,11 +1512,41 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     "🔑 Sending MVP2 password handshake: %s (PIN=%d)",
                     password_packet.hex(), self._passkey
                 )
+
+                # Clear notification buffer before sending password
+                self._notification_data = None
                 await self._write_gatt(password_packet)
-                # Wait briefly for handshake acknowledgment
-                await asyncio.sleep(0.3)
+
+                # CRITICAL: Wait for handshake response 0B0C (header 0003)
+                # Wireshark analysis shows response arrives in 2+ seconds
+                # Format: 00-03-00-01-00-01-00-0B-0C-... (header=0x0003, cmd=0x0B0C)
+                handshake_timeout = 5.0  # seconds
+                iterations = int(handshake_timeout / 0.1)
+                handshake_received = False
+
+                for i in range(iterations):
+                    await asyncio.sleep(0.1)
+                    if self._notification_data and len(self._notification_data) >= 8:
+                        # Check for response header 0x0003 and command 0x0B0C
+                        header = (self._notification_data[0] << 8) | self._notification_data[1]
+                        cmd = (self._notification_data[6] << 8) | self._notification_data[7]
+
+                        if header == 0x0003 and cmd == 0x0B0C:
+                            self._logger.info(
+                                "✅ MVP2 password handshake ACK received after %.1fs: %s",
+                                i * 0.1, self._notification_data.hex()
+                            )
+                            handshake_received = True
+                            break
+
+                if not handshake_received:
+                    self._logger.warning(
+                        "⚠️ MVP2 password handshake response not received after %.1fs",
+                        handshake_timeout
+                    )
+                    # Don't fail - some devices might not send ACK
+
                 self._protocol.mark_password_sent()
-                self._logger.info("✅ MVP2 password handshake completed")
 
                 # CRITICAL FIX: For Hcalory MVP2 status queries (command=1),
                 # the heater broadcasts status automatically every ~2 seconds.
