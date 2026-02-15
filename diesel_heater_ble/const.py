@@ -220,8 +220,8 @@ HCALORY_CMD_PASSWORD: Final = 0x0A0C  # MVP2 password handshake (dpID 0A0C)
 
 # Hcalory power command arguments (for CMD_POWER)
 HCALORY_POWER_QUERY: Final = 0x00
-HCALORY_POWER_ON: Final = 0x01
-HCALORY_POWER_OFF: Final = 0x02
+HCALORY_POWER_OFF: Final = 0x01  # Fixed: was 0x02 (swapped with ON)
+HCALORY_POWER_ON: Final = 0x02  # Fixed: was 0x01 (swapped with OFF)
 HCALORY_POWER_AUTO_ON: Final = 0x03
 HCALORY_POWER_AUTO_OFF: Final = 0x04
 HCALORY_POWER_CELSIUS: Final = 0x0A
