@@ -80,38 +80,43 @@ async def async_migrate_from_old_domain(hass: HomeAssistant) -> None:
     """Migrate from old vevor_heater domain to diesel_heater.
 
     This function handles:
-    1. Migrating persistent data files
+    1. Migrating persistent data files (including per-device files)
     2. Entity registry updates happen automatically via unique_id
     """
     # Migrate persistent data files from old domain to new domain
     old_storage_dir = hass.config.path(".storage")
 
-    # List of storage files that might exist
-    storage_files = [
-        f"{OLD_DOMAIN}.fuel_data",
-        f"{OLD_DOMAIN}.runtime_data",
-    ]
+    # Scan for all storage files that start with old domain name
+    # This includes both global files and per-device files (e.g., vevor_heater_MAC:AD:DR:ES:S)
+    if os.path.exists(old_storage_dir):
+        for filename in os.listdir(old_storage_dir):
+            # Check if file starts with old domain name
+            if filename.startswith(f"{OLD_DOMAIN}"):
+                old_path = os.path.join(old_storage_dir, filename)
 
-    for old_filename in storage_files:
-        old_path = os.path.join(old_storage_dir, old_filename)
-        if os.path.exists(old_path):
-            new_filename = old_filename.replace(OLD_DOMAIN, DOMAIN)
-            new_path = os.path.join(old_storage_dir, new_filename)
+                # Skip if not a file
+                if not os.path.isfile(old_path):
+                    continue
 
-            if not os.path.exists(new_path):
-                _LOGGER.info(
-                    "Migrating storage file: %s -> %s",
-                    old_filename,
-                    new_filename,
-                )
-                try:
-                    shutil.copy2(old_path, new_path)
-                except Exception as err:
-                    _LOGGER.warning(
-                        "Failed to migrate storage file %s: %s",
-                        old_filename,
-                        err,
+                # Create new filename by replacing domain
+                new_filename = filename.replace(OLD_DOMAIN, DOMAIN, 1)
+                new_path = os.path.join(old_storage_dir, new_filename)
+
+                # Only migrate if new file doesn't already exist
+                if not os.path.exists(new_path):
+                    _LOGGER.info(
+                        "Migrating storage file: %s -> %s",
+                        filename,
+                        new_filename,
                     )
+                    try:
+                        shutil.copy2(old_path, new_path)
+                    except Exception as err:
+                        _LOGGER.warning(
+                            "Failed to migrate storage file %s: %s",
+                            filename,
+                            err,
+                        )
 
 
 def _safe_update_unique_id(
