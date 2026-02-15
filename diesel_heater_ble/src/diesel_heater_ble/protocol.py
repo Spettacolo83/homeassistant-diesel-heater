@@ -1353,8 +1353,11 @@ class ProtocolHcalory(HeaterProtocol):
 
         packet.extend(payload)
 
-        # Calculate checksum
-        checksum = sum(packet) & 0xFF
+        # Calculate checksum ONLY on bytes from position 8 onwards (0x0C + rest)
+        # NOT on full packet including header (bytes 0-7)
+        # This matches Acropolis9064's working implementation
+        # Ref: issue #34 (@Xev analysis)
+        checksum = sum(packet[8:]) & 0xFF
         packet.append(checksum)
 
         return packet

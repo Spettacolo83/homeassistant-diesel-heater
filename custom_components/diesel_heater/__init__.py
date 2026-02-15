@@ -88,8 +88,12 @@ async def async_migrate_from_old_domain(hass: HomeAssistant) -> None:
 
     # Scan for all storage files that start with old domain name
     # This includes both global files and per-device files (e.g., vevor_heater_MAC:AD:DR:ES:S)
+    # Use async executor to avoid blocking the event loop
     if os.path.exists(old_storage_dir):
-        for filename in os.listdir(old_storage_dir):
+        # Run os.listdir in executor to avoid blocking
+        filenames = await hass.async_add_executor_job(os.listdir, old_storage_dir)
+
+        for filename in filenames:
             # Check if file starts with old domain name
             if filename.startswith(f"{OLD_DOMAIN}"):
                 old_path = os.path.join(old_storage_dir, filename)
@@ -110,7 +114,8 @@ async def async_migrate_from_old_domain(hass: HomeAssistant) -> None:
                         new_filename,
                     )
                     try:
-                        shutil.copy2(old_path, new_path)
+                        # Run copy in executor to avoid blocking
+                        await hass.async_add_executor_job(shutil.copy2, old_path, new_path)
                     except Exception as err:
                         _LOGGER.warning(
                             "Failed to migrate storage file %s: %s",
