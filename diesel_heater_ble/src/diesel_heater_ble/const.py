@@ -211,6 +211,7 @@ HCALORY_ERROR_NAMES: Final = {
 # MVP1 commands (older models with service FFF0)
 HCALORY_CMD_SET_GEAR: Final = 0x0607
 HCALORY_CMD_SET_TEMP: Final = 0x0706
+HCALORY_CMD_SET_MODE: Final = 0x070B
 HCALORY_CMD_POWER: Final = 0x0E04  # MVP1 query/power (dpID 0E04)
 HCALORY_CMD_SET_ALTITUDE: Final = 0x0909
 # MVP2 commands (newer models with service BD39)

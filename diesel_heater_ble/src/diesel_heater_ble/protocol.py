@@ -27,6 +27,7 @@ from .const import (
     HCALORY_CMD_POWER,
     HCALORY_CMD_SET_ALTITUDE,
     HCALORY_CMD_SET_GEAR,
+    HCALORY_CMD_SET_MODE,
     HCALORY_CMD_SET_TEMP,
     HCALORY_MAX_LEVEL,
     HCALORY_MIN_LEVEL,
@@ -1146,7 +1147,7 @@ class ProtocolHcalory(HeaterProtocol):
 
         Command mapping from standard Vevor commands:
         - 0, 1: Status query
-        - 2: Set mode (not directly supported)
+        - 2: Set mode (Temperature=2, Level=1)
         - 3: Power on/off
         - 4: Set temperature
         - 5: Set gear level
@@ -1168,6 +1169,15 @@ class ProtocolHcalory(HeaterProtocol):
                     HCALORY_CMD_POWER,
                     bytes([0, 0, 0, 0, 0, 0, 0, 0, HCALORY_POWER_QUERY])
                 )
+
+        # Set mode (cmd 2) - Temperature=2, Level=1
+        if command == 2:
+            # argument: 1=Level mode, 2=Temperature mode
+            mode_value = max(1, min(2, argument))
+            return self._build_hcalory_cmd(
+                HCALORY_CMD_SET_MODE,
+                bytes([mode_value, 0])  # mode, padding
+            )
 
         # Power on/off (cmd 3)
         if command == 3:
@@ -1232,47 +1242,47 @@ class ProtocolHcalory(HeaterProtocol):
     def _build_hcalory_cmd(cmd_type: int, payload: bytes) -> bytearray:
         """Build Hcalory command packet with checksum.
 
-        Format:
-        - Bytes 0-1: Protocol ID (00 02)
-        - Bytes 2-3: Reserved (00 01)
-        - Bytes 4-5: Flags (00 01 = expects response)
-        - Bytes 6-7: Command type high byte
-        - Bytes 8-9: Command type low byte
-        - Bytes 10-11: Reserved (00 00)
-        - Bytes 12-13: Payload length high byte
-        - Bytes 14-15: Payload length low byte
-        - Bytes 16-N: Payload
-        - Byte N+1: Checksum (sum of all bytes & 0xFF)
+        Format (based on @Xev's analysis, issue #34):
+        - Bytes 0-7: Header (00 02 00 01 00 01 00 XX)
+          - Bytes 0-1: Protocol ID (00 02)
+          - Bytes 2-3: Reserved (00 01)
+          - Bytes 4-5: Flags (00 01 = expects response)
+          - Bytes 6-7: Command type high byte (00 XX)
+        - Bytes 8+: Payload for checksum calculation:
+          - Byte 8: Command type low byte (YY)
+          - Bytes 9-10: Padding (00 00)
+          - Byte 11: Payload length
+          - Bytes 12+: Actual payload data
+        - Last byte: Checksum = sum(bytes 8 onwards) & 0xFF
+
+        Example - Set Temperature to 20:
+          00 02 00 01 00 01 00 07 | 06 00 00 02 14 00 | 1C
+          Header (0-7)            | Payload (8-13)    | Checksum=28
         """
-        # Build command without checksum
         cmd_hi = (cmd_type >> 8) & 0xFF
         cmd_lo = cmd_type & 0xFF
         payload_len = len(payload)
 
+        # Build header (bytes 0-7)
         packet = bytearray([
-            0x00, 0x02,  # Protocol ID
-            0x00, 0x01,  # Reserved
-            0x00, 0x01,  # Flags (expects response)
-            0x00, cmd_hi,  # Command type high
-            cmd_lo, 0x00,  # Command type low + reserved
-            0x00, (payload_len >> 8) & 0xFF,  # Payload length high
-            payload_len & 0xFF,  # Payload length low (only use low byte for small payloads)
+            0x00, 0x02,  # Protocol ID (bytes 0-1)
+            0x00, 0x01,  # Reserved (bytes 2-3)
+            0x00, 0x01,  # Flags (bytes 4-5)
+            0x00, cmd_hi,  # Command high (bytes 6-7)
         ])
 
-        # Adjust packet structure to match protocol
-        # The actual format is simpler - let me fix it based on the docs
-        packet = bytearray([
-            0x00, 0x02,  # Protocol ID
-            0x00, 0x01,  # Reserved
-            0x00, 0x01,  # Flags
-            0x00, cmd_hi, cmd_lo, 0x00,  # Command type (4 bytes: 00 XX YY 00)
-            0x00, payload_len,  # Payload length (2 bytes)
+        # Build payload for checksum calculation (bytes 8+)
+        payload_for_checksum = bytearray([
+            cmd_lo,  # Command low (byte 8)
+            0x00, 0x00,  # Padding (bytes 9-10)
+            payload_len,  # Payload length (byte 11)
         ])
+        payload_for_checksum.extend(payload)
 
-        packet.extend(payload)
+        packet.extend(payload_for_checksum)
 
-        # Calculate checksum (sum of all bytes & 0xFF)
-        checksum = sum(packet) & 0xFF
+        # Calculate checksum on payload portion only (bytes 8 onwards)
+        checksum = sum(payload_for_checksum) & 0xFF
         packet.append(checksum)
 
         return packet
