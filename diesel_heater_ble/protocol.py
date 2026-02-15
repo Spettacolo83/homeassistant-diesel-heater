@@ -1339,25 +1339,32 @@ class ProtocolHcalory(HeaterProtocol):
             digits.insert(0, pk % 10)
             pk //= 10
 
-        # Build payload: 05 01 D1 D2 D3 D4
-        payload = bytes([0x05, 0x01] + digits)
+        # Build packet according to @Xev's analysis (issue #34)
+        # Correct structure for PIN=0: 00 02 00 01 00 01 00 0A 0C 00 00 05 01 00 00 00 00 12
+        # Header (bytes 0-7): 00 02 00 01 00 01 00 0A
+        # Payload for checksum (bytes 8-16): 0C 00 00 05 01 D1 D2 D3 D4
+        # Checksum (byte 17): sum(bytes 8-16) & 0xFF
 
-        # Build packet
         packet = bytearray([
-            0x00, 0x02,  # Protocol ID
-            0x00, 0x01,  # Reserved
-            0x00, 0x01,  # Flags
-            0x00, 0x0A, 0x0C, 0x00,  # dpID 0A0C (password)
-            0x00, len(payload),  # Payload length
+            0x00, 0x02,  # Protocol ID (bytes 0-1)
+            0x00, 0x01,  # Reserved (bytes 2-3)
+            0x00, 0x01,  # Flags (bytes 4-5)
+            0x00, 0x0A,  # Command 0A (bytes 6-7)
         ])
 
-        packet.extend(payload)
+        # Payload for checksum calculation starts here (byte 8)
+        # Structure: 0C 00 00 05 01 D1 D2 D3 D4
+        payload_for_checksum = bytearray([
+            0x0C, 0x00, 0x00,  # dpID continuation + padding
+            0x05,  # Payload type/length indicator
+            0x01,  # Fixed byte
+        ])
+        payload_for_checksum.extend(digits)  # Add 4 PIN digits
 
-        # Calculate checksum ONLY on bytes from position 8 onwards (0x0C + rest)
-        # NOT on full packet including header (bytes 0-7)
-        # This matches Acropolis9064's working implementation
-        # Ref: issue #34 (@Xev analysis)
-        checksum = sum(packet[8:]) & 0xFF
+        packet.extend(payload_for_checksum)
+
+        # Calculate checksum on bytes 8 onwards
+        checksum = sum(payload_for_checksum) & 0xFF
         packet.append(checksum)
 
         return packet
