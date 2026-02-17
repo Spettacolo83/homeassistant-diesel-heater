@@ -340,7 +340,7 @@ class VevorHourlyFuelConsumptionSensor(VevorSensorBase):
 class VevorDailyFuelConsumedSensor(VevorSensorBase):
     """Estimated daily fuel consumed sensor."""
 
-    _attr_device_class = SensorDeviceClass.VOLUME
+    _attr_device_class = SensorDeviceClass.GAS
     _attr_native_unit_of_measurement = UnitOfVolume.LITERS
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_icon = "mdi:gas-station"
@@ -358,7 +358,7 @@ class VevorDailyFuelConsumedSensor(VevorSensorBase):
 class VevorTotalFuelConsumedSensor(VevorSensorBase):
     """Estimated total fuel consumed sensor."""
 
-    _attr_device_class = SensorDeviceClass.VOLUME
+    _attr_device_class = SensorDeviceClass.GAS
     _attr_native_unit_of_measurement = UnitOfVolume.LITERS
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_icon = "mdi:gas-station"
