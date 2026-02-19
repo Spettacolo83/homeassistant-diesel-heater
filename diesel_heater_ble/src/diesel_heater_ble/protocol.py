@@ -1046,9 +1046,10 @@ class ProtocolHcalory(HeaterProtocol):
                     parsed["set_level"] = self._map_hcalory_to_standard_level(hcalory_level)
                     parsed["hcalory_gear"] = hcalory_level
 
-            # Byte 23: Auto start/stop (1=enabled, 2=disabled per @Xev's analysis)
+            # Byte 23: Auto start/stop (@Xev note 2026-02-19: was swapped, now fixed)
+            # 1 = enabled, 2 = disabled (corrected from initial analysis)
             auto_byte = _u8_to_number(data[23])
-            parsed["auto_start_stop"] = (auto_byte == 2)  # 2 = enabled (per dump analysis)
+            parsed["auto_start_stop"] = (auto_byte == 1)  # 1 = enabled (fixed swap)
 
             # Bytes 24-25: Voltage (uint16 LE, /10)
             voltage_raw = (_u8_to_number(data[24]) | (_u8_to_number(data[25]) << 8))
@@ -1266,17 +1267,18 @@ class ProtocolHcalory(HeaterProtocol):
     def _build_mvp2_query_cmd(self) -> bytearray:
         """Build MVP2 query state command with timestamp.
 
-        MVP2 uses dpID 0A0A with timestamp payload:
-        Template: 00 02 00 01 00 01 00 0A 0A 00 00 05 [TIMESTAMP] 00 + checksum
+        MVP2 uses dpID 0A0A with timestamp payload (@Xev's analysis, issue #34):
+        Template: 00 02 00 01 00 01 00 0A 0A 00 00 05 [HH MM SS DOW] 00 + checksum
 
-        Timestamp is 6 bytes: HH MM SS 00 00 00 (BCD encoded)
+        Timestamp is 4 bytes (NOT BCD): hour, minute, second, isoweekday (1-7)
         """
         now = datetime.now()
+        # @Xev: timestamp is NOT BCD encoded, just raw bytes + isoweekday()
         timestamp = bytes([
-            self._to_bcd(now.hour),
-            self._to_bcd(now.minute),
-            self._to_bcd(now.second),
-            0x00, 0x00, 0x00  # Padding
+            now.hour,
+            now.minute,
+            now.second,
+            now.isoweekday()  # 1=Monday, 7=Sunday
         ])
 
         # Build packet: header + dpID 0A0A + payload length (5) + timestamp + 00
@@ -1285,11 +1287,11 @@ class ProtocolHcalory(HeaterProtocol):
             0x00, 0x01,  # Reserved
             0x00, 0x01,  # Flags (expects response)
             0x00, 0x0A, 0x0A, 0x00,  # dpID 0A0A
-            0x00, 0x05,  # Payload length = 5 (timestamp bytes used)
+            0x00, 0x05,  # Payload length = 5
         ])
 
-        # Add timestamp (first 5 bytes: HH MM SS 00 00) + trailing 00
-        packet.extend(timestamp[:5])
+        # Add timestamp (4 bytes: HH MM SS DOW) + trailing 00
+        packet.extend(timestamp)
         packet.append(0x00)
 
         # Calculate checksum
@@ -1389,13 +1391,20 @@ class ProtocolHcalory(HeaterProtocol):
     def set_level_mode(self) -> bytearray:
         """Switch to Level/Gear mode.
 
+        @Xev identified (issue #34, 2026-02-19) that the command is likely:
+        00 02 00 01 00 01 00 0e 04 00 00 09 00 00 00 00 00 00 00 00 07 14
+        Which translates to: dpID 0x0E04 with payload [00 00 00 00 00 00 00 00 07]
+
+        Testing needed to confirm if this works better than CMD_SET_MODE approach.
+
         Returns:
             Command packet to switch to level mode
         """
-        from .const import HCALORY_CMD_SET_MODE, HCALORY_MODE_LEVEL
+        from .const import HCALORY_CMD_POWER
+        # Use the command identified by @Xev from packet capture
         return self._build_hcalory_cmd(
-            HCALORY_CMD_SET_MODE,
-            bytes([HCALORY_MODE_LEVEL, 0x00])
+            HCALORY_CMD_POWER,
+            bytes([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07])
         )
 
     def set_temperature_mode(self) -> bytearray:
