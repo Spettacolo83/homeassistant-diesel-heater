@@ -218,12 +218,67 @@ HCALORY_CMD_SET_ALTITUDE: Final = 0x0909
 HCALORY_CMD_QUERY_STATE: Final = 0x0A0A  # MVP2 query state (dpID 0A0A)
 HCALORY_CMD_PASSWORD: Final = 0x0A0C  # MVP2 password handshake (dpID 0A0C)
 
-# Hcalory power command arguments (for CMD_POWER)
+# Hcalory power command arguments (for CMD_POWER / 0x0E04)
 HCALORY_POWER_QUERY: Final = 0x00
 HCALORY_POWER_OFF: Final = 0x01  # Fixed: was 0x02 (swapped with ON)
 HCALORY_POWER_ON: Final = 0x02  # Fixed: was 0x01 (swapped with OFF)
-HCALORY_POWER_AUTO_ON: Final = 0x03
-HCALORY_POWER_AUTO_OFF: Final = 0x04
+HCALORY_POWER_AUTO_ENABLE: Final = 0x05  # Auto start/stop enable
+HCALORY_POWER_AUTO_DISABLE: Final = 0x06  # Auto start/stop disable
+HCALORY_POWER_VENTILATION: Final = 0x08  # Ventilation mode (toggle)
+HCALORY_POWER_ALTITUDE_TOGGLE: Final = 0x09  # Toggle altitude mode (no sensor, UI removed)
 HCALORY_POWER_CELSIUS: Final = 0x0A
 HCALORY_POWER_FAHRENHEIT: Final = 0x0B
-HCALORY_POWER_QUERY_ALTITUDE: Final = 0x0D
+
+# Hcalory MVP2 Running Status (byte 20, high nibble) - @Xev analysis
+HCALORY_RUNNING_STATUS_OFF: Final = 0x00
+HCALORY_RUNNING_STATUS_TURNING_OFF: Final = 0x04
+HCALORY_RUNNING_STATUS_HEATING: Final = 0x08
+HCALORY_RUNNING_STATUS_VENTILATION: Final = 0x0C
+HCALORY_RUNNING_STATUS_ERROR: Final = 0x0F
+
+HCALORY_RUNNING_STATUS_NAMES: Final = {
+    HCALORY_RUNNING_STATUS_OFF: "Off",
+    HCALORY_RUNNING_STATUS_TURNING_OFF: "Turning Off",
+    HCALORY_RUNNING_STATUS_HEATING: "Heating",
+    HCALORY_RUNNING_STATUS_VENTILATION: "Ventilation",
+    HCALORY_RUNNING_STATUS_ERROR: "Error",
+}
+
+# Hcalory MVP2 Running Steps (byte 20, low nibble) - @Xev analysis
+HCALORY_RUNNING_STEP_INACTIVE: Final = 0x00
+HCALORY_RUNNING_STEP_FAN: Final = 0x01  # Blowing air
+HCALORY_RUNNING_STEP_IGNITION: Final = 0x03  # Igniting
+HCALORY_RUNNING_STEP_COOLDOWN: Final = 0x04  # Synthetic state (created from TURNING_OFF status)
+HCALORY_RUNNING_STEP_RUNNING: Final = 0x05  # Heating/Running
+HCALORY_RUNNING_STEP_STANDBY: Final = 0x07  # Standby (temp reached with auto on)
+
+HCALORY_RUNNING_STEP_NAMES: Final = {
+    HCALORY_RUNNING_STEP_INACTIVE: "Inactive",
+    HCALORY_RUNNING_STEP_FAN: "Blowing Air",
+    HCALORY_RUNNING_STEP_IGNITION: "Igniting",
+    HCALORY_RUNNING_STEP_RUNNING: "Heating",
+    HCALORY_RUNNING_STEP_STANDBY: "Standby",
+    HCALORY_RUNNING_STEP_COOLDOWN: "Cooldown",
+}
+
+# Hcalory MVP2 Set Modes (byte 21) - @Xev analysis
+HCALORY_MODE_OFF: Final = 0x00
+HCALORY_MODE_TEMPERATURE: Final = 0x01
+HCALORY_MODE_LEVEL: Final = 0x02
+HCALORY_MODE_VENTILATION: Final = 0x03
+
+HCALORY_MODE_NAMES: Final = {
+    HCALORY_MODE_OFF: "Off",
+    HCALORY_MODE_TEMPERATURE: "Temperature",
+    HCALORY_MODE_LEVEL: "Level",
+    HCALORY_MODE_VENTILATION: "Ventilation",
+}
+
+# Hcalory MVP2 Temperature Units (byte 37)
+HCALORY_TEMP_CELSIUS: Final = 0x00
+HCALORY_TEMP_FAHRENHEIT: Final = 0x01
+
+# Hcalory MVP2 Altitude Modes (byte 18) - NOTE: No actual sensor, UI removed
+HCALORY_ALTITUDE_OFF: Final = 0x00
+HCALORY_ALTITUDE_MODE_1: Final = 0x01
+HCALORY_ALTITUDE_MODE_2: Final = 0x02

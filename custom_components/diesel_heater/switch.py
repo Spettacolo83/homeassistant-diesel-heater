@@ -35,16 +35,18 @@ async def async_setup_entry(
         VevorAutoOffsetSwitch(coordinator),
     ]
 
-    # Auto Start/Stop (AA66Encrypted, ABBA, CBFF)
-    if mode in (0, 4, 5, 6):
+    # Auto Start/Stop (AA66Encrypted, ABBA, CBFF, Hcalory)
+    if mode in (0, 4, 5, 6, 7):
         entities.append(VevorAutoStartStopSwitch(coordinator))
 
-    # Unit settings (AA66Encrypted, ABBA, CBFF)
+    # Temperature unit (AA66Encrypted, ABBA, CBFF, Hcalory)
+    if mode in (0, 4, 5, 6, 7):
+        entities.append(VevorTempUnitSwitch(coordinator))
+
+    # Altitude unit (AA66Encrypted, ABBA, CBFF only - NOT Hcalory)
+    # @Xev confirmed Hcalory has no altitude sensor (issue #34)
     if mode in (0, 4, 5, 6):
-        entities.extend([
-            VevorTempUnitSwitch(coordinator),
-            VevorAltitudeUnitSwitch(coordinator),
-        ])
+        entities.append(VevorAltitudeUnitSwitch(coordinator))
 
     # High altitude (ABBA only)
     if mode in (0, 5):

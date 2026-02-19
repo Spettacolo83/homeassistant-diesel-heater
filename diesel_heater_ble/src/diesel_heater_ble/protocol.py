@@ -940,178 +940,149 @@ class ProtocolHcalory(HeaterProtocol):
     def parse(self, data: bytearray) -> dict[str, Any] | None:
         """Parse Hcalory response data.
 
-        Response structure (hex character positions from protocol docs):
-        - 0-3: device_id (4 chars)
-        - 4-7: timestamp (4 chars)
-        - 8-11: reserved (4 chars)
-        - 12-13: highland_gear (2 chars)
-        - 14-15: reserved (2 chars)
-        - 16-17: status_flags (2 chars)
-        - 18-19: device_state (2 chars)
-        - 20-21: temp_or_gear (2 chars)
-        - 22-23: auto_start_stop (2 chars)
-        - 24-27: voltage_raw (4 chars, x10)
-        - 28-29: shell_temp_sign (2 chars)
-        - 30-33: shell_temp_raw (4 chars, x10)
-        - 34-35: ambient_temp_sign (2 chars)
-        - 36-39: ambient_temp_raw (4 chars, x10)
-        - 40-45: reserved (6 chars)
-        - 46-47: scene_id (2 chars)
-        - 48-49: highland_mode (2 chars)
-        - 50-51: temp_unit (2 chars)
-        MVP2 extended (60+ chars):
-        - 52-53: height_unit (2 chars)
-        - 54-55: altitude_sign (2 chars)
-        - 56-59: altitude_raw (4 chars)
-        """
-        # Convert to hex string for character-based parsing
-        hex_str = data.hex().upper()
+        MVP2 Byte mapping (reverse-engineered by @Xev, issue #34):
+        - Byte 18: Altitude mode (0-2)
+        - Byte 20: Complete state byte (high nibble=status, low nibble=running_step)
+        - Byte 21: Set mode (0=Off, 1=Temperature, 2=Level, 3=Ventilation)
+        - Byte 22: Set value (temperature or gear level)
+        - Byte 23: Auto start/stop (1=on, 2=off per @Xev's dumps)
+        - Bytes 24-25: Voltage (uint16 LE, /10)
+        - Bytes 27-28: Shell/Case temperature (uint16 LE, /10)
+        - Bytes 30-31: Ambient/Cabin temperature (uint16 LE, /10)
+        - Byte 37: Temperature unit (0=C, 1=F)
 
-        # Minimum length: 52 hex chars (26 bytes) for basic parsing
-        if len(hex_str) < 52:
+        Status byte (byte 20) parsing:
+        - High nibble (bits 4-7): Running status (0x0=Off, 0x4=Turning Off, 0x8=Heating, 0xC=Ventilation, 0xF=Error)
+        - Low nibble (bits 0-3): Running step (0x0=Inactive, 0x1=Fan, 0x3=Ignition, 0x5=Running, 0x7=Standby)
+        """
+        # Minimum length: 38 bytes for MVP2
+        if len(data) < 38:
             return None
 
         parsed: dict[str, Any] = {"connected": True}
 
         try:
-            # Status flags (chars 16-17)
-            if len(hex_str) >= 18:
-                status_flags = self._parse_status_flags(hex_str[16:18])
-                parsed.update(status_flags)
+            # Import MVP2 constants
+            from .const import (
+                HCALORY_RUNNING_STATUS_OFF,
+                HCALORY_RUNNING_STATUS_TURNING_OFF,
+                HCALORY_RUNNING_STATUS_HEATING,
+                HCALORY_RUNNING_STATUS_VENTILATION,
+                HCALORY_RUNNING_STATUS_ERROR,
+                HCALORY_RUNNING_STEP_INACTIVE,
+                HCALORY_RUNNING_STEP_FAN,
+                HCALORY_RUNNING_STEP_IGNITION,
+                HCALORY_RUNNING_STEP_COOLDOWN,
+                HCALORY_RUNNING_STEP_RUNNING,
+                HCALORY_RUNNING_STEP_STANDBY,
+                HCALORY_MODE_OFF,
+                HCALORY_MODE_TEMPERATURE,
+                HCALORY_MODE_LEVEL,
+                HCALORY_MODE_VENTILATION,
+            )
 
-            # Device state (chars 18-19)
-            if len(hex_str) >= 20:
-                device_state = int(hex_str[18:20], 16)
-                parsed["hcalory_device_state"] = device_state
+            # Byte 20: Complete state byte (status in high nibble, running_step in low nibble)
+            complete_state_byte = _u8_to_number(data[20])
+            status = (complete_state_byte & 0xF0) >> 4  # High nibble
+            running_step_raw = complete_state_byte & 0x0F  # Low nibble
 
-                # Map to running_state
-                if device_state == HCALORY_STATE_STANDBY:
-                    parsed["running_state"] = 0
-                    parsed["running_step"] = 0  # Standby
-                elif device_state == HCALORY_STATE_MACHINE_FAULT:
-                    parsed["running_state"] = 0
-                    # Error code will be in operative state
-                else:
-                    parsed["running_state"] = 1
+            # Synthetic COOLDOWN state: when status is TURNING_OFF, set running_step to COOLDOWN
+            if status == HCALORY_RUNNING_STATUS_TURNING_OFF:
+                running_step = HCALORY_RUNNING_STEP_COOLDOWN
+            else:
+                running_step = running_step_raw
 
-                # Map to running_mode
-                if device_state == HCALORY_STATE_HEATING_TEMP_AUTO:
-                    parsed["running_mode"] = RUNNING_MODE_TEMPERATURE
-                elif device_state == HCALORY_STATE_HEATING_MANUAL_GEAR:
-                    parsed["running_mode"] = RUNNING_MODE_LEVEL
-                elif device_state == HCALORY_STATE_NATURAL_WIND:
-                    parsed["running_mode"] = RUNNING_MODE_MANUAL  # Fan-only
-                else:
-                    parsed["running_mode"] = RUNNING_MODE_MANUAL
+            # Store raw values for diagnostics
+            parsed["hcalory_status"] = status
+            parsed["hcalory_running_step"] = running_step
 
-            # Temp or gear (chars 20-21)
-            if len(hex_str) >= 22:
-                temp_or_gear = int(hex_str[20:22], 16)
+            # Map status to running_state (0=off, 1=on)
+            if status in (HCALORY_RUNNING_STATUS_OFF, HCALORY_RUNNING_STATUS_ERROR):
+                parsed["running_state"] = 0
+            else:
+                parsed["running_state"] = 1
+
+            # Map running_step to standard running_step
+            # MVP2 steps: 0x0=Inactive, 0x1=Fan, 0x3=Ignition, 0x4=Cooldown, 0x5=Running, 0x7=Standby
+            # Standard steps: 0=Standby, 1=Self-test, 2=Ignition, 3=Running, 4=Cooldown, 6=Ventilation
+            step_mapping = {
+                HCALORY_RUNNING_STEP_INACTIVE: 0,  # Standby
+                HCALORY_RUNNING_STEP_FAN: 6,  # Ventilation/Fan
+                HCALORY_RUNNING_STEP_IGNITION: 2,  # Ignition
+                HCALORY_RUNNING_STEP_COOLDOWN: 4,  # Cooldown
+                HCALORY_RUNNING_STEP_RUNNING: 3,  # Running
+                HCALORY_RUNNING_STEP_STANDBY: 0,  # Standby
+            }
+            parsed["running_step"] = step_mapping.get(running_step, running_step)
+
+            # Byte 21: Set mode (0=Off, 1=Temperature, 2=Level, 3=Ventilation)
+            set_mode = _u8_to_number(data[21])
+            parsed["hcalory_set_mode"] = set_mode
+
+            # Map set_mode to running_mode
+            if set_mode == HCALORY_MODE_TEMPERATURE:
+                parsed["running_mode"] = RUNNING_MODE_TEMPERATURE
+            elif set_mode == HCALORY_MODE_LEVEL:
+                parsed["running_mode"] = RUNNING_MODE_LEVEL
+            elif set_mode == HCALORY_MODE_VENTILATION:
+                parsed["running_mode"] = RUNNING_MODE_MANUAL  # Fan-only
+            else:
+                parsed["running_mode"] = RUNNING_MODE_MANUAL
+
+            # Byte 22: Set value (temperature or gear) - BUT can be None when heater is OFF
+            set_value_raw = _u8_to_number(data[22])
+
+            # Critical: set_value is None when heater is OFF, TURNING_OFF, or ERROR (@Xev's discovery)
+            if complete_state_byte == HCALORY_RUNNING_STATUS_OFF or status in (HCALORY_RUNNING_STATUS_TURNING_OFF, HCALORY_RUNNING_STATUS_ERROR):
+                # Heater is OFF - don't parse set_value (coordinator must remember last value)
+                parsed["hcalory_set_value_none"] = True
+            else:
+                # Heater is ON - parse set_value based on mode
                 if parsed.get("running_mode") == RUNNING_MODE_TEMPERATURE:
-                    parsed["set_temp"] = max(8, min(36, temp_or_gear))
+                    parsed["set_temp"] = max(8, min(36, set_value_raw))
                 else:
                     # Hcalory uses 1-6 gear levels, map to 1-10
-                    hcalory_level = max(HCALORY_MIN_LEVEL, min(HCALORY_MAX_LEVEL, temp_or_gear))
-                    # Map 1-6 to 1-10 scale (roughly: 1->2, 2->4, 3->5, 4->6, 5->8, 6->10)
+                    hcalory_level = max(HCALORY_MIN_LEVEL, min(HCALORY_MAX_LEVEL, set_value_raw))
                     parsed["set_level"] = self._map_hcalory_to_standard_level(hcalory_level)
                     parsed["hcalory_gear"] = hcalory_level
 
-            # Auto start/stop (chars 22-23)
-            if len(hex_str) >= 24:
-                parsed["auto_start_stop"] = (int(hex_str[22:24], 16) == 1)
+            # Byte 23: Auto start/stop (1=enabled, 2=disabled per @Xev's analysis)
+            auto_byte = _u8_to_number(data[23])
+            parsed["auto_start_stop"] = (auto_byte == 2)  # 2 = enabled (per dump analysis)
 
-            # Voltage (chars 24-27, 4 chars = 16-bit, /10)
-            if len(hex_str) >= 28:
-                voltage_raw = int(hex_str[24:28], 16)
-                parsed["supply_voltage"] = voltage_raw / 10.0
+            # Bytes 24-25: Voltage (uint16 LE, /10)
+            voltage_raw = (_u8_to_number(data[24]) | (_u8_to_number(data[25]) << 8))
+            parsed["supply_voltage"] = voltage_raw / 10.0
 
-            # Shell/Case temperature sign (chars 28-29) and value (chars 30-33)
-            if len(hex_str) >= 34:
-                shell_sign = hex_str[28:30]
-                shell_value = int(hex_str[30:34], 16)
-                sign = -1 if shell_sign == "01" else 1
-                parsed["case_temperature"] = (sign * shell_value) / 10.0
+            # Bytes 27-28: Shell/Case temperature (uint16 LE, /10)
+            case_temp_raw = (_u8_to_number(data[27]) | (_u8_to_number(data[28]) << 8))
+            parsed["case_temperature"] = case_temp_raw / 10.0
 
-            # Ambient/Cabin temperature sign (chars 34-35) and value (chars 36-39)
-            if len(hex_str) >= 40:
-                ambient_sign = hex_str[34:36]
-                ambient_value = int(hex_str[36:40], 16)
-                sign = -1 if ambient_sign == "01" else 1
-                parsed["cab_temperature"] = (sign * ambient_value) / 10.0
+            # Bytes 30-31: Ambient/Cabin temperature (uint16 LE, /10)
+            ambient_raw = (_u8_to_number(data[30]) | (_u8_to_number(data[31]) << 8))
+            parsed["cab_temperature"] = ambient_raw / 10.0
 
-            # Highland mode (chars 48-49)
-            if len(hex_str) >= 50:
-                parsed["high_altitude"] = int(hex_str[48:50], 16)
+            # Byte 18: Altitude mode
+            if len(data) > 18:
+                parsed["high_altitude"] = _u8_to_number(data[18])
 
-            # Temperature unit (chars 50-51)
-            if len(hex_str) >= 52:
-                parsed["temp_unit"] = int(hex_str[50:52], 16)
+            # Byte 37: Temperature unit (0=C, 1=F)
+            if len(data) > 37:
+                parsed["temp_unit"] = _u8_to_number(data[37])
 
-            # MVP2 extended fields (chars 52-59)
-            if len(hex_str) >= 60:
-                # Height unit (chars 52-53)
-                parsed["altitude_unit"] = int(hex_str[52:54], 16)
-
-                # Altitude sign (chars 54-55) and value (chars 56-59)
-                altitude_sign = hex_str[54:56]
-                altitude_value = int(hex_str[56:60], 16)
-                sign = -1 if altitude_sign == "01" else 1
-                parsed["altitude"] = sign * altitude_value
-
-            # Check for error state
-            if parsed.get("hcalory_device_state") == HCALORY_STATE_MACHINE_FAULT:
-                # Error code from operative state bits
-                op_bits = parsed.get("operative_state_bits", "00")
-                parsed["error_code"] = int(op_bits, 2) if op_bits else 0
+            # Error handling: when status == ERROR (0xF), byte 22 contains error code
+            if status == HCALORY_RUNNING_STATUS_ERROR:
+                parsed["error_code"] = set_value_raw
             else:
                 parsed["error_code"] = 0
 
-        except (ValueError, IndexError):
+        except (ValueError, IndexError) as e:
             # Parse error - return minimal data
             parsed["_hcalory_parse_error"] = True
+            parsed["_parse_error_msg"] = str(e)
 
         return parsed
 
-    @staticmethod
-    def _parse_status_flags(flags_hex: str) -> dict[str, Any]:
-        """Parse Hcalory status flags byte (bit-reversed).
-
-        Returns dict with:
-        - heating_is_starting: bool
-        - heating_is_stopping: bool
-        - fan_is_running: bool
-        - ignition_plug_running: bool
-        - oil_pump_running: bool
-        - operative_state_bits: str (2-char binary)
-        """
-        result: dict[str, Any] = {}
-        try:
-            flags_byte = int(flags_hex, 16)
-            # Reverse the bits
-            reversed_binary = format(flags_byte, '08b')[::-1]
-
-            result["heating_is_starting"] = reversed_binary[0] == '1'
-            result["heating_is_stopping"] = reversed_binary[1] == '1'
-            result["fan_is_running"] = reversed_binary[2] == '1'
-            result["ignition_plug_running"] = reversed_binary[3] == '1'
-            result["oil_pump_running"] = reversed_binary[4] == '1'
-            result["operative_state_bits"] = reversed_binary[6:8]
-
-            # Map operative state to running_step
-            op_state = reversed_binary[6:8]
-            if op_state == "00":
-                result["running_step"] = 0  # Stopped
-            elif op_state == "01":
-                result["running_step"] = 3  # Running/Heating
-            elif op_state == "10":
-                result["running_step"] = 4  # Cooldown
-            elif op_state == "11":
-                result["running_step"] = 6  # Fan/Natural wind
-
-        except (ValueError, IndexError):
-            pass
-
-        return result
 
     @staticmethod
     def _map_hcalory_to_standard_level(hcalory_level: int) -> int:
@@ -1378,3 +1349,125 @@ class ProtocolHcalory(HeaterProtocol):
         packet.append(checksum)
 
         return packet
+
+    # -------------------------
+    # Convenience command builders (@Xev's improvements from issue #34)
+    # -------------------------
+
+    def set_temperature_celsius(self, temp: int) -> bytearray:
+        """Set temperature in Celsius mode.
+
+        Args:
+            temp: Temperature in Celsius (8-36)
+
+        Returns:
+            Command packet to set temperature
+        """
+        temp_clamped = max(8, min(36, temp))
+        # Use CMD_SET_TEMP (0x0706) with [temp, unit=0]
+        from .const import HCALORY_CMD_SET_TEMP
+        return self._build_hcalory_cmd(
+            HCALORY_CMD_SET_TEMP,
+            bytes([temp_clamped, 0x00])  # temp, unit=Celsius
+        )
+
+    def set_temperature_fahrenheit(self, temp_f: int) -> bytearray:
+        """Set temperature in Fahrenheit mode.
+
+        Args:
+            temp_f: Temperature in Fahrenheit
+
+        Returns:
+            Command packet to set temperature
+        """
+        from .const import HCALORY_CMD_SET_TEMP
+        return self._build_hcalory_cmd(
+            HCALORY_CMD_SET_TEMP,
+            bytes([temp_f, 0x01])  # temp, unit=Fahrenheit
+        )
+
+    def set_level_mode(self) -> bytearray:
+        """Switch to Level/Gear mode.
+
+        Returns:
+            Command packet to switch to level mode
+        """
+        from .const import HCALORY_CMD_SET_MODE, HCALORY_MODE_LEVEL
+        return self._build_hcalory_cmd(
+            HCALORY_CMD_SET_MODE,
+            bytes([HCALORY_MODE_LEVEL, 0x00])
+        )
+
+    def set_temperature_mode(self) -> bytearray:
+        """Switch to Temperature mode.
+
+        Returns:
+            Command packet to switch to temperature mode
+        """
+        from .const import HCALORY_CMD_SET_MODE, HCALORY_MODE_TEMPERATURE
+        return self._build_hcalory_cmd(
+            HCALORY_CMD_SET_MODE,
+            bytes([HCALORY_MODE_TEMPERATURE, 0x00])
+        )
+
+    def set_ventilation_mode(self) -> bytearray:
+        """Switch to Ventilation/Fan-only mode.
+
+        Note: Ventilation only works when heater is in standby/off state.
+
+        Returns:
+            Command packet to enable ventilation mode
+        """
+        from .const import HCALORY_CMD_POWER, HCALORY_POWER_VENTILATION
+        return self._build_hcalory_cmd(
+            HCALORY_CMD_POWER,
+            bytes([0, 0, 0, 0, 0, 0, 0, 0, HCALORY_POWER_VENTILATION])
+        )
+
+    def enable_auto_start_stop(self) -> bytearray:
+        """Enable automatic start/stop feature.
+
+        Returns:
+            Command packet to enable auto start/stop
+        """
+        from .const import HCALORY_CMD_POWER, HCALORY_POWER_AUTO_ENABLE
+        return self._build_hcalory_cmd(
+            HCALORY_CMD_POWER,
+            bytes([0, 0, 0, 0, 0, 0, 0, 0, HCALORY_POWER_AUTO_ENABLE])
+        )
+
+    def disable_auto_start_stop(self) -> bytearray:
+        """Disable automatic start/stop feature.
+
+        Returns:
+            Command packet to disable auto start/stop
+        """
+        from .const import HCALORY_CMD_POWER, HCALORY_POWER_AUTO_DISABLE
+        return self._build_hcalory_cmd(
+            HCALORY_CMD_POWER,
+            bytes([0, 0, 0, 0, 0, 0, 0, 0, HCALORY_POWER_AUTO_DISABLE])
+        )
+
+    def set_temperature_unit_celsius(self) -> bytearray:
+        """Set temperature display unit to Celsius.
+
+        Returns:
+            Command packet to switch to Celsius
+        """
+        from .const import HCALORY_CMD_POWER, HCALORY_POWER_CELSIUS
+        return self._build_hcalory_cmd(
+            HCALORY_CMD_POWER,
+            bytes([0, 0, 0, 0, 0, 0, 0, 0, HCALORY_POWER_CELSIUS])
+        )
+
+    def set_temperature_unit_fahrenheit(self) -> bytearray:
+        """Set temperature display unit to Fahrenheit.
+
+        Returns:
+            Command packet to switch to Fahrenheit
+        """
+        from .const import HCALORY_CMD_POWER, HCALORY_POWER_FAHRENHEIT
+        return self._build_hcalory_cmd(
+            HCALORY_CMD_POWER,
+            bytes([0, 0, 0, 0, 0, 0, 0, 0, HCALORY_POWER_FAHRENHEIT])
+        )

@@ -148,6 +148,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._v21_handshake_sent = False  # Track if Sunster V2.1 handshake was sent
         self._is_hcalory_device = False  # True if using Hcalory MVP1/MVP2 protocol
         self._hcalory_write_char = None  # Hcalory devices use separate write characteristic
+        # Hcalory returns set_value=None when heater is OFF (@Xev's discovery, issue #34)
+        # Remember last known values to restore when heater turns off
+        self._hcalory_last_set_temp: int | None = None
+        self._hcalory_last_set_level: int | None = None
         self._connection_attempts = 0
         self._last_connection_attempt = 0.0
         self._consecutive_failures = 0  # Track consecutive update failures
@@ -1361,6 +1365,29 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             )
 
         self.data.update(parsed)
+
+        # Hcalory set_value memory: restore last known values when heater is OFF
+        # (@Xev's discovery, issue #34: Hcalory returns set_value=None when OFF)
+        if self._protocol_mode == 7 and parsed.get("hcalory_set_value_none"):
+            # Heater is OFF - restore last known values
+            if self._hcalory_last_set_temp is not None:
+                self.data["set_temp"] = self._hcalory_last_set_temp
+            if self._hcalory_last_set_level is not None:
+                self.data["set_level"] = self._hcalory_last_set_level
+            self._logger.debug(
+                "Hcalory OFF: restored set_temp=%s, set_level=%s",
+                self._hcalory_last_set_temp, self._hcalory_last_set_level
+            )
+        elif self._protocol_mode == 7 and not parsed.get("hcalory_set_value_none"):
+            # Heater is ON - remember current values
+            if "set_temp" in parsed and parsed["set_temp"] is not None:
+                self._hcalory_last_set_temp = parsed["set_temp"]
+            if "set_level" in parsed and parsed["set_level"] is not None:
+                self._hcalory_last_set_level = parsed["set_level"]
+            self._logger.debug(
+                "Hcalory ON: remembered set_temp=%s, set_level=%s",
+                self._hcalory_last_set_temp, self._hcalory_last_set_level
+            )
 
         # Update coordinator state from parsed data
         if "temp_unit" in parsed:
