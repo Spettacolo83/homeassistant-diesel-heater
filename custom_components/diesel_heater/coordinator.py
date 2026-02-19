@@ -555,13 +555,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             unit_class="volume",
         )
 
-        # Parse date and create timestamp at midnight (start of hour required by HA)
+        # Parse date and create timestamp at midnight UTC (start of hour required by HA)
         try:
             date_obj = datetime.fromisoformat(date_str)
-            # Use midnight (00:00:00) - HA requires timestamps at top of hour
-            midnight = datetime.combine(date_obj.date(), datetime.min.time())
-            # Make it timezone-aware
-            timestamp = dt_util.as_utc(midnight)
+            # Create midnight UTC timestamp - HA requires timestamps at top of hour in UTC
+            # Use replace(tzinfo) instead of as_utc() to avoid timezone conversion
+            timestamp = datetime.combine(date_obj.date(), datetime.min.time()).replace(tzinfo=dt_util.UTC)
         except (ValueError, TypeError) as err:
             self._logger.error("Failed to parse date %s: %s", date_str, err)
             return
@@ -623,13 +622,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             unit_class="duration",
         )
 
-        # Parse date and create timestamp at midnight (start of hour required by HA)
+        # Parse date and create timestamp at midnight UTC (start of hour required by HA)
         try:
             date_obj = datetime.fromisoformat(date_str)
-            # Use midnight (00:00:00) - HA requires timestamps at top of hour
-            midnight = datetime.combine(date_obj.date(), datetime.min.time())
-            # Make it timezone-aware
-            timestamp = dt_util.as_utc(midnight)
+            # Create midnight UTC timestamp - HA requires timestamps at top of hour in UTC
+            # Use replace(tzinfo) instead of as_utc() to avoid timezone conversion
+            timestamp = datetime.combine(date_obj.date(), datetime.min.time()).replace(tzinfo=dt_util.UTC)
         except (ValueError, TypeError) as err:
             self._logger.error("Failed to parse date %s: %s", date_str, err)
             return
