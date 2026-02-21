@@ -1671,8 +1671,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 self._protocol.mark_password_sent()
 
                 # Auto-sync time on reconnect (feature request from @Wheemer, issue #38)
+                # Wait briefly to let heater initialize after handshake (fix for #38: 1hr offset bug)
                 if not self._time_synced_this_session:
                     try:
+                        await asyncio.sleep(0.5)  # Give heater time to initialize
                         await self.async_sync_time()
                         self._time_synced_this_session = True
                     except Exception as sync_err:

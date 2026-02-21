@@ -254,7 +254,12 @@ class VevorCurrentFuelLevelNumber(CoordinatorEntity[VevorHeaterCoordinator], Num
     @property
     def native_value(self) -> float | None:
         """Return the current estimated fuel remaining."""
-        return self.coordinator.data.get("estimated_fuel_remaining")
+        estimated = self.coordinator.data.get("estimated_fuel_remaining")
+        if estimated is not None:
+            return estimated
+        # If no fuel tracking data yet, assume tank is full
+        capacity = self.coordinator.data.get("tank_capacity", 0)
+        return capacity if capacity > 0 else None
 
     async def async_set_native_value(self, value: float) -> None:
         """Set new current fuel level (updates consumed counter)."""
