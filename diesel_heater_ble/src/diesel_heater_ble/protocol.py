@@ -947,8 +947,8 @@ class ProtocolHcalory(HeaterProtocol):
         - Byte 22: Set value (temperature or gear level)
         - Byte 23: Auto start/stop (1=on, 2=off per @Xev's dumps)
         - Bytes 24-25: Voltage (uint16 LE, /10)
-        - Bytes 27-28: Shell/Case temperature (uint16 LE, /10)
-        - Bytes 30-31: Ambient/Cabin temperature (uint16 LE, /10)
+        - Bytes 27-28: Shell/Case temperature (uint16 BE, /100) [corrected beta.25]
+        - Bytes 30-31: Ambient/Cabin temperature (uint16 BE, /100) [corrected beta.25]
         - Byte 37: Temperature unit (0=C, 1=F)
 
         Status byte (byte 20) parsing:
@@ -1055,13 +1055,15 @@ class ProtocolHcalory(HeaterProtocol):
             voltage_raw = (_u8_to_number(data[24]) | (_u8_to_number(data[25]) << 8))
             parsed["supply_voltage"] = voltage_raw / 10.0
 
-            # Bytes 27-28: Shell/Case temperature (uint16 LE, /10)
-            case_temp_raw = (_u8_to_number(data[27]) | (_u8_to_number(data[28]) << 8))
-            parsed["case_temperature"] = case_temp_raw / 10.0
+            # Bytes 27-28: Shell/Case temperature (uint16 BE, /100)
+            # Fixed beta.25: was LE/10 causing 2714°C readings, correct is BE/100 for ~24°C
+            case_temp_raw = ((_u8_to_number(data[27]) << 8) | _u8_to_number(data[28]))
+            parsed["case_temperature"] = case_temp_raw / 100.0
 
-            # Bytes 30-31: Ambient/Cabin temperature (uint16 LE, /10)
-            ambient_raw = (_u8_to_number(data[30]) | (_u8_to_number(data[31]) << 8))
-            parsed["cab_temperature"] = ambient_raw / 10.0
+            # Bytes 30-31: Ambient/Cabin temperature (uint16 BE, /100)
+            # Fixed beta.25: was LE/10 causing 5069°C readings, correct is BE/100 for ~7°C
+            ambient_raw = ((_u8_to_number(data[30]) << 8) | _u8_to_number(data[31]))
+            parsed["cab_temperature"] = ambient_raw / 100.0
 
             # Byte 18: Altitude mode
             if len(data) > 18:
