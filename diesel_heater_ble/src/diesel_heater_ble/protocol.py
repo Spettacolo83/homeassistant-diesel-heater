@@ -1193,6 +1193,19 @@ class ProtocolHcalory(HeaterProtocol):
                 bytes([0, 0, 0, 0, 0, 0, 0, 0, temp_unit_arg])
             )
 
+        # Time sync (cmd 10) - MVP2 uses query command with timestamp to sync time
+        # The query packet (dpID 0x0A0A) contains HH:MM:SS:DOW which the heater uses to sync
+        if command == 10:
+            if self._is_mvp2:
+                # MVP2: Send query with current timestamp (heater syncs from it)
+                return self._build_mvp2_query_cmd()
+            else:
+                # MVP1: Fallback to query (MVP1 may not support explicit time sync)
+                return self._build_hcalory_cmd(
+                    HCALORY_CMD_POWER,
+                    bytes([0, 0, 0, 0, 0, 0, 0, 0, HCALORY_POWER_QUERY])
+                )
+
         # Set altitude (cmd 14)
         if command == 14:
             # argument is altitude in meters
