@@ -41,6 +41,7 @@ async def async_setup_entry(
         VevorHeaterLevelNumber(coordinator),
         VevorHeaterTemperatureNumber(coordinator),
         VevorTankCapacityNumber(coordinator),
+        VevorCurrentFuelLevelNumber(coordinator),
     ]
 
     # Offset number (encrypted + CBFF protocols only)
@@ -207,6 +208,57 @@ class VevorTankCapacityNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberE
     async def async_set_native_value(self, value: float) -> None:
         """Set new value."""
         await self.coordinator.async_set_tank_capacity(int(value))
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+
+class VevorCurrentFuelLevelNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberEntity):
+    """Current fuel level number entity for manual fuel level input.
+
+    Allows the user to manually set the current fuel level in the tank.
+    Useful for partial refills (e.g., adding 5L without filling completely).
+
+    When set, updates the internal fuel consumed counter:
+    new_consumed = capacity - manual_level
+
+    Feature requested by @Wheemer in issue #38.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Current Fuel Level"
+    _attr_icon = "mdi:fuel"
+    _attr_native_unit_of_measurement = UnitOfVolume.LITERS
+    _attr_native_min_value = 0
+    _attr_native_step = 0.5  # Allow half-liter precision
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the number entity."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_current_fuel_level"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, coordinator.address)},
+            "name": "Vevor Diesel Heater",
+            "manufacturer": "Vevor",
+            "model": "Diesel Heater",
+        }
+
+    @property
+    def native_max_value(self) -> float:
+        """Return the dynamic max value based on tank capacity."""
+        capacity = self.coordinator.data.get("tank_capacity", 0)
+        return max(1, capacity)  # Ensure at least 1L as max
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the current estimated fuel remaining."""
+        return self.coordinator.data.get("estimated_fuel_remaining")
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Set new current fuel level (updates consumed counter)."""
+        await self.coordinator.async_set_current_fuel_level(value)
 
     @callback
     def _handle_coordinator_update(self) -> None:

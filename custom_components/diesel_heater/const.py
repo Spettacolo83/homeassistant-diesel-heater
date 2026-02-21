@@ -202,7 +202,10 @@ BACKLIGHT_OPTIONS: Final = {
 }
 
 # Update interval
-UPDATE_INTERVAL: Final = 30  # seconds
+# Reduced from 30s to 15s based on @Xev's analysis (issue #34) showing
+# Android app polls more frequently. For MVP2, heater broadcasts status
+# every ~2s automatically, so this is mainly timeout/fallback interval.
+UPDATE_INTERVAL: Final = 15  # seconds
 
 # Fuel consumption tracking (minimal - consumption only)
 # Consumption rates in L/h based on VEVOR specs (0.16-0.52 L/h range)

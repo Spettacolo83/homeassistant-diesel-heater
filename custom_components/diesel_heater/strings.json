@@ -194,6 +194,9 @@
       },
       "tank_capacity": {
         "name": "Tank Capacity"
+      },
+      "current_fuel_level": {
+        "name": "Current Fuel Level"
       }
     },
     "select": {

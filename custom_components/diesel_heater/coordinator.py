@@ -155,6 +155,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._connection_attempts = 0
         self._last_connection_attempt = 0.0
         self._consecutive_failures = 0  # Track consecutive update failures
+        self._time_synced_this_session = False  # Track if time was synced after connection
         self._max_stale_cycles = 3  # Keep last values for this many failed cycles
         self._last_valid_data: dict[str, Any] = {}  # Cache of last valid sensor readings
         self._heater_uses_fahrenheit: bool = False  # Detected from heater response
@@ -740,6 +741,43 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._update_fuel_remaining()
         await self.async_save_data()
         self._logger.info("⛽ Tank capacity set to %dL", capacity)
+        self.async_set_updated_data(self.data)
+
+    async def async_set_current_fuel_level(self, current_level: float) -> None:
+        """Set the current fuel level manually (for partial refills).
+
+        Updates the internal fuel consumed counter to reflect the new level.
+        Useful when adding fuel without completely filling the tank.
+
+        Feature requested by @Wheemer in issue #38.
+
+        Args:
+            current_level: Current fuel level in liters (0 to tank_capacity)
+        """
+        capacity = self.data.get("tank_capacity", 0)
+        if capacity == 0:
+            self._logger.warning("Cannot set fuel level: tank capacity not configured")
+            return
+
+        # Clamp value between 0 and capacity
+        current_level = max(0, min(capacity, current_level))
+
+        # Calculate new consumed: capacity - current_level
+        new_consumed = capacity - current_level
+
+        # Update internal counter
+        self._total_fuel_consumed = new_consumed
+
+        # Recalculate estimated remaining
+        self._update_fuel_remaining()
+
+        # Save to persistent storage
+        await self.async_save_data()
+
+        self._logger.info(
+            "⛽ Manual fuel level set to %.1fL (consumed: %.2fL)",
+            current_level, new_consumed
+        )
         self.async_set_updated_data(self.data)
 
     def _update_runtime_tracking(self, elapsed_seconds: float) -> None:
@@ -1487,6 +1525,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     self._protocol.reset_password_state()
                 # Reset V2.1 handshake state on reconnect
                 self._v21_handshake_sent = False
+                # Reset time sync flag to trigger auto-sync on next connection
+                self._time_synced_this_session = False
 
     async def _send_v21_handshake(self, packet: bytearray) -> None:
         """Send Sunster V2.1 handshake packet asynchronously."""
@@ -1595,23 +1635,28 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 await self._write_gatt(password_packet)
 
                 # CRITICAL: Wait for handshake response 0B0C (header 0003)
-                # Wireshark analysis shows response arrives in 2+ seconds
-                # Format: 00-03-00-01-00-01-00-0B-0C-... (header=0x0003, cmd=0x0B0C)
-                handshake_timeout = 5.0  # seconds
+                # @Xev's analysis shows Android app completes handshake in ~1.5s
+                # Format: 00-03-00-01-00-01-00-0B-0C-00-00-06-01-[password]-[auth]-[checksum]
+                # Auth byte: 0x00 = unauthenticated, 0x01 = authenticated
+                handshake_timeout = 2.5  # seconds (reduced from 5.0 based on @Xev analysis)
                 iterations = int(handshake_timeout / 0.1)
                 handshake_received = False
 
                 for i in range(iterations):
                     await asyncio.sleep(0.1)
-                    if self._notification_data and len(self._notification_data) >= 8:
+                    if self._notification_data and len(self._notification_data) >= 17:
                         # Check for response header 0x0003 and command 0x0B0C
                         header = (self._notification_data[0] << 8) | self._notification_data[1]
                         cmd = (self._notification_data[6] << 8) | self._notification_data[7]
 
                         if header == 0x0003 and cmd == 0x0B0C:
+                            # Parse authentication status (@Xev discovery, issue #34)
+                            auth_byte = self._notification_data[15] if len(self._notification_data) > 15 else 0xFF
+                            auth_status = "authenticated ✅" if auth_byte == 0x01 else "unauthenticated ❌" if auth_byte == 0x00 else f"unknown (0x{auth_byte:02X})"
+
                             self._logger.info(
-                                "✅ MVP2 password handshake ACK received after %.1fs: %s",
-                                i * 0.1, self._notification_data.hex()
+                                "✅ MVP2 password handshake ACK received after %.1fs - Status: %s - Packet: %s",
+                                i * 0.1, auth_status, self._notification_data.hex()
                             )
                             handshake_received = True
                             break
@@ -1624,6 +1669,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     # Don't fail - some devices might not send ACK
 
                 self._protocol.mark_password_sent()
+
+                # Auto-sync time on reconnect (feature request from @Wheemer, issue #38)
+                if not self._time_synced_this_session:
+                    try:
+                        await self.async_sync_time()
+                        self._time_synced_this_session = True
+                    except Exception as sync_err:
+                        self._logger.debug("Auto time sync failed (non-critical): %s", sync_err)
 
                 # CRITICAL FIX: For Hcalory MVP2 status queries (command=1),
                 # the heater broadcasts status automatically every ~2 seconds.
