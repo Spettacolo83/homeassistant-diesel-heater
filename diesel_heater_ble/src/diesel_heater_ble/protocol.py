@@ -947,8 +947,8 @@ class ProtocolHcalory(HeaterProtocol):
         - Byte 22: Set value (temperature or gear level)
         - Byte 23: Auto start/stop (1=on, 2=off per @Xev's dumps)
         - Bytes 24-25: Voltage (uint16 LE, /10)
-        - Bytes 27-28: Shell/Case temperature (uint16 BE, /100) [corrected beta.25]
-        - Bytes 30-31: Ambient/Cabin temperature (uint16 BE, /100) [corrected beta.25]
+        - Bytes 27-28: Shell/Case temperature (uint16 BE, //10, unit from byte 37) [beta.26]
+        - Bytes 30-31: Ambient/Cabin temperature (uint16 BE, //10, unit from byte 37) [beta.26]
         - Byte 37: Temperature unit (0=C, 1=F)
 
         Status byte (byte 20) parsing:
@@ -1055,15 +1055,17 @@ class ProtocolHcalory(HeaterProtocol):
             voltage_raw = (_u8_to_number(data[24]) | (_u8_to_number(data[25]) << 8))
             parsed["supply_voltage"] = voltage_raw / 10.0
 
-            # Bytes 27-28: Shell/Case temperature (uint16 BE, /100)
-            # Fixed beta.25: was LE/10 causing 2714°C readings, correct is BE/100 for ~24°C
+            # Bytes 27-28: Shell/Case temperature (uint16 BE, /10, in unit from byte 37)
+            # Fixed beta.26: Corrected to /10 per @Xev analysis. Values are in F or C based on byte 37.
+            # @Xev: shell_temp = ((data[27] << 8) | data[28]) // 10
             case_temp_raw = ((_u8_to_number(data[27]) << 8) | _u8_to_number(data[28]))
-            parsed["case_temperature"] = case_temp_raw / 100.0
+            parsed["case_temperature"] = case_temp_raw // 10  # Integer division, unit from byte 37
 
-            # Bytes 30-31: Ambient/Cabin temperature (uint16 BE, /100)
-            # Fixed beta.25: was LE/10 causing 5069°C readings, correct is BE/100 for ~7°C
+            # Bytes 30-31: Ambient/Cabin temperature (uint16 BE, /10, in unit from byte 37)
+            # Fixed beta.26: Corrected to /10 per @Xev analysis. Values are in F or C based on byte 37.
+            # @Xev: ambient = ((data[30] << 8) | data[31]) // 10
             ambient_raw = ((_u8_to_number(data[30]) << 8) | _u8_to_number(data[31]))
-            parsed["cab_temperature"] = ambient_raw / 100.0
+            parsed["cab_temperature"] = ambient_raw // 10  # Integer division, unit from byte 37
 
             # Byte 18: Altitude mode
             if len(data) > 18:

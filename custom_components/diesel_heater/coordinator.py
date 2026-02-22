@@ -1404,6 +1404,29 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         self.data.update(parsed)
 
+        # Convert Hcalory MVP2 temperatures from Fahrenheit to Celsius if needed
+        # (@Xev analysis: temp_unit byte 37: 0=C, 1=F. Temps are integers in heater's unit)
+        if self._protocol_mode == 7 and parsed.get("temp_unit") == 1:
+            # Heater uses Fahrenheit - convert to Celsius for HA display
+            if "case_temperature" in parsed and parsed["case_temperature"] is not None:
+                temp_f = parsed["case_temperature"]
+                temp_c = round((temp_f - 32) * 5 / 9, 1)
+                self.data["case_temperature"] = temp_c
+                self._logger.debug("Converted case_temperature: %d°F → %.1f°C", temp_f, temp_c)
+
+            if "cab_temperature" in parsed and parsed["cab_temperature"] is not None:
+                temp_f = parsed["cab_temperature"]
+                temp_c = round((temp_f - 32) * 5 / 9, 1)
+                self.data["cab_temperature"] = temp_c
+                self._logger.debug("Converted cab_temperature: %d°F → %.1f°C", temp_f, temp_c)
+
+            # Target temperature (set_temp) is also in Fahrenheit if mode is Temperature
+            if "set_temp" in parsed and parsed["set_temp"] is not None:
+                temp_f = parsed["set_temp"]
+                temp_c = round((temp_f - 32) * 5 / 9, 1)
+                self.data["set_temp"] = temp_c
+                self._logger.debug("Converted set_temp: %d°F → %.1f°C", temp_f, temp_c)
+
         # Hcalory set_value memory: restore last known values when heater is OFF
         # (@Xev's discovery, issue #34: Hcalory returns set_value=None when OFF)
         if self._protocol_mode == 7 and parsed.get("hcalory_set_value_none"):
