@@ -32,8 +32,11 @@ async def async_setup_entry(
     # Core switches (all protocols)
     entities: list[SwitchEntity] = [
         VevorHeaterPowerSwitch(coordinator),
-        VevorAutoOffsetSwitch(coordinator),
     ]
+
+    # Auto Temperature Offset (not available for Hcalory - @Xev, issue #34)
+    if mode != 7:
+        entities.append(VevorAutoOffsetSwitch(coordinator))
 
     # Auto Start/Stop (AA66Encrypted, ABBA, CBFF, Hcalory)
     if mode in (0, 4, 5, 6, 7):

@@ -14,6 +14,7 @@ from . import VevorHeaterConfigEntry
 from .const import (
     BACKLIGHT_OPTIONS,
     DOMAIN,
+    HIGH_ALTITUDE_MODE_OPTIONS,
     LANGUAGE_OPTIONS,
     PUMP_TYPE_OPTIONS,
     RUNNING_MODE_LEVEL,
@@ -58,6 +59,11 @@ async def async_setup_entry(
     # Backlight select (encrypted + CBFF protocols)
     if mode in (0, 2, 4, 6):
         entities.append(VevorBacklightSelect(coordinator))
+
+    # High Altitude Mode (Hcalory MVP2 only - 3 modes: Disabled, Mode 1, Mode 2)
+    # @Xev: Hcalory needs selector instead of binary switch (issue #34)
+    if mode == 7:
+        entities.append(VevorHighAltitudeModeSelect(coordinator))
 
     async_add_entities(entities)
 
@@ -381,6 +387,67 @@ class VevorBacklightSelect(SelectEntity):
                 await self.coordinator.async_set_backlight(value)
                 return
         _LOGGER.error("Unknown backlight option: %s", option)
+
+    async def async_added_to_hass(self) -> None:
+        """When entity is added to hass."""
+        self.async_on_remove(
+            self.coordinator.async_add_listener(self._handle_coordinator_update)
+        )
+
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+
+class VevorHighAltitudeModeSelect(SelectEntity):
+    """High Altitude Mode select entity (Hcalory MVP2 only).
+
+    Hcalory has 3 altitude modes instead of binary on/off:
+    - Disabled (0): Normal operation
+    - Mode 1 (1): High altitude compensation level 1
+    - Mode 2 (2): High altitude compensation level 2
+
+    Per @Xev analysis (issue #34): Cannot switch directly from Disabled to Mode 2
+    with a binary switch, so selector is needed.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "High Altitude Mode"
+    _attr_icon = "mdi:mountain"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the select entity."""
+        self.coordinator = coordinator
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, coordinator.address)},
+        }
+        self._attr_unique_id = f"{coordinator.address}_high_altitude_mode"
+        self._attr_options = list(HIGH_ALTITUDE_MODE_OPTIONS.values())
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        return self.coordinator.data.get("high_altitude") is not None
+
+    @property
+    def current_option(self) -> str | None:
+        """Return the current high altitude mode."""
+        altitude = self.coordinator.data.get("high_altitude")
+        if altitude is not None:
+            if altitude in HIGH_ALTITUDE_MODE_OPTIONS:
+                return HIGH_ALTITUDE_MODE_OPTIONS[altitude]
+            return str(altitude)
+        return None
+
+    async def async_select_option(self, option: str) -> None:
+        """Change the high altitude mode."""
+        for value, name in HIGH_ALTITUDE_MODE_OPTIONS.items():
+            if name == option:
+                _LOGGER.info("Setting high altitude mode to: %s (value: %d)", option, value)
+                await self.coordinator.async_set_altitude_mode(value)
+                return
+        _LOGGER.error("Unknown high altitude mode option: %s", option)
 
     async def async_added_to_hass(self) -> None:
         """When entity is added to hass."""

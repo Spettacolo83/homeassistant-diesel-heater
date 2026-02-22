@@ -201,11 +201,24 @@ BACKLIGHT_OPTIONS: Final = {
     100: "100",
 }
 
+# High Altitude Mode options (Hcalory MVP2 - @Xev, issue #34)
+# Hcalory has 3 altitude modes instead of binary on/off
+HIGH_ALTITUDE_MODE_OPTIONS: Final = {
+    0: "Disabled",
+    1: "Mode 1",
+    2: "Mode 2",
+}
+
 # Update interval
 # Reduced from 30s to 15s based on @Xev's analysis (issue #34) showing
 # Android app polls more frequently. For MVP2, heater broadcasts status
 # every ~2s automatically, so this is mainly timeout/fallback interval.
-UPDATE_INTERVAL: Final = 15  # seconds
+UPDATE_INTERVAL: Final = 15  # seconds (default for most protocols)
+
+# Hcalory-specific update interval (@Xev analysis: needs faster polling)
+# Android app polls ~1.5-2s, heater broadcasts ~2s. 5s provides better
+# stability than 15s while not overloading the BLE connection.
+UPDATE_INTERVAL_HCALORY: Final = 5  # seconds (Hcalory MVP1/MVP2 only)
 
 # Fuel consumption tracking (minimal - consumption only)
 # Consumption rates in L/h based on VEVOR specs (0.16-0.52 L/h range)
