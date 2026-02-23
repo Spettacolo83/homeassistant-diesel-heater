@@ -228,6 +228,12 @@ HCALORY_POWER_CELSIUS: Final = 0x0A
 HCALORY_POWER_FAHRENHEIT: Final = 0x0B
 HCALORY_POWER_QUERY_ALTITUDE: Final = 0x0D
 
+# Hcalory altitude mode states (@Xev, issue #34)
+HCALORY_ALTITUDE_OFF: Final = 0x00
+HCALORY_ALTITUDE_MODE_1: Final = 0x01
+HCALORY_ALTITUDE_MODE_2: Final = 0x02
+HCALORY_ALTITUDE_TOGGLE_CMD: Final = 0x09  # Command value for toggle
+
 # Hcalory MVP2 Running Status (byte 20, high nibble) - @Xev analysis (issue #34)
 HCALORY_RUNNING_STATUS_OFF: Final = 0x00
 HCALORY_RUNNING_STATUS_TURNING_OFF: Final = 0x04

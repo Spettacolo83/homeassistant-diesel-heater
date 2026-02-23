@@ -1940,16 +1940,30 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     async def async_sync_time(self) -> None:
         """Sync heater time with Home Assistant time (cmd 10).
 
-        The time is sent as: 60 * hours + minutes
-        Example: 14:30 = 60 * 14 + 30 = 870
+        AAXX/CBFF protocols: Time sent as 60 * hours + minutes
+        Hcalory MVP2: Time sent as HH, MM, SS, DOW bytes in query packet
         """
         # Beta.29 fix: Use dt_util.now() for correct local timezone (issue #38)
         # datetime.now() uses UTC in Docker containers → 5hr offset for EST users
         now = dt_util.now()
-        time_value = 60 * now.hour + now.minute
-        self._logger.info("Syncing heater time to %02d:%02d (value=%d)", now.hour, now.minute, time_value)
-        # Command 10 for time sync
-        success = await self._send_command(10, time_value)
+
+        # Beta.31 fix: Hcalory uses HH,MM,SS,DOW format in query packet (@Xev, issue #34)
+        if self._protocol_mode == 7:
+            # For Hcalory MVP2, set custom timestamp for next query command
+            self._protocol.set_query_timestamp(now)
+            self._logger.info(
+                "Syncing Hcalory time to %02d:%02d:%02d DOW=%d",
+                now.hour, now.minute, now.second, now.isoweekday()
+            )
+            success = await self._send_command(10, 0)  # argument ignored for Hcalory
+            # Reset custom timestamp after use
+            self._protocol.set_query_timestamp(None)
+        else:
+            # AAXX/CBFF: time_value = 60 * hour + minute
+            time_value = 60 * now.hour + now.minute
+            self._logger.info("Syncing heater time to %02d:%02d (value=%d)", now.hour, now.minute, time_value)
+            success = await self._send_command(10, time_value)
+
         if success:
             self._logger.info("✅ Time sync successful")
         else:
@@ -2059,7 +2073,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """Set high altitude mode for Hcalory MVP2 (0=Disabled, 1=Mode 1, 2=Mode 2).
 
         Hcalory has 3 altitude compensation modes instead of binary on/off.
-        Per @Xev analysis (issue #34): Need selector to switch between all 3 modes.
+        Per @Xev analysis (issue #34): Uses toggle command cycling through states.
+
+        Cycling state machine: OFF(0) → MODE_1(1) → MODE_2(2) → OFF(0)
 
         Args:
             mode: Altitude mode (0=Disabled, 1=Mode 1, 2=Mode 2)
@@ -2068,18 +2084,37 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._logger.warning("High altitude mode selector is only available for Hcalory MVP2 devices")
             return
 
-        mode = max(0, min(2, mode))  # Clamp to valid range
+        target = max(0, min(2, mode))  # Clamp to valid range
+        current = self.data.get("high_altitude", 0)
         mode_names = {0: "Disabled", 1: "Mode 1", 2: "Mode 2"}
-        mode_name = mode_names.get(mode, str(mode))
 
-        self._logger.info("🏔️ Setting high altitude mode to %s (value: %d)", mode_name, mode)
+        # Nothing to do if already at target state
+        if current == target:
+            self._logger.debug("High altitude already at %s", mode_names.get(target))
+            return
 
-        # For Hcalory, altitude mode is set via command 21 (configuration command)
-        # The exact command format depends on the protocol - using the heater offset command slot
-        # TODO: Verify correct command number for Hcalory altitude mode setting
-        # For now, update data directly until command is confirmed
-        self.data["high_altitude"] = mode
-        self._logger.info("✅ High altitude mode set to %s", mode_name)
+        # Calculate forward steps in circular state machine (OFF→M1→M2→OFF)
+        steps = (target - current) % 3
+        self._logger.info(
+            "🏔️ Changing altitude mode from %s to %s (%d toggle commands)",
+            mode_names.get(current), mode_names.get(target), steps
+        )
+
+        # Send toggle command N times with 0.3s delay between each
+        for i in range(steps):
+            success = await self._send_command(9, 0)  # Command 9 = toggle altitude mode
+            if not success:
+                self._logger.warning("❌ Failed to send altitude toggle command %d/%d", i + 1, steps)
+                return
+            # Update local state after each successful toggle
+            current = (current + 1) % 3
+            self.data["high_altitude"] = current
+            self._logger.debug("Toggle %d/%d: now at %s", i + 1, steps, mode_names.get(current))
+            # Wait before next toggle (except on last iteration)
+            if i < steps - 1:
+                await asyncio.sleep(0.3)
+
+        self._logger.info("✅ High altitude mode set to %s", mode_names.get(target))
         await self.async_request_refresh()
 
     async def async_set_tank_volume(self, volume_index: int) -> None:

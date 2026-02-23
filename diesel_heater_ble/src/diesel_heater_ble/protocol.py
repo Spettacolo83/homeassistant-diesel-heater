@@ -24,6 +24,7 @@ from .const import (
     ABBA_STATUS_MAP,
     CBFF_RUN_STATE_OFF,
     ENCRYPTION_KEY,
+    HCALORY_ALTITUDE_TOGGLE_CMD,
     HCALORY_CMD_POWER,
     HCALORY_CMD_SET_ALTITUDE,
     HCALORY_CMD_SET_GEAR,
@@ -918,6 +919,7 @@ class ProtocolHcalory(HeaterProtocol):
         """Initialize Hcalory protocol handler."""
         self._is_mvp2: bool = True  # Default to MVP2, can be set by coordinator
         self._password_sent: bool = False  # Track if MVP2 password handshake was sent
+        self._custom_query_dt: datetime | None = None  # Custom timestamp for time sync
 
     def set_mvp_version(self, is_mvp2: bool) -> None:
         """Set MVP version (MVP1 vs MVP2) based on service UUID detection."""
@@ -936,6 +938,14 @@ class ProtocolHcalory(HeaterProtocol):
     def mark_password_sent(self) -> None:
         """Mark password handshake as completed."""
         self._password_sent = True
+
+    def set_query_timestamp(self, dt: datetime | None) -> None:
+        """Set custom timestamp for next query command (time sync).
+
+        Used by coordinator to sync heater time with Home Assistant local time.
+        If None, _build_mvp2_query_cmd() will use current system time.
+        """
+        self._custom_query_dt = dt
 
     def parse(self, data: bytearray) -> dict[str, Any] | None:
         """Parse Hcalory response data.
@@ -1212,6 +1222,16 @@ class ProtocolHcalory(HeaterProtocol):
                     bytes([0, 0, 0, 0, 0, 0, 0, 0, HCALORY_POWER_QUERY])
                 )
 
+        # Toggle altitude mode (cmd 9) - MVP2 only (@Xev, issue #34)
+        # Cycles through: OFF(0) → MODE_1(1) → MODE_2(2) → OFF(0)
+        # Payload: 0x04 0x00 0x00 0x09 [8 zeros] 0x09
+        if command == 9:
+            # Use dpID 0x0E04 with special payload ending in 0x09 (toggle command)
+            return self._build_hcalory_cmd(
+                HCALORY_CMD_POWER,
+                bytes([0, 0, 0, 0, 0, 0, 0, 0, HCALORY_ALTITUDE_TOGGLE_CMD])
+            )
+
         # Set altitude (cmd 14)
         if command == 14:
             # argument is altitude in meters
@@ -1291,7 +1311,8 @@ class ProtocolHcalory(HeaterProtocol):
 
         Timestamp is 4 bytes (NOT BCD): hour, minute, second, isoweekday (1-7)
         """
-        now = datetime.now()
+        # Use custom timestamp if set (for time sync), otherwise current time
+        now = self._custom_query_dt if self._custom_query_dt is not None else datetime.now()
         # @Xev: timestamp is NOT BCD encoded, just raw bytes + isoweekday()
         timestamp = bytes([
             now.hour,
