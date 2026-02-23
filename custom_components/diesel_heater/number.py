@@ -158,6 +158,17 @@ class VevorHeaterOffsetNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberE
         }
 
     @property
+    def available(self) -> bool:
+        """Return if entity is available.
+
+        Not available for Hcalory (mode 7) - no offset support.
+        """
+        if not self.coordinator.data.get("connected", False):
+            return False
+        # Hcalory doesn't support temperature offset commands (@Xev, issue #34)
+        return self.coordinator.protocol_mode != 7
+
+    @property
     def native_value(self) -> float:
         """Return the current value."""
         return self.coordinator.data.get("heater_offset", 0)

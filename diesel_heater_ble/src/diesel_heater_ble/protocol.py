@@ -1039,7 +1039,9 @@ class ProtocolHcalory(HeaterProtocol):
             else:
                 # Heater is ON - parse set_value based on mode
                 if parsed.get("running_mode") == RUNNING_MODE_TEMPERATURE:
-                    parsed["set_temp"] = max(8, min(36, set_value_raw))
+                    # Beta.28 fix: Don't clamp here! Value may be in Fahrenheit (46-97°F).
+                    # Coordinator will convert F→C if needed, then clamp to 8-36°C.
+                    parsed["set_temp"] = set_value_raw
                 else:
                     # Hcalory uses 1-6 gear levels, map to 1-10
                     hcalory_level = max(HCALORY_MIN_LEVEL, min(HCALORY_MAX_LEVEL, set_value_raw))
@@ -1051,8 +1053,8 @@ class ProtocolHcalory(HeaterProtocol):
             auto_byte = _u8_to_number(data[23])
             parsed["auto_start_stop"] = (auto_byte == 1)  # 1 = enabled (fixed swap)
 
-            # Bytes 24-25: Voltage (uint16 LE, /10)
-            voltage_raw = (_u8_to_number(data[24]) | (_u8_to_number(data[25]) << 8))
+            # Bytes 24-25: Voltage (uint16 BE, /10) - fixed beta.28 per @Xev
+            voltage_raw = ((_u8_to_number(data[24]) << 8) | _u8_to_number(data[25]))
             parsed["supply_voltage"] = voltage_raw / 10.0
 
             # Bytes 27-28: Shell/Case temperature (uint16 BE, /10, in unit from byte 37)

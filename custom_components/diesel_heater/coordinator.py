@@ -1390,8 +1390,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             if "set_temp" in parsed and parsed["set_temp"] is not None:
                 temp_f = parsed["set_temp"]
                 temp_c = round((temp_f - 32) * 5 / 9, 1)
+                # Beta.28 fix: Clamp to valid Celsius range AFTER conversion
+                temp_c = max(8, min(36, temp_c))
                 self.data["set_temp"] = temp_c
                 self._logger.debug("Converted set_temp: %d°F → %.1f°C", temp_f, temp_c)
+        elif self._protocol_mode == 7 and "set_temp" in parsed and parsed["set_temp"] is not None:
+            # Beta.28 fix: Heater uses Celsius - still need to clamp to valid range
+            self.data["set_temp"] = max(8, min(36, parsed["set_temp"]))
 
         # Hcalory set_value memory: restore last known values when heater is OFF
         # (@Xev's discovery, issue #34: Hcalory returns set_value=None when OFF)

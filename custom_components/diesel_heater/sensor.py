@@ -54,7 +54,6 @@ async def async_setup_entry(
         VevorRunningStepSensor(coordinator),
         VevorRunningModeSensor(coordinator),
         VevorSetLevelSensor(coordinator),
-        VevorAltitudeSensor(coordinator),
         VevorErrorCodeSensor(coordinator),
         # Diagnostic sensors
         VevorProtocolSensor(coordinator),
@@ -72,6 +71,10 @@ async def async_setup_entry(
         VevorLastRefueledSensor(coordinator),
         VevorFuelConsumedSinceResetSensor(coordinator),
     ]
+
+    # Altitude sensor (not available for Hcalory - @Xev, issue #34)
+    if mode != 7:
+        entities.append(VevorAltitudeSensor(coordinator))
 
     # Extended sensors (encrypted protocols + CBFF: heater_offset, CO, raw temp)
     if mode in (0, 2, 4, 6):
@@ -211,8 +214,10 @@ class VevorHeaterOffsetSensor(VevorSensorBase):
     @property
     def available(self) -> bool:
         """Return if entity is available."""
-        # Always available when coordinator is available (offset defaults to 0)
-        return self.coordinator.last_update_success
+        if not self.coordinator.last_update_success:
+            return False
+        # Hcalory doesn't support temperature offset commands (@Xev, issue #34)
+        return self.coordinator.protocol_mode != 7
 
 
 class VevorSupplyVoltageSensor(VevorSensorBase):
