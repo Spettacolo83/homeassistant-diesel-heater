@@ -1564,14 +1564,18 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
                 for i in range(iterations):
                     await asyncio.sleep(0.05)
+                    # Beta.32: Need at least 17 bytes (0-16) to read auth byte at position 16
                     if self._notification_data and len(self._notification_data) >= 17:
                         # Check for response header 0x0003 and command 0x0B0C
+                        # Format: 00 03 00 01 00 01 00 0b 0c 00 00 06 01 [password] [authenticated] [checksum]
                         header = (self._notification_data[0] << 8) | self._notification_data[1]
-                        cmd = (self._notification_data[6] << 8) | self._notification_data[7]
+                        # Beta.32 fix: Command is at byte 7-8, not 6-7 (@Xev, issue #34)
+                        cmd = (self._notification_data[7] << 8) | self._notification_data[8]
 
                         if header == 0x0003 and cmd == 0x0B0C:
                             # Parse authentication status (@Xev discovery, issue #34)
-                            auth_byte = self._notification_data[15] if len(self._notification_data) > 15 else 0xFF
+                            # Beta.32 fix: Auth byte is at position 16 (after 4 password bytes at 12-15)
+                            auth_byte = self._notification_data[16] if len(self._notification_data) > 16 else 0xFF
                             auth_status = "authenticated ✅" if auth_byte == 0x01 else "unauthenticated ❌" if auth_byte == 0x00 else f"unknown (0x{auth_byte:02X})"
 
                             self._logger.info(
