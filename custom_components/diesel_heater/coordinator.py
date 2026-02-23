@@ -1943,7 +1943,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         The time is sent as: 60 * hours + minutes
         Example: 14:30 = 60 * 14 + 30 = 870
         """
-        now = datetime.now()
+        # Beta.29 fix: Use dt_util.now() for correct local timezone (issue #38)
+        # datetime.now() uses UTC in Docker containers → 5hr offset for EST users
+        now = dt_util.now()
         time_value = 60 * now.hour + now.minute
         self._logger.info("Syncing heater time to %02d:%02d (value=%d)", now.hour, now.minute, time_value)
         # Command 10 for time sync
