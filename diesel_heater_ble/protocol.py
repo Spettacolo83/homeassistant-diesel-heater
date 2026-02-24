@@ -1010,11 +1010,9 @@ class ProtocolHcalory(HeaterProtocol):
                 if parsed.get("running_mode") == RUNNING_MODE_TEMPERATURE:
                     parsed["set_temp"] = max(8, min(36, temp_or_gear))
                 else:
-                    # Hcalory uses 1-6 gear levels, map to 1-10
+                    # Beta.33: Hcalory uses 1-6 gear levels directly (no mapping, issue #40)
                     hcalory_level = max(HCALORY_MIN_LEVEL, min(HCALORY_MAX_LEVEL, temp_or_gear))
-                    # Map 1-6 to 1-10 scale (roughly: 1->2, 2->4, 3->5, 4->6, 5->8, 6->10)
-                    parsed["set_level"] = self._map_hcalory_to_standard_level(hcalory_level)
-                    parsed["hcalory_gear"] = hcalory_level
+                    parsed["set_level"] = hcalory_level
 
             # Auto start/stop (chars 22-23)
             if len(hex_str) >= 24:
@@ -1198,11 +1196,11 @@ class ProtocolHcalory(HeaterProtocol):
 
         # Set level (cmd 5)
         if command == 5:
-            # Map standard 1-10 to Hcalory 1-6
-            hcalory_level = self._map_standard_to_hcalory_level(argument)
+            # Beta.33: Use level 1-6 directly, no mapping (issue #40)
+            level = max(HCALORY_MIN_LEVEL, min(HCALORY_MAX_LEVEL, argument))
             return self._build_hcalory_cmd(
                 HCALORY_CMD_SET_GEAR,
-                bytes([hcalory_level])
+                bytes([level])
             )
 
         # Set auto start/stop (custom: cmd 22)

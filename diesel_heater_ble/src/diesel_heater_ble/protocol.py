@@ -1053,10 +1053,9 @@ class ProtocolHcalory(HeaterProtocol):
                     # Coordinator will convert F→C if needed, then clamp to 8-36°C.
                     parsed["set_temp"] = set_value_raw
                 else:
-                    # Hcalory uses 1-6 gear levels, map to 1-10
+                    # Beta.33: Hcalory uses 1-6 gear levels directly (no mapping, issue #40)
                     hcalory_level = max(HCALORY_MIN_LEVEL, min(HCALORY_MAX_LEVEL, set_value_raw))
-                    parsed["set_level"] = self._map_hcalory_to_standard_level(hcalory_level)
-                    parsed["hcalory_gear"] = hcalory_level
+                    parsed["set_level"] = hcalory_level
 
             # Byte 23: Auto start/stop (@Xev note 2026-02-19: was swapped, now fixed)
             # 1 = enabled, 2 = disabled (corrected from initial analysis)
@@ -1186,11 +1185,11 @@ class ProtocolHcalory(HeaterProtocol):
 
         # Set level (cmd 5)
         if command == 5:
-            # Map standard 1-10 to Hcalory 1-6
-            hcalory_level = self._map_standard_to_hcalory_level(argument)
+            # Beta.33: Use level 1-6 directly, no mapping (issue #40)
+            level = max(HCALORY_MIN_LEVEL, min(HCALORY_MAX_LEVEL, argument))
             return self._build_hcalory_cmd(
                 HCALORY_CMD_SET_GEAR,
-                bytes([hcalory_level])
+                bytes([level])
             )
 
         # Set auto start/stop (custom: cmd 22)

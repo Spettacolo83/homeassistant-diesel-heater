@@ -1746,29 +1746,8 @@ class TestProtocolHcalory:
         assert result.get("altitude") == 1500
         assert result.get("altitude_unit") == 0
 
-    def test_gear_level_mapping(self):
-        """Test Hcalory 1-6 to standard 1-10 level mapping."""
-        # Test _map_hcalory_to_standard_level
-        assert self.proto._map_hcalory_to_standard_level(1) == 2
-        assert self.proto._map_hcalory_to_standard_level(2) == 4
-        assert self.proto._map_hcalory_to_standard_level(3) == 5
-        assert self.proto._map_hcalory_to_standard_level(4) == 6
-        assert self.proto._map_hcalory_to_standard_level(5) == 8
-        assert self.proto._map_hcalory_to_standard_level(6) == 10
-
-    def test_standard_to_hcalory_level_mapping(self):
-        """Test standard 1-10 to Hcalory 1-6 level mapping."""
-        # Test _map_standard_to_hcalory_level
-        assert self.proto._map_standard_to_hcalory_level(1) == 1
-        assert self.proto._map_standard_to_hcalory_level(2) == 1
-        assert self.proto._map_standard_to_hcalory_level(3) == 2
-        assert self.proto._map_standard_to_hcalory_level(4) == 2
-        assert self.proto._map_standard_to_hcalory_level(5) == 3
-        assert self.proto._map_standard_to_hcalory_level(6) == 4
-        assert self.proto._map_standard_to_hcalory_level(7) == 5
-        assert self.proto._map_standard_to_hcalory_level(8) == 5
-        assert self.proto._map_standard_to_hcalory_level(9) == 6
-        assert self.proto._map_standard_to_hcalory_level(10) == 6
+    # Beta.33: Level mapping tests removed (issue #40)
+    # Hcalory now uses 1-6 levels directly without mapping to 1-10
 
     # --- Command builder tests ---
 

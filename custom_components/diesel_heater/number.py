@@ -52,13 +52,15 @@ async def async_setup_entry(
 
 
 class VevorHeaterLevelNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberEntity):
-    """Vevor Heater level number entity."""
+    """Vevor Heater level number entity.
+
+    Beta.33: Hcalory supports levels 1-6, other protocols 1-10 (@Xev, issue #40)
+    """
 
     _attr_has_entity_name = True
     _attr_name = "Level"
     _attr_icon = "mdi:gauge"
     _attr_native_min_value = MIN_LEVEL
-    _attr_native_max_value = MAX_LEVEL
     _attr_native_step = 1
 
     def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
@@ -71,6 +73,17 @@ class VevorHeaterLevelNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberEn
             "manufacturer": "Vevor",
             "model": "Diesel Heater",
         }
+
+    @property
+    def native_max_value(self) -> float:
+        """Return max value dynamically based on protocol.
+
+        Hcalory (mode 7): 1-6 levels
+        Other protocols: 1-10 levels
+        """
+        if self.coordinator.protocol_mode == 7:
+            return 6  # Hcalory max level
+        return MAX_LEVEL  # Other protocols (10)
 
     @property
     def native_value(self) -> float:
