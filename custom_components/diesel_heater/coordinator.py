@@ -922,6 +922,17 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if not self._client or not self._client.is_connected:
             try:
                 await self._ensure_connected()
+                # Beta.34: Auto-sync time on successful connection (@Wheemer, issue #38)
+                # This was previously only done for Hcalory MVP2, now extended to all protocols
+                if not self._time_synced_this_session:
+                    try:
+                        self._logger.debug("Auto-syncing time after connection...")
+                        await asyncio.sleep(0.5)  # Give heater time to initialize
+                        await self.async_sync_time()
+                        self._time_synced_this_session = True
+                        self._logger.info("✅ Auto time sync completed")
+                    except Exception as sync_err:
+                        self._logger.debug("Auto time sync failed (non-critical): %s", sync_err)
             except Exception as err:
                 self._handle_connection_failure(err)
                 raise UpdateFailed(f"Failed to connect: {err}")

@@ -256,7 +256,7 @@ class VevorCurrentFuelLevelNumber(CoordinatorEntity[VevorHeaterCoordinator], Num
     _attr_icon = "mdi:fuel"
     _attr_native_unit_of_measurement = UnitOfVolume.LITERS
     _attr_native_min_value = 0
-    _attr_native_step = 0.5  # Allow half-liter precision
+    _attr_native_step = 0.1  # Allow 0.1L precision (@Wheemer, issue #38)
 
     def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
         """Initialize the number entity."""
