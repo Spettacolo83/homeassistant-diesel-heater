@@ -56,7 +56,6 @@ class VevorHeaterClimate(CoordinatorEntity[VevorHeaterCoordinator], ClimateEntit
 
     _attr_has_entity_name = True
     _attr_name = None
-    _attr_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT]
     _attr_supported_features = (
         ClimateEntityFeature.TARGET_TEMPERATURE
@@ -64,9 +63,6 @@ class VevorHeaterClimate(CoordinatorEntity[VevorHeaterCoordinator], ClimateEntit
         | ClimateEntityFeature.TURN_ON
         | ClimateEntityFeature.PRESET_MODE
     )
-    _attr_min_temp = 8
-    _attr_max_temp = 36
-    _attr_target_temperature_step = 1
     _attr_preset_modes = [PRESET_NONE, PRESET_AWAY, PRESET_COMFORT]
 
     def __init__(self, coordinator: VevorHeaterCoordinator, config_entry: ConfigEntry) -> None:
@@ -82,6 +78,42 @@ class VevorHeaterClimate(CoordinatorEntity[VevorHeaterCoordinator], ClimateEntit
             "model": "Diesel Heater",
         }
         self._attr_unique_id = f"{coordinator.address}_climate"
+
+    @property
+    def temperature_unit(self) -> str:
+        """Return temperature unit (dynamic based on heater's native unit).
+
+        Beta.34: Hcalory heaters can use Fahrenheit natively (32-104°F with 0.5°C step).
+        This provides far more granular control than Celsius (0-40°C with 1°C step).
+        """
+        if self.coordinator._heater_uses_fahrenheit:
+            return UnitOfTemperature.FAHRENHEIT
+        return UnitOfTemperature.CELSIUS
+
+    @property
+    def min_temp(self) -> float:
+        """Return minimum temperature (dynamic based on unit)."""
+        if self.coordinator._heater_uses_fahrenheit:
+            return 32  # 32°F = 0°C
+        return 0  # Hcalory supports 0-40°C, other protocols 8-36°C
+
+    @property
+    def max_temp(self) -> float:
+        """Return maximum temperature (dynamic based on unit)."""
+        if self.coordinator._heater_uses_fahrenheit:
+            return 104  # 104°F = 40°C
+        return 40  # Hcalory supports 0-40°C, other protocols up to 36°C
+
+    @property
+    def target_temperature_step(self) -> float:
+        """Return temperature step (dynamic based on unit).
+
+        Fahrenheit: 1°F step (equivalent to ~0.5°C, provides 72 possible values)
+        Celsius: 1°C step (provides 40 possible values)
+        """
+        if self.coordinator._heater_uses_fahrenheit:
+            return 1.0  # 1°F step
+        return 1.0  # 1°C step
 
     @property
     def current_temperature(self) -> float | None:
@@ -169,18 +201,24 @@ class VevorHeaterClimate(CoordinatorEntity[VevorHeaterCoordinator], ClimateEntit
         return self._current_preset if self._current_preset else PRESET_NONE
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
-        """Set new preset mode."""
+        """Set new preset mode.
+
+        Note: Presets are only used for Celsius heaters currently.
+        Future enhancement: Add Fahrenheit preset support.
+        """
         self._current_preset = preset_mode
 
         if preset_mode == PRESET_AWAY:
             self._user_cleared_preset = False  # Clear the "None" flag
             temp = self._get_away_temp()
-            _LOGGER.info("Setting preset to Away (%d°C)", temp)
+            unit_str = "°F" if self.coordinator._heater_uses_fahrenheit else "°C"
+            _LOGGER.info("Setting preset to Away (%d%s)", temp, unit_str)
             await self.coordinator.async_set_temperature(temp)
         elif preset_mode == PRESET_COMFORT:
             self._user_cleared_preset = False  # Clear the "None" flag
             temp = self._get_comfort_temp()
-            _LOGGER.info("Setting preset to Comfort (%d°C)", temp)
+            unit_str = "°F" if self.coordinator._heater_uses_fahrenheit else "°C"
+            _LOGGER.info("Setting preset to Comfort (%d%s)", temp, unit_str)
             await self.coordinator.async_set_temperature(temp)
         elif preset_mode == PRESET_NONE:
             _LOGGER.info("Clearing preset mode")
@@ -191,24 +229,30 @@ class VevorHeaterClimate(CoordinatorEntity[VevorHeaterCoordinator], ClimateEntit
             self.async_write_ha_state()
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
-        """Set new target temperature."""
+        """Set new target temperature (in heater's native unit, no conversions).
+
+        Beta.34: Temperature is passed in native unit (°F or °C) to eliminate
+        double conversions that caused precision loss (@Xev, issue #43).
+        """
         if (temperature := kwargs.get(ATTR_TEMPERATURE)) is None:
             return
 
-        temperature = int(temperature)
-
+        # Beta.34: Keep as float for Fahrenheit precision (allow 66.5°F, 67.0°F, etc.)
         # User is manually setting temperature, clear the "None" flag
         self._user_cleared_preset = False
 
-        # Auto-select preset if temperature matches
-        if temperature == self._get_away_temp():
-            self._current_preset = PRESET_AWAY
-        elif temperature == self._get_comfort_temp():
-            self._current_preset = PRESET_COMFORT
-        else:
-            self._current_preset = None
+        # Auto-select preset if temperature matches (only for Celsius)
+        # TODO: Presets need to be unit-aware in the future
+        if not self.coordinator._heater_uses_fahrenheit:
+            if int(temperature) == self._get_away_temp():
+                self._current_preset = PRESET_AWAY
+            elif int(temperature) == self._get_comfort_temp():
+                self._current_preset = PRESET_COMFORT
+            else:
+                self._current_preset = None
 
-        _LOGGER.info("Setting target temperature to %d°C", temperature)
+        unit_str = "°F" if self.coordinator._heater_uses_fahrenheit else "°C"
+        _LOGGER.info("Setting target temperature to %.1f%s", temperature, unit_str)
         await self.coordinator.async_set_temperature(temperature)
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:

@@ -1370,33 +1370,21 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         self.data.update(parsed)
 
-        # Convert Hcalory MVP2 temperatures from Fahrenheit to Celsius if needed
-        # (@Xev analysis: temp_unit byte 37: 0=C, 1=F. Temps are integers in heater's unit)
-        if self._protocol_mode == 7 and parsed.get("temp_unit") == 1:
-            # Heater uses Fahrenheit - convert to Celsius for HA display
-            if "case_temperature" in parsed and parsed["case_temperature"] is not None:
-                temp_f = parsed["case_temperature"]
-                temp_c = round((temp_f - 32) * 5 / 9, 1)
-                self.data["case_temperature"] = temp_c
-                self._logger.debug("Converted case_temperature: %d°F → %.1f°C", temp_f, temp_c)
-
-            if "cab_temperature" in parsed and parsed["cab_temperature"] is not None:
-                temp_f = parsed["cab_temperature"]
-                temp_c = round((temp_f - 32) * 5 / 9, 1)
-                self.data["cab_temperature"] = temp_c
-                self._logger.debug("Converted cab_temperature: %d°F → %.1f°C", temp_f, temp_c)
-
-            # Target temperature (set_temp) is also in Fahrenheit if mode is Temperature
+        # Beta.34: Keep temperatures in native unit (no F→C conversion for Hcalory)
+        # (@Xev analysis, issue #43: Double conversions cause precision loss and 97°F bug)
+        # When heater uses Fahrenheit, climate entity will work in °F natively
+        if self._protocol_mode == 7 and parsed.get("temp_unit") == 0:
+            # Heater uses Celsius - clamp set_temp to valid range (0-40°C)
             if "set_temp" in parsed and parsed["set_temp"] is not None:
-                temp_f = parsed["set_temp"]
-                temp_c = round((temp_f - 32) * 5 / 9, 1)
-                # Beta.28 fix: Clamp to valid Celsius range AFTER conversion
-                temp_c = max(8, min(36, temp_c))
-                self.data["set_temp"] = temp_c
-                self._logger.debug("Converted set_temp: %d°F → %.1f°C", temp_f, temp_c)
-        elif self._protocol_mode == 7 and "set_temp" in parsed and parsed["set_temp"] is not None:
-            # Beta.28 fix: Heater uses Celsius - still need to clamp to valid range
-            self.data["set_temp"] = max(8, min(36, parsed["set_temp"]))
+                self.data["set_temp"] = max(0, min(40, parsed["set_temp"]))
+        elif self._protocol_mode == 7 and parsed.get("temp_unit") == 1:
+            # Heater uses Fahrenheit - clamp set_temp to valid range (32-104°F)
+            if "set_temp" in parsed and parsed["set_temp"] is not None:
+                self.data["set_temp"] = max(32, min(104, parsed["set_temp"]))
+            self._logger.debug(
+                "Hcalory Fahrenheit mode: temps in native °F (case=%s, cab=%s, set=%s)",
+                parsed.get("case_temperature"), parsed.get("cab_temperature"), parsed.get("set_temp")
+            )
 
         # Hcalory set_value memory: restore last known values when heater is OFF
         # (@Xev's discovery, issue #34: Hcalory returns set_value=None when OFF)
@@ -1851,36 +1839,38 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if success:
             await self.async_request_refresh()
 
-    async def async_set_temperature(self, temperature: int) -> None:
-        """Set target temperature (8-36°C).
+    async def async_set_temperature(self, temperature: float) -> None:
+        """Set target temperature in heater's native unit (no conversions).
 
-        Note: Temperature mode only accepts values 8-36°C.
-        Values below 8 will be clamped to 8.
+        Beta.34: Temperature is passed in the native unit the heater uses:
+        - Celsius for most protocols (0-40°C)
+        - Fahrenheit for Hcalory when temp_unit=1 (32-104°F)
 
-        The temperature unit (Celsius or Fahrenheit) is auto-detected from the
-        heater's response. We send commands in the same unit the heater uses.
+        This eliminates double conversions that caused precision loss (@Xev, issue #43).
         """
-        # Clamp to valid Celsius range
-        temperature = max(8, min(36, temperature))
         current_temp = self.data.get("set_temp", "unknown")
         current_mode = self.data.get("running_mode", "unknown")
 
-        # Send temperature in the unit the heater expects (detected from response)
-        # Some mode 4 heaters use Fahrenheit, others use Celsius
+        # Beta.34: Clamp to valid range based on heater's native unit
         if self._heater_uses_fahrenheit:
-            temp_fahrenheit = round(temperature * 9 / 5 + 32)
+            # Hcalory Fahrenheit: 32-104°F
+            temperature = max(32, min(104, temperature))
+            unit_str = "°F"
             self._logger.info(
-                "🌡️ SET TEMPERATURE REQUEST: target=%d°C (%d°F), current=%s, mode=%s, protocol=%d (heater uses Fahrenheit)",
-                temperature, temp_fahrenheit, current_temp, current_mode, self._protocol_mode
-            )
-            command_temp = temp_fahrenheit
-        else:
-            self._logger.info(
-                "🌡️ SET TEMPERATURE REQUEST: target=%d°C, current=%s, mode=%s, protocol=%d (heater uses Celsius)",
+                "🌡️ SET TEMPERATURE REQUEST: target=%.1f°F, current=%s, mode=%s, protocol=%d (Fahrenheit)",
                 temperature, current_temp, current_mode, self._protocol_mode
             )
-            command_temp = temperature
+        else:
+            # Celsius: 0-40°C (most protocols support 8-36°C, but Hcalory C supports 0-40°C)
+            temperature = max(0, min(40, temperature))
+            unit_str = "°C"
+            self._logger.info(
+                "🌡️ SET TEMPERATURE REQUEST: target=%.1f°C, current=%s, mode=%s, protocol=%d (Celsius)",
+                temperature, current_temp, current_mode, self._protocol_mode
+            )
 
+        # Convert to int for command (protocols expect integer temperatures)
+        command_temp = int(round(temperature))
         success = await self._send_command(4, command_temp)
 
         if success:
@@ -1888,9 +1878,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             # Log result after refresh
             new_temp = self.data.get("set_temp", "unknown")
             self._logger.info(
-                "🌡️ SET TEMPERATURE RESULT: requested=%d°C, heater_reports=%s°C, %s",
-                temperature, new_temp,
-                "✅ SUCCESS" if new_temp == temperature else "❌ FAILED - heater did not accept"
+                "🌡️ SET TEMPERATURE RESULT: requested=%.1f%s, heater_reports=%s%s, %s",
+                temperature, unit_str, new_temp, unit_str,
+                "✅ SUCCESS" if abs(new_temp - temperature) < 1 else "❌ MISMATCH"
             )
         else:
             self._logger.warning("🌡️ SET TEMPERATURE FAILED: command not sent successfully")
