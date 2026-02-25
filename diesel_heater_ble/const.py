@@ -153,9 +153,9 @@ MAX_LEVEL: Final = 10
 MIN_TEMP_CELSIUS: Final = 8
 MAX_TEMP_CELSIUS: Final = 36
 
-# Hcalory specific limits (6 gear levels instead of 10)
+# Hcalory specific limits (Beta.36: 10 gear levels confirmed by @Xev, issue #46)
 HCALORY_MIN_LEVEL: Final = 1
-HCALORY_MAX_LEVEL: Final = 6
+HCALORY_MAX_LEVEL: Final = 10  # Confirmed: levels go 1-9, HH10 (@smaj100)
 
 # Hcalory device states (byte position 18-19 in response)
 HCALORY_STATE_STANDBY: Final = 0x00

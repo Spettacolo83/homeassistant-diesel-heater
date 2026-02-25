@@ -1010,7 +1010,7 @@ class ProtocolHcalory(HeaterProtocol):
                 if parsed.get("running_mode") == RUNNING_MODE_TEMPERATURE:
                     parsed["set_temp"] = max(8, min(36, temp_or_gear))
                 else:
-                    # Beta.33: Hcalory uses 1-6 gear levels directly (no mapping, issue #40)
+                    # Beta.36: Hcalory uses 1-10 gear levels directly (no mapping, @Xev issue #46)
                     hcalory_level = max(HCALORY_MIN_LEVEL, min(HCALORY_MAX_LEVEL, temp_or_gear))
                     parsed["set_level"] = hcalory_level
 
@@ -1196,7 +1196,7 @@ class ProtocolHcalory(HeaterProtocol):
 
         # Set level (cmd 5)
         if command == 5:
-            # Beta.33: Use level 1-6 directly, no mapping (issue #40)
+            # Beta.36: Use level 1-10 directly, no mapping (@Xev issue #46)
             level = max(HCALORY_MIN_LEVEL, min(HCALORY_MAX_LEVEL, argument))
             return self._build_hcalory_cmd(
                 HCALORY_CMD_SET_GEAR,
