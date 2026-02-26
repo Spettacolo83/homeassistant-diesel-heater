@@ -82,6 +82,43 @@ def _encrypt_data(data: bytearray) -> bytearray:
     return _decrypt_data(data)
 
 
+def _minutes_to_time_str(minutes: int) -> str:
+    """Convert minutes from midnight to HH:MM format.
+
+    Args:
+        minutes: Minutes since midnight (0-1439)
+
+    Returns:
+        Time string in HH:MM format
+
+    Example:
+        _minutes_to_time_str(90) -> "01:30"
+    """
+    h = minutes // 60
+    m = minutes % 60
+    return f"{h:02d}:{m:02d}"
+
+
+def _format_timer(timer_start: int, timer_duration: int, timer_enabled: bool) -> str:
+    """Format timer fields to human-readable string.
+
+    Args:
+        timer_start: Start time in minutes from midnight
+        timer_duration: Duration in minutes (65535 = infinite)
+        timer_enabled: Timer enabled status
+
+    Returns:
+        Formatted timer string
+
+    Example:
+        _format_timer(90, 120, True) -> "Start: 01:30, Duration: 120 min, Status: ON"
+    """
+    start_str = _minutes_to_time_str(timer_start)
+    dur_str = f"{timer_duration} min" if timer_duration != 65535 else "infinite"
+    status = "ON" if timer_enabled else "OFF"
+    return f"Start: {start_str}, Duration: {dur_str}, Status: {status}"
+
+
 # ---------------------------------------------------------------------------
 # Abstract base class
 # ---------------------------------------------------------------------------
@@ -258,6 +295,24 @@ class ProtocolAA55Encrypted(VevorCommandMixin, HeaterProtocol):
             if mb != 0:
                 parsed["motherboard_version"] = mb
 
+        # Bytes 19-20: Device time (minutes from midnight, issue #48)
+        if len(data) > 20:
+            device_time_minutes = (data[19] << 8) | data[20]
+            parsed["device_time"] = _minutes_to_time_str(device_time_minutes)
+            parsed["device_time_minutes"] = device_time_minutes
+
+        # Bytes 21-25: Timer support (AAXX protocols, issue #48 @Xev)
+        # Only AA55/AA66 encrypted support timer (single timer slot)
+        if len(data) > 25:
+            timer_start = (data[21] << 8) | data[22]
+            timer_duration = (data[23] << 8) | data[24]
+            timer_enabled = bool(data[25])
+
+            parsed["timer_start_minutes"] = timer_start
+            parsed["timer_duration_minutes"] = timer_duration
+            parsed["timer_enabled"] = timer_enabled
+            parsed["timer"] = _format_timer(timer_start, timer_duration, timer_enabled)
+
         return parsed
 
 
@@ -357,6 +412,24 @@ class ProtocolAA66Encrypted(VevorCommandMixin, HeaterProtocol):
             mb = _u8_to_number(data[44])
             if mb != 0:
                 parsed["motherboard_version"] = mb
+
+        # Bytes 19-20: Device time (minutes from midnight, issue #48)
+        if len(data) > 20:
+            device_time_minutes = (data[19] << 8) | data[20]
+            parsed["device_time"] = _minutes_to_time_str(device_time_minutes)
+            parsed["device_time_minutes"] = device_time_minutes
+
+        # Bytes 21-25: Timer support (AAXX protocols, issue #48 @Xev)
+        # Only AA55/AA66 encrypted support timer (single timer slot)
+        if len(data) > 25:
+            timer_start = (data[21] << 8) | data[22]
+            timer_duration = (data[23] << 8) | data[24]
+            timer_enabled = bool(data[25])
+
+            parsed["timer_start_minutes"] = timer_start
+            parsed["timer_duration_minutes"] = timer_duration
+            parsed["timer_enabled"] = timer_enabled
+            parsed["timer"] = _format_timer(timer_start, timer_duration, timer_enabled)
 
         return parsed
 

@@ -673,22 +673,87 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         self._logger.info("Completed import of runtime history into statistics")
 
+    def _estimate_hcalory_power_level(self) -> int:
+        """Estimate Hcalory power level in Temperature mode (issue #47).
+
+        Hcalory doesn't report power level when in Temperature mode, so we
+        estimate it based on the temperature difference between target and actual.
+
+        Logic:
+        - Small diff (0-2): Level 1-2 (low heat needed)
+        - Medium diff (3-5): Level 3-5 (moderate heat)
+        - Large diff (6-10): Level 6-8 (high heat)
+        - Very large diff (>10): Level 9-10 (max heat)
+
+        Returns:
+            Estimated power level (1-10)
+        """
+        target_temp = self.data.get("set_temp")
+        cab_temp = self.data.get("cab_temperature")
+
+        if target_temp is None or cab_temp is None:
+            return 1  # Default to minimum if no data
+
+        # Calculate temperature difference (handle both Celsius and Fahrenheit)
+        if self._heater_uses_fahrenheit:
+            # Convert to Celsius for consistent estimation
+            target_c = (target_temp - 32) * 5 / 9
+            cab_c = (cab_temp - 32) * 5 / 9
+            temp_diff = target_c - cab_c
+        else:
+            temp_diff = target_temp - cab_temp
+
+        # Estimate power level based on temperature difference
+        if temp_diff <= 0:
+            # Already at or above target - maintain low
+            estimated_level = 1
+        elif temp_diff <= 2:
+            estimated_level = 2
+        elif temp_diff <= 5:
+            estimated_level = min(3 + int(temp_diff - 3), 5)  # 3-5
+        elif temp_diff <= 10:
+            estimated_level = min(6 + int((temp_diff - 6) / 2), 8)  # 6-8
+        else:
+            estimated_level = min(9 + int((temp_diff - 11) / 5), 10)  # 9-10
+
+        self._logger.debug(
+            "Estimated Hcalory power level: %d (temp_diff=%.1f°C, target=%s, cab=%s)",
+            estimated_level, temp_diff, target_temp, cab_temp
+        )
+        return estimated_level
+
     def _calculate_fuel_consumption(self, elapsed_seconds: float) -> float:
         """Calculate fuel consumed based on power level and elapsed time.
-        
+
         Returns fuel consumed in liters.
         """
         # Only consume fuel when actually running
         if self.data.get("running_step") != RUNNING_STEP_RUNNING:
             return 0.0
-            
-        power_level = self.data.get("set_level", 1)
+
+        power_level = self.data.get("set_level")
+
+        # Issue #47: Hcalory doesn't report power level in Temperature mode
+        # Estimate it based on temperature difference
+        if power_level is None or power_level == 1:
+            if self._protocol_mode == 7:  # Hcalory
+                running_mode = self.data.get("running_mode")
+                if running_mode == 2:  # Temperature mode
+                    power_level = self._estimate_hcalory_power_level()
+                    self._logger.debug(
+                        "Hcalory Temperature mode: estimated power level %d for fuel calculation",
+                        power_level
+                    )
+
+        if power_level is None:
+            power_level = 1  # Fallback to minimum
+
         consumption_rate = FUEL_CONSUMPTION_TABLE.get(power_level, 0.16)  # L/h
-        
+
         # Calculate fuel consumed in this interval
         hours_elapsed = elapsed_seconds / 3600.0
         fuel_consumed = consumption_rate * hours_elapsed
-        
+
         return fuel_consumed
 
     def _update_fuel_tracking(self, elapsed_seconds: float) -> None:
@@ -701,7 +766,18 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._fuel_consumed_since_reset += fuel_consumed
 
         # Calculate instantaneous consumption rate
-        power_level = self.data.get("set_level", 1)
+        power_level = self.data.get("set_level")
+
+        # Issue #47: Estimate power level for Hcalory in Temperature mode
+        if power_level is None or power_level == 1:
+            if self._protocol_mode == 7:  # Hcalory
+                running_mode = self.data.get("running_mode")
+                if running_mode == 2:  # Temperature mode
+                    power_level = self._estimate_hcalory_power_level()
+
+        if power_level is None:
+            power_level = 1  # Fallback
+
         if self.data.get("running_step") == RUNNING_STEP_RUNNING:
             hourly_consumption = FUEL_CONSUMPTION_TABLE.get(power_level, 0.16)
         else:
@@ -2202,6 +2278,65 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             if self._current_heater_offset != 0:
                 self._logger.info("Resetting heater offset to 0")
                 await self.async_set_heater_offset(0)
+
+    async def async_set_timer_enabled(self, enabled: bool) -> None:
+        """Enable or disable timer (command 13, issue #48).
+
+        Only supported on AA55/AA66 encrypted protocols.
+
+        Args:
+            enabled: True to enable timer, False to disable
+        """
+        if self._protocol_mode not in (2, 4):
+            self._logger.warning("Timer not supported on protocol mode %d", self._protocol_mode)
+            return
+
+        arg = 1 if enabled else 0
+        self._logger.info("Setting timer enabled: %s", enabled)
+        success = await self._send_command(13, arg)
+
+        if success:
+            await self.async_request_refresh()
+
+    async def async_set_timer_start(self, minutes_from_midnight: int) -> None:
+        """Set timer start time (command 11, issue #48).
+
+        Only supported on AA55/AA66 encrypted protocols.
+
+        Args:
+            minutes_from_midnight: Start time in minutes from midnight (0-1439)
+        """
+        if self._protocol_mode not in (2, 4):
+            self._logger.warning("Timer not supported on protocol mode %d", self._protocol_mode)
+            return
+
+        # Clamp to valid range
+        minutes = max(0, min(1439, minutes_from_midnight))
+        self._logger.info("Setting timer start time: %d minutes from midnight", minutes)
+        success = await self._send_command(11, minutes)
+
+        if success:
+            await self.async_request_refresh()
+
+    async def async_set_timer_duration(self, minutes: int) -> None:
+        """Set timer duration (command 12, issue #48).
+
+        Only supported on AA55/AA66 encrypted protocols.
+
+        Args:
+            minutes: Duration in minutes (0-65535, 65535 = infinite)
+        """
+        if self._protocol_mode not in (2, 4):
+            self._logger.warning("Timer not supported on protocol mode %d", self._protocol_mode)
+            return
+
+        # Clamp to valid range
+        minutes = max(0, min(65535, minutes))
+        self._logger.info("Setting timer duration: %d minutes", minutes)
+        success = await self._send_command(12, minutes)
+
+        if success:
+            await self.async_request_refresh()
 
     async def async_send_raw_command(self, command: int, argument: int) -> bool:
         """Send a raw command to the heater for debugging purposes.

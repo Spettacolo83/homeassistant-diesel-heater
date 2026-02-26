@@ -55,6 +55,10 @@ async def async_setup_entry(
     if mode in (0, 5):
         entities.append(VevorHighAltitudeSwitch(coordinator))
 
+    # Timer (AA55/AA66 encrypted only - issue #48)
+    if mode in (2, 4):
+        entities.append(VevorTimerSwitch(coordinator))
+
     async_add_entities(entities)
 
 
@@ -344,6 +348,98 @@ class VevorHighAltitudeSwitch(CoordinatorEntity[VevorHeaterCoordinator], SwitchE
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Disable high altitude mode."""
         await self.coordinator.async_set_high_altitude(False)
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+
+class VevorTimerSwitch(CoordinatorEntity[VevorHeaterCoordinator], SwitchEntity):
+    """Vevor Heater Timer Switch (AA55/AA66 encrypted only, issue #48).
+
+    This entity controls the single timer slot available on AAXX encrypted protocols.
+    Timer parameters (start time, duration) are exposed as entity attributes and
+    can be modified using the diesel_heater.set_timer service.
+
+    Timer operation:
+    - Start time: When heater should turn on daily (HH:MM format, stored as minutes from midnight)
+    - Duration: How long heater runs (minutes, 65535 = infinite)
+    - Enabled: Timer on/off switch
+
+    Feature requested by @Xev (issue #48) to prevent accidental timer activations
+    that cause unexpected heater behavior.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Timer"
+    _attr_icon = "mdi:timer"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the switch."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_timer"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, coordinator.address)},
+            "name": "Vevor Diesel Heater",
+            "manufacturer": "Vevor",
+            "model": "Diesel Heater",
+        }
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available (AA55/AA66 encrypted only)."""
+        if not self.coordinator.data.get("connected", False):
+            return False
+        # Only AA55/AA66 encrypted support timer
+        return self.coordinator.protocol_mode in (2, 4)
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return true if timer is enabled."""
+        timer_enabled = self.coordinator.data.get("timer_enabled")
+        if timer_enabled is not None:
+            return timer_enabled
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return timer configuration as entity attributes."""
+        attrs = {}
+
+        # Timer start time (HH:MM format)
+        if "device_time" in self.coordinator.data:
+            attrs["device_time"] = self.coordinator.data["device_time"]
+
+        # Timer configuration
+        if "timer" in self.coordinator.data:
+            attrs["timer_summary"] = self.coordinator.data["timer"]
+
+        if "timer_start_minutes" in self.coordinator.data:
+            start_min = self.coordinator.data["timer_start_minutes"]
+            h = start_min // 60
+            m = start_min % 60
+            attrs["start_time"] = f"{h:02d}:{m:02d}"
+            attrs["start_minutes"] = start_min
+
+        if "timer_duration_minutes" in self.coordinator.data:
+            duration = self.coordinator.data["timer_duration_minutes"]
+            if duration == 65535:
+                attrs["duration"] = "infinite"
+            else:
+                attrs["duration_minutes"] = duration
+                attrs["duration"] = f"{duration} min"
+
+        return attrs
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Enable timer."""
+        await self.coordinator.async_set_timer_enabled(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Disable timer."""
+        await self.coordinator.async_set_timer_enabled(False)
 
     @callback
     def _handle_coordinator_update(self) -> None:

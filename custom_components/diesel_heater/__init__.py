@@ -54,14 +54,23 @@ _UNIQUE_IDS_TO_REMOVE: set[str] = {
 
 # Service constants
 SERVICE_SEND_COMMAND = "send_command"
+SERVICE_SET_TIMER = "set_timer"
 ATTR_COMMAND = "command"
 ATTR_ARGUMENT = "argument"
 ATTR_DEVICE_ID = "device_id"
+ATTR_START_TIME = "start_time"
+ATTR_DURATION = "duration"
 
 SERVICE_SEND_COMMAND_SCHEMA = vol.Schema({
     vol.Optional(ATTR_DEVICE_ID): cv.string,
     vol.Required(ATTR_COMMAND): vol.All(vol.Coerce(int), vol.Range(min=0, max=255)),
     vol.Required(ATTR_ARGUMENT): vol.All(vol.Coerce(int), vol.Range(min=-128, max=127)),
+})
+
+SERVICE_SET_TIMER_SCHEMA = vol.Schema({
+    vol.Optional(ATTR_DEVICE_ID): cv.string,
+    vol.Required(ATTR_START_TIME): cv.string,  # Format "HH:MM"
+    vol.Required(ATTR_DURATION): vol.All(vol.Coerce(int), vol.Range(min=0, max=65535)),  # Minutes
 })
 
 PLATFORMS: list[Platform] = [
@@ -359,6 +368,82 @@ async def async_setup_entry(hass: HomeAssistant, entry: DieselHeaterConfigEntry)
             schema=SERVICE_SEND_COMMAND_SCHEMA,
         )
         _LOGGER.debug("Registered debug service: %s.%s", DOMAIN, SERVICE_SEND_COMMAND)
+
+    # Register set_timer service (only once, issue #48)
+    if not hass.services.has_service(DOMAIN, SERVICE_SET_TIMER):
+        async def async_set_timer(call: ServiceCall) -> None:
+            """Handle set_timer service call (AA55/AA66 encrypted only)."""
+            start_time_str = call.data[ATTR_START_TIME]
+            duration = call.data[ATTR_DURATION]
+            device_id = call.data.get(ATTR_DEVICE_ID)
+
+            # Parse start_time "HH:MM" to minutes from midnight
+            try:
+                parts = start_time_str.split(":")
+                if len(parts) != 2:
+                    raise ValueError("Invalid time format")
+                hours = int(parts[0])
+                minutes = int(parts[1])
+                if not (0 <= hours < 24 and 0 <= minutes < 60):
+                    raise ValueError("Hours must be 0-23, minutes 0-59")
+                start_minutes = hours * 60 + minutes
+            except (ValueError, IndexError) as err:
+                raise ServiceValidationError(
+                    translation_domain=DOMAIN,
+                    translation_key="invalid_time_format",
+                    translation_placeholders={"time": start_time_str},
+                ) from err
+
+            _LOGGER.info(
+                "Service %s.%s called: start=%s (%d min), duration=%d min, device_id=%s",
+                DOMAIN, SERVICE_SET_TIMER, start_time_str, start_minutes, duration, device_id
+            )
+
+            # Find target heaters (same logic as send_command)
+            target_coords = []
+            for config_entry in hass.config_entries.async_entries(DOMAIN):
+                coord = getattr(config_entry, "runtime_data", None)
+                if not isinstance(coord, VevorHeaterCoordinator):
+                    continue
+                # Timer only supported on AA55/AA66 encrypted
+                if coord.protocol_mode not in (2, 4):
+                    continue
+                if device_id:
+                    if (device_id.upper() in coord.address.upper() or
+                        coord.address.upper().endswith(device_id.upper().replace(":", ""))):
+                        target_coords.append(coord)
+                else:
+                    target_coords.append(coord)
+
+            if not target_coords:
+                raise ServiceValidationError(
+                    translation_domain=DOMAIN,
+                    translation_key="no_timer_heater_found",
+                    translation_placeholders={"device_id": device_id or "all"},
+                )
+
+            for coord in target_coords:
+                _LOGGER.info("Setting timer on heater: %s", coord.address)
+                try:
+                    await coord.async_set_timer_start(start_minutes)
+                    await coord.async_set_timer_duration(duration)
+                except Exception as err:
+                    raise HomeAssistantError(
+                        translation_domain=DOMAIN,
+                        translation_key="timer_set_failed",
+                        translation_placeholders={
+                            "address": coord.address,
+                            "error": str(err),
+                        },
+                    ) from err
+
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_SET_TIMER,
+            async_set_timer,
+            schema=SERVICE_SET_TIMER_SCHEMA,
+        )
+        _LOGGER.debug("Registered timer service: %s.%s", DOMAIN, SERVICE_SET_TIMER)
 
     return True
 
