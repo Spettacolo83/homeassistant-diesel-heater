@@ -1919,12 +1919,35 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             await self.async_request_refresh()
 
     async def async_set_level(self, level: int) -> None:
-        """Set heater level (1-10)."""
-        # Command 4 for level (verified with BYD heater)
+        """Set heater level (1-10).
+
+        CRITICAL FIX (issue #43, @Xev analysis):
+        - Hcalory uses SEPARATE commands: cmd 5 for level, cmd 4 for temperature
+        - AAXX protocols use SAME command (cmd 4) for both level and temperature
+        """
         level = max(1, min(10, level))
-        success = await self._send_command(4, level)
+
+        # Hcalory uses command 5 for level (HCALORY_CMD_SET_GEAR)
+        # Other protocols use command 4 (distinguishes level vs temp by argument value)
+        if self._protocol_mode == 7:  # Hcalory
+            command = 5
+            self._logger.info(
+                "🔢 SET LEVEL REQUEST: level=%d, protocol=Hcalory (cmd=5)",
+                level
+            )
+        else:  # AAXX, ABBA, CBFF
+            command = 4
+            self._logger.info(
+                "🔢 SET LEVEL REQUEST: level=%d, protocol=%d (cmd=4)",
+                level, self._protocol_mode
+            )
+
+        success = await self._send_command(command, level)
         if success:
             await self.async_request_refresh()
+            self._logger.info("✅ SET LEVEL SUCCESS: level=%d", level)
+        else:
+            self._logger.warning("❌ SET LEVEL FAILED: level=%d", level)
 
     async def async_set_temperature(self, temperature: float) -> None:
         """Set target temperature in heater's native unit (no conversions).
