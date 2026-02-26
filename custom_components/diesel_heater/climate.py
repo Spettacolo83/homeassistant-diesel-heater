@@ -66,7 +66,12 @@ class VevorHeaterClimate(CoordinatorEntity[VevorHeaterCoordinator], ClimateEntit
     _attr_preset_modes = [PRESET_NONE, PRESET_AWAY, PRESET_COMFORT]
 
     def __init__(self, coordinator: VevorHeaterCoordinator, config_entry: ConfigEntry) -> None:
-        """Initialize the climate entity."""
+        """Initialize the climate entity.
+
+        Beta.37 fix for issue #43 (@Xev's analysis):
+        Set temperature unit and range statically at init based on heater's native unit.
+        This is more reliable than dynamic properties which HA may not handle correctly.
+        """
         super().__init__(coordinator)
         self._config_entry = config_entry
         self._current_preset: str | None = None
@@ -79,41 +84,18 @@ class VevorHeaterClimate(CoordinatorEntity[VevorHeaterCoordinator], ClimateEntit
         }
         self._attr_unique_id = f"{coordinator.address}_climate"
 
-    @property
-    def temperature_unit(self) -> str:
-        """Return temperature unit (dynamic based on heater's native unit).
-
-        Beta.34: Hcalory heaters can use Fahrenheit natively (32-104°F with 0.5°C step).
-        This provides far more granular control than Celsius (0-40°C with 1°C step).
-        """
-        if self.coordinator._heater_uses_fahrenheit:
-            return UnitOfTemperature.FAHRENHEIT
-        return UnitOfTemperature.CELSIUS
-
-    @property
-    def min_temp(self) -> float:
-        """Return minimum temperature (dynamic based on unit)."""
-        if self.coordinator._heater_uses_fahrenheit:
-            return 32  # 32°F = 0°C
-        return 0  # Hcalory supports 0-40°C, other protocols 8-36°C
-
-    @property
-    def max_temp(self) -> float:
-        """Return maximum temperature (dynamic based on unit)."""
-        if self.coordinator._heater_uses_fahrenheit:
-            return 104  # 104°F = 40°C
-        return 40  # Hcalory supports 0-40°C, other protocols up to 36°C
-
-    @property
-    def target_temperature_step(self) -> float:
-        """Return temperature step (dynamic based on unit).
-
-        Fahrenheit: 1°F step (equivalent to ~0.5°C, provides 72 possible values)
-        Celsius: 1°C step (provides 40 possible values)
-        """
-        if self.coordinator._heater_uses_fahrenheit:
-            return 1.0  # 1°F step
-        return 1.0  # 1°C step
+        # Set temperature unit and range statically based on heater's native unit
+        # Coordinator stores temperatures in native unit (no conversions)
+        if coordinator._heater_uses_fahrenheit:
+            self._attr_temperature_unit = UnitOfTemperature.FAHRENHEIT
+            self._attr_min_temp = 32  # 32°F = 0°C
+            self._attr_max_temp = 104  # 104°F = 40°C
+            self._attr_target_temperature_step = 1.0  # 1°F step (72 possible values)
+        else:
+            self._attr_temperature_unit = UnitOfTemperature.CELSIUS
+            self._attr_min_temp = 0  # Hcalory supports 0-40°C, other protocols 8-36°C
+            self._attr_max_temp = 40  # Hcalory supports 0-40°C, other protocols up to 36°C
+            self._attr_target_temperature_step = 1.0  # 1°C step (40 possible values)
 
     @property
     def current_temperature(self) -> float | None:

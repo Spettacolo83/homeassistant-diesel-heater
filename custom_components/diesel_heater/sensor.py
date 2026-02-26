@@ -132,7 +132,10 @@ class VevorSensorBase(CoordinatorEntity[VevorHeaterCoordinator], SensorEntity):
 
 
 class VevorCaseTemperatureSensor(VevorSensorBase):
-    """Case temperature sensor."""
+    """Case temperature sensor.
+
+    Beta.37: Reports temperature in heater's native unit (issue #43).
+    """
 
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -141,13 +144,12 @@ class VevorCaseTemperatureSensor(VevorSensorBase):
     def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator, "case_temp", "Case Temperature")
-
-    @property
-    def native_unit_of_measurement(self) -> str:
-        """Return temperature unit (dynamic based on heater's native unit)."""
-        if self.coordinator._heater_uses_fahrenheit:
-            return UnitOfTemperature.FAHRENHEIT
-        return UnitOfTemperature.CELSIUS
+        # Set unit statically based on heater's native unit (issue #43)
+        self._attr_native_unit_of_measurement = (
+            UnitOfTemperature.FAHRENHEIT
+            if coordinator._heater_uses_fahrenheit
+            else UnitOfTemperature.CELSIUS
+        )
 
     @property
     def native_value(self) -> float | None:
@@ -156,7 +158,10 @@ class VevorCaseTemperatureSensor(VevorSensorBase):
 
 
 class VevorCabTemperatureSensor(VevorSensorBase):
-    """Cab/interior temperature sensor."""
+    """Cab/interior temperature sensor.
+
+    Beta.37: Reports temperature in heater's native unit (issue #43).
+    """
 
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -164,13 +169,12 @@ class VevorCabTemperatureSensor(VevorSensorBase):
     def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator, "cab_temp", "Interior Temperature")
-
-    @property
-    def native_unit_of_measurement(self) -> str:
-        """Return temperature unit (dynamic based on heater's native unit)."""
-        if self.coordinator._heater_uses_fahrenheit:
-            return UnitOfTemperature.FAHRENHEIT
-        return UnitOfTemperature.CELSIUS
+        # Set unit statically based on heater's native unit (issue #43)
+        self._attr_native_unit_of_measurement = (
+            UnitOfTemperature.FAHRENHEIT
+            if coordinator._heater_uses_fahrenheit
+            else UnitOfTemperature.CELSIUS
+        )
 
     @property
     def native_value(self) -> float | None:
@@ -184,6 +188,8 @@ class VevorRawInteriorTemperatureSensor(VevorSensorBase):
     This shows the actual temperature reading from the heater's internal
     sensor, before any offset is applied. Useful for debugging and
     understanding the offset calibration.
+
+    Beta.37: Reports temperature in heater's native unit (issue #43).
     """
 
     _attr_device_class = SensorDeviceClass.TEMPERATURE
@@ -193,13 +199,12 @@ class VevorRawInteriorTemperatureSensor(VevorSensorBase):
     def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator, "cab_temp_raw", "Interior Temperature (Raw)")
-
-    @property
-    def native_unit_of_measurement(self) -> str:
-        """Return temperature unit (dynamic based on heater's native unit)."""
-        if self.coordinator._heater_uses_fahrenheit:
-            return UnitOfTemperature.FAHRENHEIT
-        return UnitOfTemperature.CELSIUS
+        # Set unit statically based on heater's native unit (issue #43)
+        self._attr_native_unit_of_measurement = (
+            UnitOfTemperature.FAHRENHEIT
+            if coordinator._heater_uses_fahrenheit
+            else UnitOfTemperature.CELSIUS
+        )
 
     @property
     def native_value(self) -> float | None:

@@ -3,12 +3,12 @@ from __future__ import annotations
 
 PARALLEL_UPDATES = 1
 
-from homeassistant.components.number import NumberEntity
+from homeassistant.components.number import NumberDeviceClass, NumberEntity
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from homeassistant.const import EntityCategory, UnitOfVolume
+from homeassistant.const import EntityCategory, UnitOfTemperature, UnitOfVolume
 
 from . import VevorHeaterConfigEntry
 from .const import (
@@ -95,18 +95,26 @@ class VevorHeaterLevelNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberEn
 class VevorHeaterTemperatureNumber(
     CoordinatorEntity[VevorHeaterCoordinator], NumberEntity
 ):
-    """Vevor Heater temperature number entity."""
+    """Vevor Heater temperature number entity.
+
+    Beta.37 fix for issue #43 (@Xev's analysis):
+    - Use NumberDeviceClass.TEMPERATURE so HA handles unit conversions
+    - Set native_unit_of_measurement dynamically based on heater's native unit
+    - This fixes the 97°F bug where entity declared °C but received °F values
+    """
 
     _attr_has_entity_name = True
     _attr_name = "Target Temperature"
     _attr_icon = "mdi:thermometer"
-    _attr_native_unit_of_measurement = "°C"
-    _attr_native_min_value = MIN_TEMP_CELSIUS
-    _attr_native_max_value = MAX_TEMP_CELSIUS
+    _attr_device_class = NumberDeviceClass.TEMPERATURE
     _attr_native_step = 1
 
     def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
-        """Initialize the number entity."""
+        """Initialize the number entity.
+
+        Set temperature unit and range statically at init based on heater's native unit.
+        This approach is more reliable than dynamic properties (@Xev, issue #43).
+        """
         super().__init__(coordinator)
         self._attr_unique_id = f"{coordinator.address}_target_temp"
         self._attr_device_info = {
@@ -116,15 +124,29 @@ class VevorHeaterTemperatureNumber(
             "model": "Diesel Heater",
         }
 
+        # Set unit and range based on heater's native unit
+        # Coordinator stores temperatures in native unit (no conversions)
+        if coordinator._heater_uses_fahrenheit:
+            self._attr_native_unit_of_measurement = UnitOfTemperature.FAHRENHEIT
+            self._attr_native_min_value = 32  # 32°F = 0°C
+            self._attr_native_max_value = 104  # 104°F = 40°C
+        else:
+            self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+            self._attr_native_min_value = MIN_TEMP_CELSIUS  # 0°C (Hcalory) or 8°C (others)
+            self._attr_native_max_value = MAX_TEMP_CELSIUS  # 40°C (Hcalory) or 36°C (others)
+
     @property
     def native_value(self) -> float | None:
-        """Return the current value."""
+        """Return the current value in heater's native unit."""
         temp = self.coordinator.data.get("set_temp")
-        return temp if temp is not None else MIN_TEMP_CELSIUS
+        if temp is not None:
+            return temp
+        # Fallback: return min value in correct unit
+        return self._attr_native_min_value
 
     async def async_set_native_value(self, value: float) -> None:
-        """Set new value."""
-        await self.coordinator.async_set_temperature(int(value))
+        """Set new value (no conversion needed - already in native unit)."""
+        await self.coordinator.async_set_temperature(value)
 
     @callback
     def _handle_coordinator_update(self) -> None:
