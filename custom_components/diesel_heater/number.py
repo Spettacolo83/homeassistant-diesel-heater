@@ -57,6 +57,10 @@ class VevorHeaterLevelNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberEn
     Beta.36: ALL protocols support levels 1-10 (@Xev, issue #46)
     The beta.33 assumption that Hcalory only supports 1-6 was wrong -
     decompiled APK data was incorrect. Confirmed by @smaj100: levels go 1-9, HH10.
+
+    Beta.40: Level entity is UNAVAILABLE in Temperature mode (@Xev, issue #43)
+    This prevents sending Level commands when heater is in Temperature mode,
+    which would be ignored by the heater but cause coordinator state mismatch.
     """
 
     _attr_has_entity_name = True
@@ -76,6 +80,25 @@ class VevorHeaterLevelNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberEn
             "manufacturer": "Vevor",
             "model": "Diesel Heater",
         }
+
+    @property
+    def available(self) -> bool:
+        """Return True if entity is available.
+
+        Level entity is only available when NOT in Temperature mode (mode 1).
+        In Temperature mode, level commands are ignored by the heater.
+        """
+        # First check coordinator availability
+        if not super().available:
+            return False
+
+        # Check if in Temperature mode (RUNNING_MODE_TEMPERATURE = 1)
+        from .const import RUNNING_MODE_TEMPERATURE
+        running_mode = self.coordinator.data.get("running_mode")
+        if running_mode == RUNNING_MODE_TEMPERATURE:
+            return False
+
+        return True
 
     @property
     def native_value(self) -> float:
@@ -101,6 +124,10 @@ class VevorHeaterTemperatureNumber(
     - Use NumberDeviceClass.TEMPERATURE so HA handles unit conversions
     - Set native_unit_of_measurement dynamically based on heater's native unit
     - This fixes the 97°F bug where entity declared °C but received °F values
+
+    Beta.40: Temperature entity is UNAVAILABLE in Level mode (@Xev, issue #43)
+    This prevents sending Temperature commands when heater is in Level mode,
+    which would be ignored by the heater but cause coordinator state mismatch.
     """
 
     _attr_has_entity_name = True
@@ -132,8 +159,27 @@ class VevorHeaterTemperatureNumber(
             self._attr_native_max_value = 104  # 104°F = 40°C
         else:
             self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
-            self._attr_native_min_value = MIN_TEMP_CELSIUS  # 0°C (Hcalory) or 8°C (others)
-            self._attr_native_max_value = MAX_TEMP_CELSIUS  # 40°C (Hcalory) or 36°C (others)
+            self._attr_native_min_value = MIN_TEMP_CELSIUS  # 0°C (Hcalory supports 0-40°C)
+            self._attr_native_max_value = MAX_TEMP_CELSIUS  # 40°C (Hcalory supports 0-40°C)
+
+    @property
+    def available(self) -> bool:
+        """Return True if entity is available.
+
+        Temperature entity is only available when NOT in Level mode (mode 2).
+        In Level mode, temperature commands are ignored by the heater.
+        """
+        # First check coordinator availability
+        if not super().available:
+            return False
+
+        # Check if in Level mode (RUNNING_MODE_LEVEL = 2)
+        from .const import RUNNING_MODE_LEVEL
+        running_mode = self.coordinator.data.get("running_mode")
+        if running_mode == RUNNING_MODE_LEVEL:
+            return False
+
+        return True
 
     @property
     def native_value(self) -> float | None:

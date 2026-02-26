@@ -150,8 +150,8 @@ ERROR_NAMES: Final = {
 # Limits
 MIN_LEVEL: Final = 1
 MAX_LEVEL: Final = 10
-MIN_TEMP_CELSIUS: Final = 8
-MAX_TEMP_CELSIUS: Final = 36
+MIN_TEMP_CELSIUS: Final = 0  # Hcalory supports 0-40°C (32-104°F)
+MAX_TEMP_CELSIUS: Final = 40  # Hcalory supports 0-40°C (32-104°F)
 
 # Hcalory specific limits (6 gear levels instead of 10)
 HCALORY_MIN_LEVEL: Final = 1
