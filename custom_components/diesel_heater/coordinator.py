@@ -1499,6 +1499,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         # Update coordinator state from parsed data
         if "temp_unit" in parsed:
             self._heater_uses_fahrenheit = (parsed["temp_unit"] == 1)
+            # Sync Fahrenheit flag to Hcalory protocol handler for correct command building
+            if self._protocol_mode == 7 and self._protocol and hasattr(self._protocol, '_uses_fahrenheit'):
+                self._protocol._uses_fahrenheit = self._heater_uses_fahrenheit
 
         # Apply temperature calibration (ABBA handles it internally)
         if protocol.needs_calibration:
@@ -1952,32 +1955,32 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     async def async_set_temperature(self, temperature: float) -> None:
         """Set target temperature in heater's native unit (no conversions).
 
-        Beta.34: Temperature is passed in the native unit the heater uses:
-        - Celsius for most protocols (0-40°C)
-        - Fahrenheit for Hcalory when temp_unit=1 (32-104°F)
-
-        This eliminates double conversions that caused precision loss (@Xev, issue #43).
+        Beta.41 fix: Per-protocol temperature limits:
+        - Hcalory (mode 7): 0-40°C or 32-104°F
+        - AAXX protocols (modes 1-4): 8-36°C
+        - Other protocols: 8-36°C (safe default)
         """
         current_temp = self.data.get("set_temp", "unknown")
         current_mode = self.data.get("running_mode", "unknown")
 
-        # Beta.34: Clamp to valid range based on heater's native unit
+        # Per-protocol clamping
         if self._heater_uses_fahrenheit:
             # Hcalory Fahrenheit: 32-104°F
             temperature = max(32, min(104, temperature))
             unit_str = "°F"
-            self._logger.info(
-                "🌡️ SET TEMPERATURE REQUEST: target=%.1f°F, current=%s, mode=%s, protocol=%d (Fahrenheit)",
-                temperature, current_temp, current_mode, self._protocol_mode
-            )
-        else:
-            # Celsius: 0-40°C (most protocols support 8-36°C, but Hcalory C supports 0-40°C)
+        elif self._protocol_mode == 7:
+            # Hcalory Celsius: 0-40°C
             temperature = max(0, min(40, temperature))
             unit_str = "°C"
-            self._logger.info(
-                "🌡️ SET TEMPERATURE REQUEST: target=%.1f°C, current=%s, mode=%s, protocol=%d (Celsius)",
-                temperature, current_temp, current_mode, self._protocol_mode
-            )
+        else:
+            # AAXX / ABBA / CBFF: 8-36°C
+            temperature = max(8, min(36, temperature))
+            unit_str = "°C"
+
+        self._logger.debug(
+            "SET TEMPERATURE: target=%.1f%s, current=%s, mode=%s, protocol=%d",
+            temperature, unit_str, current_temp, current_mode, self._protocol_mode
+        )
 
         # Convert to int for command (protocols expect integer temperatures)
         command_temp = int(round(temperature))

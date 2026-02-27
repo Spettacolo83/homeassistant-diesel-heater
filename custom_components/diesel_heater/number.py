@@ -151,16 +151,21 @@ class VevorHeaterTemperatureNumber(
             "model": "Diesel Heater",
         }
 
-        # Set unit and range based on heater's native unit
-        # Coordinator stores temperatures in native unit (no conversions)
+        # Set unit and range based on heater's native unit and protocol
+        # Beta.41 fix: Per-protocol limits (Hcalory: 0-40°C, AAXX: 8-36°C)
+        is_hcalory = coordinator.protocol_mode == 7
         if coordinator._heater_uses_fahrenheit:
             self._attr_native_unit_of_measurement = UnitOfTemperature.FAHRENHEIT
-            self._attr_native_min_value = 32  # 32°F = 0°C
-            self._attr_native_max_value = 104  # 104°F = 40°C
+            self._attr_native_min_value = 32   # 32°F = 0°C (Hcalory F)
+            self._attr_native_max_value = 104  # 104°F = 40°C (Hcalory F)
+        elif is_hcalory:
+            self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+            self._attr_native_min_value = 0   # Hcalory Celsius: 0-40°C
+            self._attr_native_max_value = 40
         else:
             self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
-            self._attr_native_min_value = MIN_TEMP_CELSIUS  # 0°C (Hcalory supports 0-40°C)
-            self._attr_native_max_value = MAX_TEMP_CELSIUS  # 40°C (Hcalory supports 0-40°C)
+            self._attr_native_min_value = MIN_TEMP_CELSIUS   # AAXX: 8°C
+            self._attr_native_max_value = MAX_TEMP_CELSIUS   # AAXX: 36°C
 
     @property
     def available(self) -> bool:

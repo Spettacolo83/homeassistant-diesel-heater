@@ -31,7 +31,11 @@ from .const import (
     HCALORY_CMD_SET_MODE,
     HCALORY_CMD_SET_TEMP,
     HCALORY_MAX_LEVEL,
+    HCALORY_MAX_TEMP_CELSIUS,
+    HCALORY_MAX_TEMP_FAHRENHEIT,
     HCALORY_MIN_LEVEL,
+    HCALORY_MIN_TEMP_CELSIUS,
+    HCALORY_MIN_TEMP_FAHRENHEIT,
     HCALORY_POWER_AUTO_OFF,
     HCALORY_POWER_AUTO_ON,
     HCALORY_POWER_CELSIUS,
@@ -44,6 +48,8 @@ from .const import (
     HCALORY_STATE_MACHINE_FAULT,
     HCALORY_STATE_NATURAL_WIND,
     HCALORY_STATE_STANDBY,
+    MAX_TEMP_CELSIUS,
+    MIN_TEMP_CELSIUS,
     RUNNING_MODE_LEVEL,
     RUNNING_MODE_MANUAL,
     RUNNING_MODE_TEMPERATURE,
@@ -219,7 +225,7 @@ class ProtocolAA66(VevorCommandMixin, HeaterProtocol):
         if parsed["running_mode"] == RUNNING_MODE_LEVEL:
             parsed["set_level"] = max(1, min(10, _u8_to_number(data[9])))
         elif parsed["running_mode"] == RUNNING_MODE_TEMPERATURE:
-            parsed["set_temp"] = max(8, min(36, _u8_to_number(data[9])))
+            parsed["set_temp"] = max(MIN_TEMP_CELSIUS, min(MAX_TEMP_CELSIUS, _u8_to_number(data[9])))
 
         voltage_raw = _u8_to_number(data[11]) | (_u8_to_number(data[12]) << 8)
         parsed["supply_voltage"] = voltage_raw / 10.0
@@ -254,7 +260,7 @@ class ProtocolAA55Encrypted(VevorCommandMixin, HeaterProtocol):
         parsed["altitude"] = (_u8_to_number(data[7]) + 256 * _u8_to_number(data[6])) / 10
         parsed["running_mode"] = _u8_to_number(data[8])
         parsed["set_level"] = max(1, min(10, _u8_to_number(data[10])))
-        parsed["set_temp"] = max(8, min(36, _u8_to_number(data[9])))
+        parsed["set_temp"] = max(MIN_TEMP_CELSIUS, min(MAX_TEMP_CELSIUS, _u8_to_number(data[9])))
 
         parsed["supply_voltage"] = (256 * data[11] + data[12]) / 10
         parsed["case_temperature"] = _unsign_to_sign(256 * data[13] + data[14])
@@ -344,9 +350,9 @@ class ProtocolAA66Encrypted(VevorCommandMixin, HeaterProtocol):
         # Byte 9: Set temperature (convert from F to C if needed)
         raw_set_temp = _u8_to_number(data[9])
         if heater_uses_fahrenheit:
-            parsed["set_temp"] = max(8, min(36, round((raw_set_temp - 32) * 5 / 9)))
+            parsed["set_temp"] = max(MIN_TEMP_CELSIUS, min(MAX_TEMP_CELSIUS, round((raw_set_temp - 32) * 5 / 9)))
         else:
-            parsed["set_temp"] = max(8, min(36, raw_set_temp))
+            parsed["set_temp"] = max(MIN_TEMP_CELSIUS, min(MAX_TEMP_CELSIUS, raw_set_temp))
 
         # Byte 31: Automatic Start/Stop flag
         parsed["auto_start_stop"] = (_u8_to_number(data[31]) == 1)
@@ -491,7 +497,7 @@ class ProtocolABBA(HeaterProtocol):
             if parsed["running_mode"] == RUNNING_MODE_LEVEL:
                 parsed["set_level"] = max(1, min(10, gear_byte))
             else:
-                parsed["set_temp"] = max(8, min(36, gear_byte))
+                parsed["set_temp"] = max(MIN_TEMP_CELSIUS, min(MAX_TEMP_CELSIUS, gear_byte))
 
         # Byte 8: Auto Start/Stop
         parsed["auto_start_stop"] = (_u8_to_number(data[8]) == 1)
@@ -860,7 +866,7 @@ class ProtocolCBFF(HeaterProtocol):
         if parsed["running_mode"] == RUNNING_MODE_LEVEL:
             parsed["set_level"] = max(1, min(10, run_param))
         else:
-            parsed["set_temp"] = max(8, min(36, run_param))
+            parsed["set_temp"] = max(MIN_TEMP_CELSIUS, min(MAX_TEMP_CELSIUS, run_param))
 
         # Byte 13: now_gear (current gear even in temp mode)
         if parsed["running_mode"] == RUNNING_MODE_TEMPERATURE:
@@ -993,6 +999,7 @@ class ProtocolHcalory(HeaterProtocol):
         self._is_mvp2: bool = True  # Default to MVP2, can be set by coordinator
         self._password_sent: bool = False  # Track if MVP2 password handshake was sent
         self._custom_query_dt: datetime | None = None  # Custom timestamp for time sync
+        self._uses_fahrenheit: bool = False  # Set by coordinator from parsed temp_unit
 
     def set_mvp_version(self, is_mvp2: bool) -> None:
         """Set MVP version (MVP1 vs MVP2) based on service UUID detection."""
@@ -1248,12 +1255,18 @@ class ProtocolHcalory(HeaterProtocol):
             )
 
         # Set temperature (cmd 4)
+        # Beta.41 fix: Use Hcalory-specific limits (0-40°C / 32-104°F)
+        # and respect heater's native temperature unit
         if command == 4:
-            temp = max(8, min(36, argument))
-            # Unit: 0=Celsius, 1=Fahrenheit
+            if self._uses_fahrenheit:
+                temp = max(HCALORY_MIN_TEMP_FAHRENHEIT, min(HCALORY_MAX_TEMP_FAHRENHEIT, argument))
+                unit_byte = 0x01  # Fahrenheit
+            else:
+                temp = max(HCALORY_MIN_TEMP_CELSIUS, min(HCALORY_MAX_TEMP_CELSIUS, argument))
+                unit_byte = 0x00  # Celsius
             return self._build_hcalory_cmd(
                 HCALORY_CMD_SET_TEMP,
-                bytes([temp, 0])  # temp, unit=Celsius
+                bytes([temp, unit_byte])
             )
 
         # Set level (cmd 5)
@@ -1472,12 +1485,12 @@ class ProtocolHcalory(HeaterProtocol):
         """Set temperature in Celsius mode.
 
         Args:
-            temp: Temperature in Celsius (8-36)
+            temp: Temperature in Celsius (0-40 for Hcalory)
 
         Returns:
             Command packet to set temperature
         """
-        temp_clamped = max(8, min(36, temp))
+        temp_clamped = max(HCALORY_MIN_TEMP_CELSIUS, min(HCALORY_MAX_TEMP_CELSIUS, temp))
         # Use CMD_SET_TEMP (0x0706) with [temp, unit=0]
         from .const import HCALORY_CMD_SET_TEMP
         return self._build_hcalory_cmd(

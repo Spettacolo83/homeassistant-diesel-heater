@@ -147,11 +147,17 @@ ERROR_NAMES: Final = {
     ERROR_OVERHEAT_SENSOR_FAULT: "Overheat sensor fault",
 }
 
-# Limits
+# Limits - AAXX protocols (Vevor, BYD, Sunster, HeaterCC)
 MIN_LEVEL: Final = 1
 MAX_LEVEL: Final = 10
-MIN_TEMP_CELSIUS: Final = 0  # Hcalory supports 0-40°C (32-104°F)
-MAX_TEMP_CELSIUS: Final = 40  # Hcalory supports 0-40°C (32-104°F)
+MIN_TEMP_CELSIUS: Final = 8
+MAX_TEMP_CELSIUS: Final = 36
+
+# Hcalory-specific temperature limits (wider range than AAXX)
+HCALORY_MIN_TEMP_CELSIUS: Final = 0   # 0°C (32°F)
+HCALORY_MAX_TEMP_CELSIUS: Final = 40  # 40°C (104°F)
+HCALORY_MIN_TEMP_FAHRENHEIT: Final = 32   # 32°F (0°C)
+HCALORY_MAX_TEMP_FAHRENHEIT: Final = 104  # 104°F (40°C)
 
 # Hcalory specific limits (6 gear levels instead of 10)
 HCALORY_MIN_LEVEL: Final = 1
