@@ -28,7 +28,6 @@ from .const import (
     HCALORY_CMD_POWER,
     HCALORY_CMD_SET_ALTITUDE,
     HCALORY_CMD_SET_GEAR,
-    HCALORY_CMD_SET_MODE,
     HCALORY_CMD_SET_TEMP,
     HCALORY_MAX_LEVEL,
     HCALORY_MAX_TEMP_CELSIUS,
@@ -1238,12 +1237,14 @@ class ProtocolHcalory(HeaterProtocol):
                 )
 
         # Set mode (cmd 2) - Temperature=2, Level=1
+        # @Xev btsnoop analysis (issue #43): mode switch uses CMD_POWER, not CMD_SET_MODE
         if command == 2:
             # argument: 1=Level mode, 2=Temperature mode
-            mode_value = max(1, min(2, argument))
+            from .const import HCALORY_POWER_MODE_LEVEL, HCALORY_POWER_MODE_TEMP
+            mode_value = HCALORY_POWER_MODE_TEMP if argument == 2 else HCALORY_POWER_MODE_LEVEL
             return self._build_hcalory_cmd(
-                HCALORY_CMD_SET_MODE,
-                bytes([mode_value, 0])  # mode, padding
+                HCALORY_CMD_POWER,
+                bytes([0, 0, 0, 0, 0, 0, 0, 0, mode_value])
             )
 
         # Power on/off (cmd 3)
@@ -1525,11 +1526,11 @@ class ProtocolHcalory(HeaterProtocol):
         Returns:
             Command packet to switch to level mode
         """
-        from .const import HCALORY_CMD_POWER
-        # Use the command identified by @Xev from packet capture
+        from .const import HCALORY_CMD_POWER, HCALORY_POWER_MODE_LEVEL
+        # @Xev btsnoop analysis (issue #43): 0x06=Level, 0x07=Temp
         return self._build_hcalory_cmd(
             HCALORY_CMD_POWER,
-            bytes([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07])
+            bytes([0, 0, 0, 0, 0, 0, 0, 0, HCALORY_POWER_MODE_LEVEL])
         )
 
     def set_temperature_mode(self) -> bytearray:
@@ -1538,10 +1539,11 @@ class ProtocolHcalory(HeaterProtocol):
         Returns:
             Command packet to switch to temperature mode
         """
-        from .const import HCALORY_CMD_SET_MODE, HCALORY_MODE_TEMPERATURE
+        from .const import HCALORY_CMD_POWER, HCALORY_POWER_MODE_TEMP
+        # @Xev btsnoop analysis (issue #43): 0x06=Level, 0x07=Temp
         return self._build_hcalory_cmd(
-            HCALORY_CMD_SET_MODE,
-            bytes([HCALORY_MODE_TEMPERATURE, 0x00])
+            HCALORY_CMD_POWER,
+            bytes([0, 0, 0, 0, 0, 0, 0, 0, HCALORY_POWER_MODE_TEMP])
         )
 
     def set_ventilation_mode(self) -> bytearray:
