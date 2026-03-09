@@ -13,6 +13,7 @@ Protocols supported:
 """
 from .protocol import (
     HeaterProtocol,
+    HeaterState,
     ProtocolAA55,
     ProtocolAA55Encrypted,
     ProtocolAA66,
@@ -29,6 +30,7 @@ from .protocol import (
 
 __all__ = [
     "HeaterProtocol",
+    "HeaterState",
     "ProtocolAA55",
     "ProtocolAA55Encrypted",
     "ProtocolAA66",

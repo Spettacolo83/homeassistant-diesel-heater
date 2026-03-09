@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from diesel_heater_ble import (
     HeaterProtocol,
+    HeaterState,
     ProtocolAA55,
     ProtocolAA55Encrypted,
     ProtocolAA66,
@@ -43,6 +44,9 @@ from diesel_heater_ble.const import (
 
 class TestLibraryExports:
     """Verify the library exports all expected symbols."""
+
+    def test_heater_state_export(self):
+        assert HeaterState is not None
 
     def test_protocol_classes_exist(self):
         assert HeaterProtocol is not None
@@ -157,3 +161,90 @@ class TestLibraryParity:
         assert cmd[1] == 0x55
         assert cmd[4] == 1  # command
         assert len(cmd) == 8
+
+
+class TestHeaterState:
+    """Verify HeaterState dataclass and parse_to_state()."""
+
+    def test_default_fields_are_none(self):
+        state = HeaterState()
+        assert state.running_state is None
+        assert state.cab_temperature is None
+        assert state.extra == {}
+
+    def test_from_dict_known_fields(self):
+        d = {"running_state": 1, "set_temp": 22, "supply_voltage": 12.0}
+        state = HeaterState.from_dict(d)
+        assert state.running_state == 1
+        assert state.set_temp == 22
+        assert state.supply_voltage == 12.0
+
+    def test_from_dict_unknown_fields_go_to_extra(self):
+        d = {"running_state": 1, "_custom_field": "test"}
+        state = HeaterState.from_dict(d)
+        assert state.running_state == 1
+        assert state.extra["_custom_field"] == "test"
+
+    def test_as_dict_roundtrip(self):
+        d = {"running_state": 1, "set_temp": 22, "supply_voltage": 12.0}
+        state = HeaterState.from_dict(d)
+        result = state.as_dict()
+        assert result == d
+
+    def test_as_dict_omits_none_fields(self):
+        state = HeaterState(running_state=1)
+        result = state.as_dict()
+        assert result == {"running_state": 1}
+        assert "cab_temperature" not in result
+
+    def test_as_dict_merges_extra(self):
+        state = HeaterState(running_state=1, extra={"_foo": "bar"})
+        result = state.as_dict()
+        assert result["running_state"] == 1
+        assert result["_foo"] == "bar"
+
+    def test_parse_to_state_aa55(self):
+        data = bytearray(18)
+        data[0], data[1] = 0xAA, 0x55
+        data[3] = 1  # running_state ON
+        data[8] = 1  # Level mode
+        data[9] = 5  # level 5
+        data[11], data[12] = 0xC8, 0x00  # 20.0V
+        data[13], data[14] = 0x96, 0x00  # case_temp 150
+        data[15], data[16] = 0xE8, 0x00  # cab_temp 232
+
+        p = ProtocolAA55()
+        state = p.parse_to_state(data)
+        assert state is not None
+        assert state.running_state == 1
+        assert state.running_mode == RUNNING_MODE_LEVEL
+        assert state.set_level == 5
+        assert state.supply_voltage == 20.0
+
+    def test_parse_to_state_matches_parse(self):
+        """parse_to_state().as_dict() should produce same keys as parse()."""
+        data = bytearray(21)
+        data[0], data[1] = 0xAB, 0xBA
+        data[4] = 0x01  # Heating
+        data[5] = 0x01  # Temperature mode
+        data[6] = 22    # 22 degrees
+        data[9] = 12    # 12V
+        data[10] = 0    # Celsius
+        data[11] = 52   # 52-30 = 22C
+        data[12] = 0x00
+        data[13] = 0x96  # case_temp = 150
+
+        p = ProtocolABBA()
+        dict_result = p.parse(data)
+        state = p.parse_to_state(data)
+        state_dict = state.as_dict()
+
+        # All keys from parse() should be in state.as_dict()
+        for key in dict_result:
+            assert key in state_dict, f"Missing key: {key}"
+            assert state_dict[key] == dict_result[key], f"Mismatch for {key}"
+
+    def test_parse_to_state_returns_none_for_short_data(self):
+        p = ProtocolABBA()
+        state = p.parse_to_state(bytearray(5))
+        assert state is None

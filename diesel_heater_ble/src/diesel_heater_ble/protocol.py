@@ -17,6 +17,7 @@ This module has no dependency on Home Assistant.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -126,6 +127,115 @@ def _format_timer(timer_start: int, timer_duration: int, timer_enabled: bool) ->
 
 
 # ---------------------------------------------------------------------------
+# Parsed state dataclass
+# ---------------------------------------------------------------------------
+
+@dataclass
+class HeaterState:
+    """Parsed heater state from BLE notification data.
+
+    All fields are optional (None by default) because not every protocol
+    provides every value.  The coordinator can read whichever fields its
+    platform entities need.
+    """
+
+    # Core state
+    running_state: int | None = None
+    error_code: int | None = None
+    running_step: int | None = None
+    running_mode: int | None = None
+    set_level: int | None = None
+    set_temp: int | None = None
+
+    # Measurements
+    supply_voltage: float | None = None
+    case_temperature: float | None = None
+    cab_temperature: float | None = None
+    cab_temperature_raw: float | None = None
+    altitude: float | None = None
+
+    # Configuration
+    temp_unit: int | None = None
+    language: int | None = None
+    tank_volume: int | None = None
+    pump_type: int | None = None
+    auto_start_stop: bool | None = None
+    rf433_enabled: bool | None = None
+    altitude_unit: int | None = None
+    high_altitude: int | None = None
+
+    # Offset / CO / hardware
+    heater_offset: int | None = None
+    co_ppm: float | None = None
+    backlight: int | None = None
+    hardware_version: int | None = None
+    software_version: int | None = None
+    motherboard_version: int | None = None
+    part_number: str | None = None
+
+    # Timer (AA55/AA66 encrypted)
+    device_time: str | None = None
+    device_time_minutes: int | None = None
+    timer_start_minutes: int | None = None
+    timer_duration_minutes: int | None = None
+    timer_enabled: bool | None = None
+    timer: str | None = None
+
+    # CBFF-specific
+    cbff_protocol_version: int | None = None
+    pwr_onoff: int | None = None
+    startup_temp_diff: int | None = None
+    shutdown_temp_diff: int | None = None
+    wifi_enabled: bool | None = None
+    heater_mode: int | None = None
+    remain_run_time: int | None = None
+
+    # Hcalory-specific
+    hcalory_status: int | None = None
+    hcalory_running_step: int | None = None
+    hcalory_set_mode: int | None = None
+    hcalory_set_value_none: bool | None = None
+
+    # Connection flag (ABBA/CBFF/Hcalory set this)
+    connected: bool | None = None
+
+    # Extra fields not covered above (forward-compatible)
+    extra: dict[str, Any] = field(default_factory=dict)
+
+    def as_dict(self) -> dict[str, Any]:
+        """Convert to a flat dict, merging extra fields.
+
+        Returns the same structure as the legacy ``parse()`` dict so that
+        existing coordinator code can migrate incrementally.
+        """
+        result: dict[str, Any] = {}
+        for f in self.__dataclass_fields__:
+            if f == "extra":
+                continue
+            val = getattr(self, f)
+            if val is not None:
+                result[f] = val
+        result.update(self.extra)
+        return result
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> HeaterState:
+        """Create a HeaterState from a parse() dict.
+
+        Known fields are set as attributes; unknown fields go into ``extra``.
+        """
+        known = {f.name for f in cls.__dataclass_fields__.values() if f.name != "extra"}
+        kwargs: dict[str, Any] = {}
+        extra: dict[str, Any] = {}
+        for key, val in data.items():
+            if key in known:
+                kwargs[key] = val
+            else:
+                extra[key] = val
+        return cls(**kwargs, extra=extra)
+
+
+# ---------------------------------------------------------------------------
 # Abstract base class
 # ---------------------------------------------------------------------------
 
@@ -150,6 +260,18 @@ class HeaterProtocol(ABC):
     @abstractmethod
     def build_command(self, command: int, argument: int, passkey: int) -> bytearray:
         """Build a command packet for this protocol."""
+
+    def parse_to_state(self, data: bytearray) -> HeaterState | None:
+        """Parse BLE data and return a HeaterState dataclass.
+
+        Calls ``parse()`` internally for backward compatibility, then wraps
+        the resulting dict into a ``HeaterState``.  Returns ``None`` when
+        ``parse()`` returns ``None``.
+        """
+        parsed = self.parse(data)
+        if parsed is None:
+            return None
+        return HeaterState.from_dict(parsed)
 
 
 # ---------------------------------------------------------------------------
