@@ -821,13 +821,20 @@ class ProtocolCBFF(HeaterProtocol):
             payload = bytes([1, argument, 0xFF, 0xFF])
             packet = self._build_feaa(cmd_1=0x01, cmd_2=0x01, payload=payload)
 
-        # Set mode (cmd 2)
+        # Set mode (cmd 2): argument=1 for level, argument=2 for temperature
         elif command == 2:
-            packet = self._build_feaa(cmd_1=0x01, cmd_2=0x02)
+            if argument == 1:
+                # Switch to level mode, default level 5
+                payload = bytes([1, 5, 0xFF, 0xFF])
+            else:
+                # Switch to temperature mode, default 21°C
+                payload = bytes([2, 21, 0xFF, 0xFF])
+            packet = self._build_feaa(cmd_1=0x01, cmd_2=0x01, payload=payload)
 
-        # Config commands (14-21): Fall back to AA55 for now
-        elif command in (14, 15, 16, 17, 19, 20, 21):
-            return self._build_aa55_fallback(command, argument, passkey)
+        # Config commands (10-21): not implemented for FEAA protocol yet
+        # FEAA uses its own settings command (cmd1=0x03), not AA55 commands
+        elif 10 <= command <= 21:
+            packet = self._build_feaa(cmd_1=0x00, cmd_2=0x00)
 
         # Default: status request
         else:
@@ -863,18 +870,6 @@ class ProtocolCBFF(HeaterProtocol):
         checksum = sum(packet) & 0xFF
         packet.append(checksum)
 
-        return packet
-
-    @staticmethod
-    def _build_aa55_fallback(command: int, argument: int, passkey: int) -> bytearray:
-        """Build 8-byte AA55 command packet (fallback for config commands)."""
-        packet = bytearray([0xAA, 0x55, 0, 0, 0, 0, 0, 0])
-        packet[2] = passkey // 100
-        packet[3] = passkey % 100
-        packet[4] = command % 256
-        packet[5] = argument % 256
-        packet[6] = (argument // 256) % 256
-        packet[7] = (packet[2] + packet[3] + packet[4] + packet[5] + packet[6]) % 256
         return packet
 
     def parse(self, data: bytearray) -> dict[str, Any] | None:
@@ -965,12 +960,14 @@ class ProtocolCBFF(HeaterProtocol):
         # Byte 14: run_step
         parsed["running_step"] = _u8_to_number(data[14])
 
-        # Byte 11: run_mode (1/3/4=Level, 2=Temperature)
+        # Byte 11: run_mode (1=Level, 2=Temperature, 3=Ventilation)
         run_mode = _u8_to_number(data[11])
-        if run_mode in (1, 3, 4):
+        if run_mode == 1:
             parsed["running_mode"] = RUNNING_MODE_LEVEL
         elif run_mode == 2:
             parsed["running_mode"] = RUNNING_MODE_TEMPERATURE
+        elif run_mode == 3:
+            parsed["running_mode"] = RUNNING_MODE_LEVEL  # Ventilation uses level control
         else:
             parsed["running_mode"] = RUNNING_MODE_MANUAL
 
@@ -1000,8 +997,8 @@ class ProtocolCBFF(HeaterProtocol):
         # Byte 20: altitude_unit (lower nibble)
         parsed["altitude_unit"] = _u8_to_number(data[20]) & 0x0F
 
-        # Bytes 21-22: altitude (uint16 LE)
-        parsed["altitude"] = data[21] | (data[22] << 8)
+        # Bytes 21-22: altitude (uint16 LE, /10)
+        parsed["altitude"] = (data[21] | (data[22] << 8)) / 10.0
 
         # Bytes 23-24: voltage (uint16 LE, /10)
         parsed["supply_voltage"] = (data[23] | (data[24] << 8)) / 10.0

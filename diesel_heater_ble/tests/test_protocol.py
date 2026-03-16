@@ -1052,12 +1052,18 @@ class TestProtocolCBFF:
             assert result["running_state"] == 1, f"run_state={state} should be ON"
 
     def test_parse_level_mode(self):
-        """run_mode 1, 3, 4 → RUNNING_MODE_LEVEL."""
-        for mode in (1, 3, 4):
-            data = _make_cbff_data(run_mode=mode, run_param=7)
-            result = self.proto.parse(data)
-            assert result["running_mode"] == 1  # RUNNING_MODE_LEVEL
-            assert result["set_level"] == 7
+        """run_mode 1 → RUNNING_MODE_LEVEL."""
+        data = _make_cbff_data(run_mode=1, run_param=7)
+        result = self.proto.parse(data)
+        assert result["running_mode"] == 1  # RUNNING_MODE_LEVEL
+        assert result["set_level"] == 7
+
+    def test_parse_ventilation_mode(self):
+        """run_mode 3 (ventilation) → RUNNING_MODE_LEVEL (uses level control)."""
+        data = _make_cbff_data(run_mode=3, run_param=5)
+        result = self.proto.parse(data)
+        assert result["running_mode"] == 1  # RUNNING_MODE_LEVEL (ventilation)
+        assert result["set_level"] == 5
 
     def test_parse_temperature_mode(self):
         """run_mode 2 → RUNNING_MODE_TEMPERATURE."""
@@ -1068,10 +1074,11 @@ class TestProtocolCBFF:
         assert result["set_level"] == 6  # now_gear in temp mode
 
     def test_parse_other_mode(self):
-        """run_mode not 1-4 → RUNNING_MODE_MANUAL."""
-        data = _make_cbff_data(run_mode=0)
-        result = self.proto.parse(data)
-        assert result["running_mode"] == 0  # RUNNING_MODE_MANUAL
+        """run_mode not 1-3 → RUNNING_MODE_MANUAL."""
+        for mode in (0, 4, 5):
+            data = _make_cbff_data(run_mode=mode)
+            result = self.proto.parse(data)
+            assert result["running_mode"] == 0  # RUNNING_MODE_MANUAL
 
     def test_parse_voltage(self):
         data = _make_cbff_data(voltage_raw=120)
@@ -1375,12 +1382,25 @@ class TestProtocolCBFF:
         expected = bytes.fromhex("ca8840414c5d405072008ffcbd")
         assert pkt == bytearray(expected)
 
-    def test_feaa_config_fallback_to_aa55(self):
-        """FEAA config commands fall back to AA55 for compatibility."""
-        # Set offset (cmd 14) should use AA55 fallback
+    def test_feaa_config_commands_not_implemented(self):
+        """FEAA config commands (10-21) return status query instead of AA55."""
         pkt = self.proto.build_command(14, 2, 1234)
-        assert pkt[0:2] == bytes([0xAA, 0x55])
-        assert len(pkt) == 8
+        # Should be FEAA status query, not AA55 fallback
+        assert pkt[0:2] != bytes([0xAA, 0x55])
+
+    def test_feaa_set_mode_level(self):
+        """Set mode to level uses cmd1=0x01, cmd2=0x01 with level payload."""
+        pkt = self.proto.build_command(2, 1, 1234)
+        # Unencrypted: should contain payload [1, 5, 0xFF, 0xFF]
+        assert pkt[8] == 1   # mode=level
+        assert pkt[9] == 5   # default level 5
+
+    def test_feaa_set_mode_temperature(self):
+        """Set mode to temperature uses cmd1=0x01, cmd2=0x01 with temp payload."""
+        pkt = self.proto.build_command(2, 2, 1234)
+        # Unencrypted: should contain payload [2, 21, 0xFF, 0xFF]
+        assert pkt[8] == 2    # mode=temperature
+        assert pkt[9] == 21   # default 21°C
 
     def test_is_heater_protocol(self):
         assert isinstance(self.proto, HeaterProtocol)
