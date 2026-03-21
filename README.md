@@ -62,8 +62,8 @@ This integration supports **multiple protocols** and has been tested with variou
 | AA66 Unencrypted | 95% | AirHeaterBLE | 20-byte variant |
 | AA66 Encrypted | 95% | AirHeaterBLE | XOR encrypted, Fahrenheit internal |
 | ABBA | 80% | AirHeaterCC | Different command structure |
-| CBFF | 50% | Sunster | Double XOR encryption variant |
-| Hcalory MVP2 | 70% | Hcalory | New protocol for HBU1S and similar |
+| CBFF/FEAA | 60% | Sunster | Double XOR encryption variant |
+| Hcalory MVP2 | 95% | Hcalory | New protocol for HBU1S and similar |
 
 ABBA, CBFF, and Hcalory protocols are used by various heater brands. If you own a heater that uses one of these protocols, please check the [Issues](https://github.com/Spettacolo83/homeassistant-diesel-heater/issues), beta test, and report any problems.
 
@@ -594,7 +594,29 @@ This integration communicates via Bluetooth LE and supports 6 protocol variants 
 
 ## Changelog
 
-### Version 2.0.0 (Latest)
+### Version 2.1.4 (Latest)
+- **Hcalory Protocol Improvements** (95% completion)
+  - Fixed MVP1/MVP2 command routing for all Hcalory heaters
+  - Fixed Auto Start/Stop toggle (HCALORY_POWER_AUTO_TOGGLE)
+  - Fixed cmd 18 routing for Hcalory-specific commands
+  - Temperature 97°F fix for Fahrenheit-based heaters
+  - Mode switching Level/Temperature fix
+- **FEAA/Sunster Protocol** (60% completion — new protocol support)
+  - Full FEAA encrypted protocol support for Sunster heaters
+  - Protocol detection independent of device MAC address
+  - Altitude parsing fix (divide by 10.0)
+  - Ventilation mode (run_mode=3) support
+  - Fixed set_mode command to use native FEAA payload
+  - Removed incorrect AA55 fallback for config commands
+  - Reverted ffe3/ffe4 characteristic switch (Sunster uses ffe1 for all)
+- **Library**: `diesel-heater-ble` 0.3.2
+  - HeaterState dataclass for structured data
+  - FEAA byte value fixes and encryption improvements
+  - All 169 tests passing
+- Special thanks to @Xev for extensive FEAA protocol research, btsnoop analysis, and Sunster app reverse engineering
+- Special thanks to @BradleyDeLar for FEAA/Sunster device testing and btsnoop captures
+
+### Version 2.0.0
 - **BREAKING: Integration renamed from `vevor_heater` to `diesel_heater`**
   - Better reflects multi-brand support (Vevor, BYD, HeaterCC, Sunster, and other Chinese diesel heaters)
   - **Automatic migration**: Storage files and entity history are preserved when upgrading
@@ -865,7 +887,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - **Original Author**: [@MSDATDE](https://github.com/MSDATDE) - Thank you for creating this excellent integration!
 - **Original Repository**: [MSDATDE/homeassistant-vevor-heater](https://github.com/MSDATDE/homeassistant-vevor-heater)
-- **@Xev** - Extensive testing, protocol research, ABBA/CBFF protocol analysis, Sunster app reverse engineering, and invaluable feedback throughout development
+- **@Xev** - Extensive testing, protocol research, ABBA/CBFF/FEAA protocol analysis, Sunster app reverse engineering, btsnoop packet analysis, and invaluable feedback throughout development
+- **@BradleyDeLar** - FEAA/Sunster device testing, btsnoop captures, and detailed bug reports
 - **@postal** - ABBA protocol byte mapping and verification
 - **@triptyx-ux** - ABBA and CBFF/Sunster heater testing
 - **@zak4206** - 18-byte AA55 protocol identification
