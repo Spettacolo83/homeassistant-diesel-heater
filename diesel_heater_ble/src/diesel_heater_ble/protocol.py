@@ -54,6 +54,7 @@ from .const import (
     RUNNING_MODE_LEVEL,
     RUNNING_MODE_MANUAL,
     RUNNING_MODE_TEMPERATURE,
+    RUNNING_MODE_VENTILATION,
     SUNSTER_V21_KEY,
 )
 
@@ -737,9 +738,23 @@ class ProtocolCBFF(HeaterProtocol):
     protocol_mode = 6
     name = "CBFF"
 
+    # FEAA run_mode constants (payload byte 0)
+    FEAA_MODE_LEVEL: int = 1
+    FEAA_MODE_TEMPERATURE: int = 2
+    FEAA_MODE_VENTILATION: int = 3
+
+    # Defaults when no state is known yet
+    _DEFAULT_MODE: int = 1   # level
+    _DEFAULT_PARAM: int = 5  # level 5
+
     def __init__(self) -> None:
         self._device_sn: str | None = None
         self._v21_mode: bool = False  # Enable V2.1 encrypted mode
+        # Track last known mode/param from heater status for power on/mode switch
+        # (@Xev, issue #45: FEAA has no separate mode/param commands —
+        # a single command sets both, so we need to remember the last values)
+        self._last_mode: int = self._DEFAULT_MODE
+        self._last_param: int = self._DEFAULT_PARAM
 
     def set_device_sn(self, sn: str) -> None:
         """Set the device serial number (BLE MAC without colons, uppercased).
@@ -787,11 +802,14 @@ class ProtocolCBFF(HeaterProtocol):
 
         Command mapping (FEAA protocol, @Xev btsnoop analysis):
         - cmd 0/1: Status request (cmd_1=0x00, cmd_2=0x00)
-        - cmd 2: Set mode (cmd_1=0x01, cmd_2=0x02)
-        - cmd 3: Power on/off (cmd_1=0x01, cmd_2=0x01 on / cmd_2=0x00 off)
+        - cmd 2: Set mode (cmd_1=0x01, cmd_2=0x01, payload=[mode, last_param, 0xFF, 0xFF])
+        - cmd 3: Power on/off (cmd_1=0x01, cmd_2=0x01/0x00, payload=[last_mode, last_param, ...])
         - cmd 4: Set temperature (cmd_1=0x01, cmd_2=0x01, payload=[2, temp, 0xFF, 0xFF])
         - cmd 5: Set level (cmd_1=0x01, cmd_2=0x01, payload=[1, level, 0xFF, 0xFF])
-        - cmd 14-21: Config commands (use AA55 fallback for compatibility)
+        - cmd 10-21: Not implemented (FEAA uses cmd1=0x03 for settings)
+
+        Power on/off and set_mode use _last_mode/_last_param from heater state
+        instead of hardcoded defaults (@Xev, issue #45).
 
         All commands are encrypted with double-XOR when device_sn is available.
         """
@@ -800,14 +818,16 @@ class ProtocolCBFF(HeaterProtocol):
             packet = self._build_feaa(cmd_1=0x00, cmd_2=0x00)
 
         # Power on/off (cmd 3: argument=1 for on, 0 for off)
+        # @Xev (issue #45): FEAA uses last_mode/last_param, not hardcoded values
         elif command == 3:
             if argument == 1:
-                # Power ON: mode=1 (level), param=5 (default), time=0xFFFF (infinite)
-                payload = bytes([1, 5, 0xFF, 0xFF])
+                # Power ON: resume with last known mode and param
+                payload = bytes([self._last_mode, self._last_param, 0xFF, 0xFF])
                 packet = self._build_feaa(cmd_1=0x01, cmd_2=0x01, payload=payload)
             else:
-                # Power OFF
-                packet = self._build_feaa(cmd_1=0x01, cmd_2=0x00)
+                # Power OFF: also sends last mode/param (@Xev btsnoop confirmation)
+                payload = bytes([self._last_mode, self._last_param, 0xFF, 0xFF])
+                packet = self._build_feaa(cmd_1=0x01, cmd_2=0x00, payload=payload)
 
         # Set temperature (cmd 4)
         elif command == 4:
@@ -822,18 +842,26 @@ class ProtocolCBFF(HeaterProtocol):
             packet = self._build_feaa(cmd_1=0x01, cmd_2=0x01, payload=payload)
 
         # Set mode (cmd 2): argument=1 for level, argument=2 for temperature
+        # @Xev (issue #45): use last known param for the target mode
         elif command == 2:
             if argument == 1:
-                # Switch to level mode, default level 5
-                payload = bytes([1, 5, 0xFF, 0xFF])
+                # Switch to level mode — use last_param if we were in level, else default 5
+                param = self._last_param if self._last_mode == self.FEAA_MODE_LEVEL else self._DEFAULT_PARAM
+                payload = bytes([self.FEAA_MODE_LEVEL, param, 0xFF, 0xFF])
             else:
-                # Switch to temperature mode, default 21°C
-                payload = bytes([2, 21, 0xFF, 0xFF])
+                # Switch to temperature mode — use last_param if we were in temp, else default 21
+                param = self._last_param if self._last_mode == self.FEAA_MODE_TEMPERATURE else 21
+                payload = bytes([self.FEAA_MODE_TEMPERATURE, param, 0xFF, 0xFF])
             packet = self._build_feaa(cmd_1=0x01, cmd_2=0x01, payload=payload)
 
-        # Config commands (10-21): not implemented for FEAA protocol yet
-        # FEAA uses its own settings command (cmd1=0x03), not AA55 commands
+        # Config commands (10-21): not implemented for FEAA protocol
+        # @Xev (issue #45): FEAA uses its own settings command (cmd1=0x03),
+        # not AA55-style config commands. Log and return status query.
         elif 10 <= command <= 21:
+            import logging
+            logging.getLogger(__name__).warning(
+                "FEAA config command %d not implemented — use FEAA settings (cmd1=0x03) instead", command
+            )
             packet = self._build_feaa(cmd_1=0x00, cmd_2=0x00)
 
         # Default: status request
@@ -872,6 +900,29 @@ class ProtocolCBFF(HeaterProtocol):
 
         return packet
 
+    def _update_last_state(self, parsed: dict[str, Any]) -> None:
+        """Update _last_mode/_last_param from parsed heater status.
+
+        This allows power on/off and mode switch commands to use the
+        heater's actual last mode and param instead of hardcoded defaults.
+        """
+        mode = parsed.get("running_mode")
+        if mode == RUNNING_MODE_LEVEL:
+            self._last_mode = self.FEAA_MODE_LEVEL
+            level = parsed.get("set_level")
+            if level is not None:
+                self._last_param = level
+        elif mode == RUNNING_MODE_TEMPERATURE:
+            self._last_mode = self.FEAA_MODE_TEMPERATURE
+            temp = parsed.get("set_temp")
+            if temp is not None:
+                self._last_param = temp
+        elif mode == RUNNING_MODE_VENTILATION:
+            self._last_mode = self.FEAA_MODE_VENTILATION
+            level = parsed.get("set_level")
+            if level is not None:
+                self._last_param = level
+
     def parse(self, data: bytearray) -> dict[str, Any] | None:
         if len(data) < 46:
             return None
@@ -879,6 +930,7 @@ class ProtocolCBFF(HeaterProtocol):
         # Try parsing raw data first (unencrypted CBFF)
         parsed = self._parse_cbff_fields(data)
         if not self._is_data_suspect(parsed):
+            self._update_last_state(parsed)
             return parsed
 
         # Raw data looks wrong — try decryption if device_sn is available
@@ -887,6 +939,7 @@ class ProtocolCBFF(HeaterProtocol):
             parsed_dec = self._parse_cbff_fields(decrypted)
             if not self._is_data_suspect(parsed_dec):
                 parsed_dec["_cbff_decrypted"] = True
+                self._update_last_state(parsed_dec)
                 return parsed_dec
 
         # Neither raw nor decrypted data is valid
@@ -967,20 +1020,20 @@ class ProtocolCBFF(HeaterProtocol):
         elif run_mode == 2:
             parsed["running_mode"] = RUNNING_MODE_TEMPERATURE
         elif run_mode == 3:
-            parsed["running_mode"] = RUNNING_MODE_LEVEL  # Ventilation uses level control
+            parsed["running_mode"] = RUNNING_MODE_VENTILATION
         else:
             parsed["running_mode"] = RUNNING_MODE_MANUAL
 
         # Byte 12: run_param
         run_param = _u8_to_number(data[12])
-        if parsed["running_mode"] == RUNNING_MODE_LEVEL:
+        if parsed["running_mode"] in (RUNNING_MODE_LEVEL, RUNNING_MODE_VENTILATION):
             parsed["set_level"] = max(1, min(10, run_param))
+        elif parsed["running_mode"] == RUNNING_MODE_TEMPERATURE:
+            parsed["set_temp"] = max(MIN_TEMP_CELSIUS, min(MAX_TEMP_CELSIUS, run_param))
+            # Byte 13: now_gear (current gear in temp mode)
+            parsed["set_level"] = max(1, min(10, _u8_to_number(data[13])))
         else:
             parsed["set_temp"] = max(MIN_TEMP_CELSIUS, min(MAX_TEMP_CELSIUS, run_param))
-
-        # Byte 13: now_gear (current gear even in temp mode)
-        if parsed["running_mode"] == RUNNING_MODE_TEMPERATURE:
-            parsed["set_level"] = max(1, min(10, _u8_to_number(data[13])))
 
         # Byte 15: fault_display
         parsed["error_code"] = _u8_to_number(data[15]) & 0x3F

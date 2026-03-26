@@ -1059,10 +1059,10 @@ class TestProtocolCBFF:
         assert result["set_level"] == 7
 
     def test_parse_ventilation_mode(self):
-        """run_mode 3 (ventilation) → RUNNING_MODE_LEVEL (uses level control)."""
+        """run_mode 3 (ventilation) → RUNNING_MODE_VENTILATION with level control."""
         data = _make_cbff_data(run_mode=3, run_param=5)
         result = self.proto.parse(data)
-        assert result["running_mode"] == 1  # RUNNING_MODE_LEVEL (ventilation)
+        assert result["running_mode"] == 3  # RUNNING_MODE_VENTILATION
         assert result["set_level"] == 5
 
     def test_parse_temperature_mode(self):
@@ -1320,26 +1320,44 @@ class TestProtocolCBFF:
         assert len(pkt) == 9   # 9-byte status query
         assert pkt[-1] == sum(pkt[:-1]) & 0xFF
 
-    def test_feaa_power_on(self):
-        """FEAA power on uses cmd_1=0x01, cmd_2=0x01, payload=[mode, param, time]."""
+    def test_feaa_power_on_defaults(self):
+        """FEAA power on uses _last_mode/_last_param (defaults: level 5)."""
         pkt = self.proto.build_command(3, 1, 1234)  # cmd 3, arg 1 = power on
         assert pkt[0:2] == bytes([0xFE, 0xAA])
         assert pkt[6] == 0x01  # cmd_1 = control
         assert pkt[7] == 0x01  # cmd_2 = set with payload
-        assert pkt[8] == 1    # mode = level
+        assert pkt[8] == 1    # mode = level (default)
         assert pkt[9] == 5    # default level
         assert pkt[10] == 0xFF  # time MSB
         assert pkt[11] == 0xFF  # time LSB
         assert pkt[-1] == sum(pkt[:-1]) & 0xFF
 
+    def test_feaa_power_on_remembers_last_state(self):
+        """Power on uses last known mode/param from heater status."""
+        # Simulate heater reporting temp mode at 28°C
+        data = _make_cbff_data(run_mode=2, run_param=28, now_gear=6)
+        self.proto.parse(data)
+        pkt = self.proto.build_command(3, 1, 1234)
+        assert pkt[8] == 2    # mode = temperature (remembered)
+        assert pkt[9] == 28   # param = 28°C (remembered)
+
     def test_feaa_power_off(self):
-        """FEAA power off uses cmd_1=0x01, cmd_2=0x00."""
+        """FEAA power off uses cmd_1=0x01, cmd_2=0x00, with last mode/param payload."""
         pkt = self.proto.build_command(3, 0, 1234)  # cmd 3, arg 0 = power off
         assert pkt[0:2] == bytes([0xFE, 0xAA])
         assert pkt[6] == 0x01  # cmd_1 = control
         assert pkt[7] == 0x00  # cmd_2 = off
-        assert len(pkt) == 9   # 9-byte packet (no payload)
+        assert pkt[8] == 1    # last_mode default = level
+        assert pkt[9] == 5    # last_param default = 5
         assert pkt[-1] == sum(pkt[:-1]) & 0xFF
+
+    def test_feaa_power_off_remembers_last_state(self):
+        """Power off uses last known mode/param from heater status."""
+        data = _make_cbff_data(run_mode=2, run_param=22, now_gear=4)
+        self.proto.parse(data)
+        pkt = self.proto.build_command(3, 0, 1234)
+        assert pkt[8] == 2    # mode = temperature (remembered)
+        assert pkt[9] == 22   # param = 22°C (remembered)
 
     def test_feaa_set_temperature(self):
         """FEAA set temperature uses cmd_1=0x01, cmd_2=0x01, payload=[2, temp, 0xFF, 0xFF]."""
@@ -1391,16 +1409,88 @@ class TestProtocolCBFF:
     def test_feaa_set_mode_level(self):
         """Set mode to level uses cmd1=0x01, cmd2=0x01 with level payload."""
         pkt = self.proto.build_command(2, 1, 1234)
-        # Unencrypted: should contain payload [1, 5, 0xFF, 0xFF]
         assert pkt[8] == 1   # mode=level
-        assert pkt[9] == 5   # default level 5
+        assert pkt[9] == 5   # default level 5 (no prior state)
 
     def test_feaa_set_mode_temperature(self):
         """Set mode to temperature uses cmd1=0x01, cmd2=0x01 with temp payload."""
         pkt = self.proto.build_command(2, 2, 1234)
-        # Unencrypted: should contain payload [2, 21, 0xFF, 0xFF]
         assert pkt[8] == 2    # mode=temperature
-        assert pkt[9] == 21   # default 21°C
+        assert pkt[9] == 21   # default 21°C (no prior state)
+
+    def test_feaa_set_mode_remembers_last_param(self):
+        """Set mode uses last known param for the target mode."""
+        # First, heater reports level mode at level 8
+        data = _make_cbff_data(run_mode=1, run_param=8)
+        self.proto.parse(data)
+        # Switch to temperature (no prior temp state → default 21)
+        pkt = self.proto.build_command(2, 2, 1234)
+        assert pkt[8] == 2
+        assert pkt[9] == 21
+        # Now heater reports temp mode at 30°C
+        data = _make_cbff_data(run_mode=2, run_param=30, now_gear=6)
+        self.proto.parse(data)
+        # Switch back to level (last level was 8)
+        pkt = self.proto.build_command(2, 1, 1234)
+        assert pkt[8] == 1
+        assert pkt[9] == 5  # default because last_mode was temp, not level
+
+    def test_feaa_config_commands_return_status_query(self):
+        """FEAA config commands (10-21) return FEAA status query."""
+        for cmd in (10, 14, 18, 21):
+            pkt = self.proto.build_command(cmd, 0, 1234)
+            assert pkt[0:2] == bytes([0xFE, 0xAA])
+            assert pkt[6] == 0x00  # cmd_1 = status
+            assert pkt[7] == 0x00  # cmd_2 = read
+
+    def test_feaa_update_last_state_level(self):
+        """Parsing level mode updates _last_mode and _last_param."""
+        data = _make_cbff_data(run_mode=1, run_param=8)
+        self.proto.parse(data)
+        assert self.proto._last_mode == 1  # FEAA_MODE_LEVEL
+        assert self.proto._last_param == 8
+
+    def test_feaa_update_last_state_temperature(self):
+        """Parsing temperature mode updates _last_mode and _last_param."""
+        data = _make_cbff_data(run_mode=2, run_param=25, now_gear=6)
+        self.proto.parse(data)
+        assert self.proto._last_mode == 2  # FEAA_MODE_TEMPERATURE
+        assert self.proto._last_param == 25
+
+    def test_feaa_update_last_state_ventilation(self):
+        """Parsing ventilation mode updates _last_mode and _last_param."""
+        data = _make_cbff_data(run_mode=3, run_param=7)
+        self.proto.parse(data)
+        assert self.proto._last_mode == 3  # FEAA_MODE_VENTILATION
+        assert self.proto._last_param == 7
+
+    def test_feaa_power_cycle_with_state(self):
+        """Full power cycle: parse status → power off → power on preserves state."""
+        # Heater is running in temp mode at 26°C
+        data = _make_cbff_data(run_mode=2, run_param=26, now_gear=5, run_state=1)
+        self.proto.parse(data)
+        # Power off
+        off_pkt = self.proto.build_command(3, 0, 1234)
+        assert off_pkt[8] == 2   # temp mode
+        assert off_pkt[9] == 26  # 26°C
+        # Power on (should resume same mode/param)
+        on_pkt = self.proto.build_command(3, 1, 1234)
+        assert on_pkt[8] == 2   # temp mode
+        assert on_pkt[9] == 26  # 26°C
+
+    def test_feaa_set_level_updates_state(self):
+        """Setting level via cmd 5 should be reflected in next power on."""
+        # Parse initial state
+        data = _make_cbff_data(run_mode=1, run_param=3)
+        self.proto.parse(data)
+        assert self.proto._last_param == 3
+        # After setting level 7, heater reports back
+        data = _make_cbff_data(run_mode=1, run_param=7)
+        self.proto.parse(data)
+        # Power on should use level 7
+        pkt = self.proto.build_command(3, 1, 1234)
+        assert pkt[8] == 1  # level mode
+        assert pkt[9] == 7  # level 7
 
     def test_is_heater_protocol(self):
         assert isinstance(self.proto, HeaterProtocol)
