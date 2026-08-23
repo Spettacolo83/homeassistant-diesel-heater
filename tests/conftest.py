@@ -6,6 +6,7 @@ having Home Assistant installed.
 """
 from __future__ import annotations
 
+import importlib.machinery
 import sys
 import types
 from pathlib import Path
@@ -22,11 +23,29 @@ class _HAStubFinder:
 
     _PREFIXES = ("homeassistant", "bleak", "bleak_retry_connector")
 
+    def find_spec(self, fullname, path=None, target=None):
+        for prefix in self._PREFIXES:
+            if fullname == prefix or fullname.startswith(prefix + "."):
+                return importlib.machinery.ModuleSpec(
+                    fullname,
+                    self,
+                    is_package=True,
+                )
+        return None
+
     def find_module(self, fullname, path=None):
         for prefix in self._PREFIXES:
             if fullname == prefix or fullname.startswith(prefix + "."):
                 return self
         return None
+
+    def create_module(self, spec):
+        return None
+
+    def exec_module(self, mod):
+        mod.__path__ = []          # make it a package
+        mod.__loader__ = self
+        mod.__getattr__ = lambda name: MagicMock()
 
     def load_module(self, fullname):
         if fullname in sys.modules:
@@ -180,9 +199,9 @@ class _StubConfigEntry:
 # Force-create the modules via our finder, then override specific attributes
 # with real classes.  This must happen BEFORE any test imports config_flow.py.
 
-import homeassistant.config_entries  # noqa: E402
-import homeassistant.data_entry_flow  # noqa: E402
-import homeassistant.const  # noqa: E402
+import homeassistant.config_entries  # noqa: E402,F401
+import homeassistant.const  # noqa: E402,F401
+import homeassistant.data_entry_flow  # noqa: E402,F401
 
 sys.modules["homeassistant.config_entries"].ConfigFlow = _StubConfigFlow
 sys.modules["homeassistant.config_entries"].OptionsFlow = _StubOptionsFlow
@@ -338,15 +357,15 @@ class _StubButtonEntity(_StubEntity):
 
 
 # Inject entity stubs - import modules first to create them via our finder
-import homeassistant.helpers.entity  # noqa: E402
-import homeassistant.components.sensor  # noqa: E402
-import homeassistant.components.binary_sensor  # noqa: E402
-import homeassistant.components.climate  # noqa: E402
-import homeassistant.components.fan  # noqa: E402
-import homeassistant.components.switch  # noqa: E402
-import homeassistant.components.select  # noqa: E402
-import homeassistant.components.number  # noqa: E402
-import homeassistant.components.button  # noqa: E402
+import homeassistant.components.binary_sensor  # noqa: E402,F401
+import homeassistant.components.button  # noqa: E402,F401
+import homeassistant.components.climate  # noqa: E402,F401
+import homeassistant.components.fan  # noqa: E402,F401
+import homeassistant.components.number  # noqa: E402,F401
+import homeassistant.components.select  # noqa: E402,F401
+import homeassistant.components.sensor  # noqa: E402,F401
+import homeassistant.components.switch  # noqa: E402,F401
+import homeassistant.helpers.entity  # noqa: E402,F401
 
 sys.modules["homeassistant.helpers.update_coordinator"].CoordinatorEntity = _StubCoordinatorEntity
 sys.modules["homeassistant.helpers.entity"].Entity = _StubEntity

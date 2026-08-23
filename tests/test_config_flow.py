@@ -5,10 +5,11 @@ manual MAC entry, and options flow.
 """
 from __future__ import annotations
 
-import pytest
+import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from tests.conftest import _AbortFlow
+import pytest
 
 from custom_components.diesel_heater.config_flow import (
     VevorHeaterConfigFlow,
@@ -20,15 +21,16 @@ from custom_components.diesel_heater.const import (
     CONF_PIN,
     CONF_PRESET_AWAY_TEMP,
     CONF_PRESET_COMFORT_TEMP,
-    DEFAULT_AUTO_OFFSET_MAX,
     DEFAULT_PIN,
     DEFAULT_PRESET_AWAY_TEMP,
     DEFAULT_PRESET_COMFORT_TEMP,
     SERVICE_UUID,
 )
+from tests.conftest import _AbortFlow
 
 CONF_ADDRESS = "address"  # matches homeassistant.const.CONF_ADDRESS stub
 MOCK_ADDRESS = "AA:BB:CC:DD:EE:FF"
+MANIFEST_PATH = Path(__file__).parents[1] / "custom_components" / "diesel_heater" / "manifest.json"
 
 
 def _make_ble_discovery(
@@ -61,6 +63,19 @@ class TestBluetoothDiscovery:
 
         assert result["type"] == "form"
         assert result["step_id"] == "confirm"
+
+    async def test_discovery_aborts_unknown_generic_device(self):
+        flow = VevorHeaterConfigFlow()
+        discovery = _make_ble_discovery(
+            name="Unknown",
+            service_uuids=[SERVICE_UUID],
+            manufacturer_data={65535: b"\x01\x02"},
+        )
+
+        result = await flow.async_step_bluetooth(discovery)
+
+        assert result["type"] == "abort"
+        assert result["reason"] == "not_supported"
 
     async def test_discovery_sets_unique_id(self):
         flow = VevorHeaterConfigFlow()
@@ -143,7 +158,7 @@ class TestUserStep:
         assert result["type"] == "form"
         assert result["step_id"] == "manual"
 
-    async def test_detects_device_by_service_uuid(self):
+    async def test_ignores_device_by_service_uuid_only(self):
         flow = VevorHeaterConfigFlow()
         discovery = _make_ble_discovery(
             name="Unknown",
@@ -157,9 +172,8 @@ class TestUserStep:
             mock_bt.async_discovered_service_info.return_value = [discovery]
             result = await flow.async_step_user()
 
-        assert result["type"] == "form"
-        assert result["step_id"] == "user"
-        assert MOCK_ADDRESS in flow._discovered_devices
+        assert result["step_id"] == "manual"
+        assert MOCK_ADDRESS not in flow._discovered_devices
 
     async def test_detects_device_by_name_vevor(self):
         flow = VevorHeaterConfigFlow()
@@ -178,7 +192,7 @@ class TestUserStep:
         assert result["step_id"] == "user"
         assert MOCK_ADDRESS in flow._discovered_devices
 
-    async def test_detects_device_by_name_heater(self):
+    async def test_detects_device_by_name_air_heater(self):
         flow = VevorHeaterConfigFlow()
         discovery = _make_ble_discovery(
             name="Air Heater Pro",
@@ -190,11 +204,28 @@ class TestUserStep:
             "custom_components.diesel_heater.config_flow.bluetooth"
         ) as mock_bt:
             mock_bt.async_discovered_service_info.return_value = [discovery]
-            result = await flow.async_step_user()
+            await flow.async_step_user()
 
         assert MOCK_ADDRESS in flow._discovered_devices
 
-    async def test_detects_device_by_manufacturer_id(self):
+    async def test_detects_device_by_name_airheaterble(self):
+        flow = VevorHeaterConfigFlow()
+        discovery = _make_ble_discovery(
+            name="AirHeaterBLE",
+            service_uuids=[],
+            manufacturer_data={},
+        )
+
+        with patch(
+            "custom_components.diesel_heater.config_flow.bluetooth"
+        ) as mock_bt:
+            mock_bt.async_discovered_service_info.return_value = [discovery]
+            result = await flow.async_step_user()
+
+        assert result["step_id"] == "user"
+        assert MOCK_ADDRESS in flow._discovered_devices
+
+    async def test_ignores_device_by_manufacturer_id_only(self):
         flow = VevorHeaterConfigFlow()
         discovery = _make_ble_discovery(
             name="Unknown",
@@ -208,8 +239,8 @@ class TestUserStep:
             mock_bt.async_discovered_service_info.return_value = [discovery]
             result = await flow.async_step_user()
 
-        assert result["step_id"] == "user"
-        assert MOCK_ADDRESS in flow._discovered_devices
+        assert result["step_id"] == "manual"
+        assert MOCK_ADDRESS not in flow._discovered_devices
 
     async def test_skips_non_vevor_device(self):
         flow = VevorHeaterConfigFlow()
@@ -294,12 +325,12 @@ class TestUserStep:
         flow = VevorHeaterConfigFlow()
         d1 = _make_ble_discovery(
             address="11:22:33:44:55:66",
-            name="Heater 1",
+            name="Diesel Heater 1",
             service_uuids=[SERVICE_UUID],
         )
         d2 = _make_ble_discovery(
             address="77:88:99:AA:BB:CC",
-            name="Heater 2",
+            name="Air Heater 2",
             manufacturer_data={65535: b"\x00"},
         )
 
@@ -311,6 +342,15 @@ class TestUserStep:
 
         assert result["step_id"] == "user"
         assert len(flow._discovered_devices) == 2
+
+
+def test_manifest_uses_name_based_bluetooth_matchers():
+    manifest = json.loads(MANIFEST_PATH.read_text())
+
+    assert manifest["bluetooth"]
+    assert all("local_name" in matcher for matcher in manifest["bluetooth"])
+    assert all("manufacturer_id" not in matcher for matcher in manifest["bluetooth"])
+    assert all("service_uuid" not in matcher for matcher in manifest["bluetooth"])
 
 
 # ---------------------------------------------------------------------------
@@ -454,7 +494,7 @@ class TestOptionsFlow:
         result = await flow.async_step_init()
 
         schema_keys = {
-            k.schema for k in result["data_schema"].schema.keys()
+            k.schema for k in result["data_schema"].schema
             if hasattr(k, "schema")
         }
         assert CONF_PIN in schema_keys
@@ -465,7 +505,7 @@ class TestOptionsFlow:
         result = await flow.async_step_init()
 
         schema_keys = {
-            k.schema for k in result["data_schema"].schema.keys()
+            k.schema for k in result["data_schema"].schema
             if hasattr(k, "schema")
         }
         assert CONF_PRESET_AWAY_TEMP in schema_keys
@@ -477,7 +517,7 @@ class TestOptionsFlow:
         result = await flow.async_step_init()
 
         schema_keys = {
-            k.schema for k in result["data_schema"].schema.keys()
+            k.schema for k in result["data_schema"].schema
             if hasattr(k, "schema")
         }
         assert CONF_EXTERNAL_TEMP_SENSOR in schema_keys
@@ -488,7 +528,7 @@ class TestOptionsFlow:
         result = await flow.async_step_init()
 
         schema_keys = {
-            k.schema for k in result["data_schema"].schema.keys()
+            k.schema for k in result["data_schema"].schema
             if hasattr(k, "schema")
         }
         assert CONF_AUTO_OFFSET_MAX not in schema_keys
@@ -503,7 +543,7 @@ class TestOptionsFlow:
         result = await flow.async_step_init()
 
         schema_keys = {
-            k.schema for k in result["data_schema"].schema.keys()
+            k.schema for k in result["data_schema"].schema
             if hasattr(k, "schema")
         }
         assert CONF_AUTO_OFFSET_MAX in schema_keys

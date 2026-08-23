@@ -14,15 +14,47 @@
   "bluetooth": [
     {
       "connectable": true,
-      "manufacturer_id": 65535
+      "local_name": "Air Heater*"
     },
     {
       "connectable": true,
-      "service_uuid": "0000fff0-0000-1000-8000-00805f9b34fb"
+      "local_name": "AirHeater*"
     },
     {
       "connectable": true,
-      "service_uuid": "0000ffe0-0000-1000-8000-00805f9b34fb"
+      "local_name": "BYD*"
+    },
+    {
+      "connectable": true,
+      "local_name": "Diesel*"
+    },
+    {
+      "connectable": true,
+      "local_name": "Hcalory*"
+    },
+    {
+      "connectable": true,
+      "local_name": "HCALORY*"
+    },
+    {
+      "connectable": true,
+      "local_name": "HeaterCC*"
+    },
+    {
+      "connectable": true,
+      "local_name": "Sunster*"
+    },
+    {
+      "connectable": true,
+      "local_name": "SUNSTER*"
+    },
+    {
+      "connectable": true,
+      "local_name": "Vevor*"
+    },
+    {
+      "connectable": true,
+      "local_name": "VEVOR*"
     }
   ],
   "version": "2.1.5-beta.1"
