@@ -1338,6 +1338,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if header == PROTOCOL_HEADER_CBFF:
             return self._protocols[6], data
 
+        cbff_protocol = self._protocols[6]
+        if isinstance(cbff_protocol, ProtocolCBFF) and cbff_protocol.is_feaa_frame(data):
+            return cbff_protocol, data
+
         if header == PROTOCOL_HEADER_ABBA or self._is_abba_device:
             return self._protocols[5], data
 
