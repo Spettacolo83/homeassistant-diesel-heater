@@ -6,13 +6,11 @@ import re
 from typing import Any
 
 import voluptuous as vol
-
 from homeassistant import config_entries
 from homeassistant.components import bluetooth
 from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
 from homeassistant.const import CONF_ADDRESS
 from homeassistant.data_entry_flow import FlowResult
-
 from homeassistant.helpers import selector
 
 from .const import (
@@ -30,10 +28,20 @@ from .const import (
     MAX_PIN,
     MIN_AUTO_OFFSET_MAX,
     MIN_PIN,
-    SERVICE_UUID,
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+HEATER_NAME_PREFIXES = (
+    "BAC-",
+    "BYD-",
+    "HC-",
+)
+
+def _is_likely_heater(discovery_info: BluetoothServiceInfoBleak) -> bool:
+    """Return True if a BLE advertisement has a known heater name."""
+    name = (discovery_info.name or "").upper()
+    return any(name.startswith(prefix) for prefix in HEATER_NAME_PREFIXES)
 
 
 class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -50,6 +58,14 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, discovery_info: BluetoothServiceInfoBleak
     ) -> FlowResult:
         """Handle the bluetooth discovery step."""
+        if not _is_likely_heater(discovery_info):
+            _LOGGER.debug(
+                "Ignoring Diesel Heater Bluetooth discovery for %s (%s)",
+                discovery_info.address,
+                discovery_info.name,
+            )
+            return self.async_abort(reason="not_supported")
+
         _LOGGER.debug("Discovered Vevor Heater: %s", discovery_info.address)
 
         await self.async_set_unique_id(discovery_info.address)
@@ -125,27 +141,17 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if address in current_addresses or address in self._discovered_devices:
                 continue
 
-            # Method 1: Check if device advertises our service UUID
-            has_service_uuid = SERVICE_UUID.lower() in [
-                service.lower() for service in discovery_info.service_uuids
-            ]
-
-            # Method 2: Check for known Vevor device names
             device_name = discovery_info.name or ""
-            is_vevor_name = any(name in device_name.upper() for name in [
-                "VEVOR", "HEATER", "AIR HEATER", "DIESEL"
-            ])
-
-            # Method 3: Check manufacturer_id 65535 (0xFFFF)
-            has_vevor_manufacturer = 65535 in discovery_info.manufacturer_data
+            is_heater_name = _is_likely_heater(discovery_info)
 
             _LOGGER.debug(
-                "Device %s (%s): service_uuid=%s, name_match=%s, manufacturer=%s",
-                address, device_name, has_service_uuid, is_vevor_name, has_vevor_manufacturer
+                "Device %s (%s): name_match=%s",
+                address,
+                device_name,
+                is_heater_name,
             )
 
-            # Accept device if any method matches
-            if has_service_uuid or is_vevor_name or has_vevor_manufacturer:
+            if is_heater_name:
                 self._discovered_devices[address] = discovery_info
                 _LOGGER.info("Found potential Vevor heater: %s (%s)", address, device_name)
 
