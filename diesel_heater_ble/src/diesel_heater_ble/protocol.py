@@ -340,15 +340,18 @@ class ProtocolAA66(VevorCommandMixin, HeaterProtocol):
         parsed: dict[str, Any] = {}
 
         parsed["running_state"] = _u8_to_number(data[3])
-        parsed["error_code"] = _u8_to_number(data[4])
+        parsed["error_code"] = _u8_to_number(data[17])
         parsed["running_step"] = _u8_to_number(data[5])
-        parsed["altitude"] = _u8_to_number(data[6])
+        parsed["altitude"] = _u8_to_number(data[6]) + 256 * _u8_to_number(data[7])
         parsed["running_mode"] = _u8_to_number(data[8])
 
         if parsed["running_mode"] == RUNNING_MODE_LEVEL:
             parsed["set_level"] = max(1, min(10, _u8_to_number(data[9])))
         elif parsed["running_mode"] == RUNNING_MODE_TEMPERATURE:
             parsed["set_temp"] = max(MIN_TEMP_CELSIUS, min(MAX_TEMP_CELSIUS, _u8_to_number(data[9])))
+            parsed["set_level"] = max(1, min(10, _u8_to_number(data[10]) + 1))
+        elif parsed["running_mode"] == RUNNING_MODE_MANUAL:
+            parsed["set_level"] = max(1, min(10, _u8_to_number(data[10]) + 1))
 
         voltage_raw = _u8_to_number(data[11]) | (_u8_to_number(data[12]) << 8)
         parsed["supply_voltage"] = voltage_raw / 10.0
@@ -360,7 +363,7 @@ class ProtocolAA66(VevorCommandMixin, HeaterProtocol):
         else:
             parsed["case_temperature"] = float(case_temp_raw)
 
-        parsed["cab_temperature"] = _u8_to_number(data[15])
+        parsed["cab_temperature"] = _unsign_to_sign(256 * data[16] + data[15])
 
         return parsed
 

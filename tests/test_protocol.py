@@ -277,6 +277,7 @@ def _make_aa66_data(
     altitude=0,
     running_mode=1,
     byte9=5,
+    byte10=0,
     voltage_lo=120,
     voltage_hi=0,
     case_lo=150,
@@ -289,18 +290,20 @@ def _make_aa66_data(
     data[1] = 0x66
     data[2] = 0x00
     data[3] = running_state
-    data[4] = error_code
+    data[4] = 0x00
     data[5] = running_step
-    data[6] = altitude
-    data[7] = 0x00
+    data[6] = altitude & 0xFF
+    data[7] = (altitude >> 8) & 0xFF
     data[8] = running_mode
     data[9] = byte9
-    data[10] = 0x00
+    data[10] = byte10
     data[11] = voltage_lo
     data[12] = voltage_hi
     data[13] = case_lo
     data[14] = case_hi
-    data[15] = cab_temp
+    data[15] = cab_temp & 0xFF
+    data[16] = (cab_temp >> 8) & 0xFF
+    data[17] = error_code
     return data
 
 
@@ -329,10 +332,11 @@ class TestProtocolAA66:
         assert result["set_level"] == 10  # max(1, min(10, 15))
 
     def test_parse_temperature_mode(self):
-        data = _make_aa66_data(running_mode=2, byte9=25)
+        data = _make_aa66_data(running_mode=2, byte9=25, byte10=4)
         result = self.proto.parse(data)
         assert result["running_mode"] == 2
         assert result["set_temp"] == 25
+        assert result["set_level"] == 5
 
     def test_parse_temperature_mode_clamped(self):
         """set_temp clamped to 8-36."""
@@ -378,10 +382,26 @@ class TestProtocolAA66:
         result = self.proto.parse(data)
         assert result["cab_temperature"] == 25
 
-    def test_parse_altitude(self):
-        data = _make_aa66_data(altitude=100)
+    def test_parse_cab_temperature_signed(self):
+        data = _make_aa66_data(cab_temp=0xFFF6)
         result = self.proto.parse(data)
-        assert result["altitude"] == 100
+        assert result["cab_temperature"] == -10
+
+    def test_parse_altitude(self):
+        data = _make_aa66_data(altitude=1000)
+        result = self.proto.parse(data)
+        assert result["altitude"] == 1000
+
+    def test_parse_manual_mode_level(self):
+        data = _make_aa66_data(running_mode=0, byte10=3)
+        result = self.proto.parse(data)
+        assert result["set_level"] == 4
+
+    def test_parse_error_code_from_byte_17(self):
+        data = _make_aa66_data(error_code=12)
+        data[4] = 99
+        result = self.proto.parse(data)
+        assert result["error_code"] == 12
 
     def test_is_heater_protocol(self):
         assert isinstance(self.proto, HeaterProtocol)
