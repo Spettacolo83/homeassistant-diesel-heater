@@ -56,6 +56,7 @@ from .const import (
     RUNNING_MODE_TEMPERATURE,
     RUNNING_MODE_VENTILATION,
     SUNSTER_V21_KEY,
+    PROTOCOL_HEADER_FEAA,
 )
 
 # ---------------------------------------------------------------------------
@@ -965,6 +966,32 @@ class ProtocolCBFF(HeaterProtocol):
         ):
             parsed.pop(key, None)
         return parsed
+
+    def is_feaa_frame(self, data: bytearray) -> bool:
+        """Return True if raw or decrypted data is a valid FEAA packet."""
+        if self._has_valid_feaa_packet(data):
+            return True
+
+        if self._device_sn:
+            decrypted = self._decrypt_cbff(data, self._device_sn)
+            return self._has_valid_feaa_packet(decrypted)
+
+        return False
+
+    @staticmethod
+    def _has_valid_feaa_packet(data: bytearray) -> bool:
+        if len(data) < 9:
+            return False
+
+        header = (_u8_to_number(data[0]) << 8) | _u8_to_number(data[1])
+        if header != PROTOCOL_HEADER_FEAA:
+            return False
+
+        packet_length = _u8_to_number(data[4]) | (_u8_to_number(data[5]) << 8)
+        if packet_length != len(data):
+            return False
+
+        return (sum(data[:-1]) & 0xFF) == _u8_to_number(data[-1])
 
     @staticmethod
     def _is_data_suspect(parsed: dict[str, Any]) -> bool:

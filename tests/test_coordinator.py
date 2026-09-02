@@ -124,6 +124,7 @@ def create_mock_coordinator() -> VevorHeaterCoordinator:
     coordinator._consecutive_failures = 0
     coordinator._max_stale_cycles = 3
     coordinator._is_abba_device = False
+    coordinator._is_hcalory_device = False
     coordinator._connection_attempts = 0
     coordinator._last_connection_attempt = 0.0
     coordinator._client = None
@@ -407,6 +408,23 @@ class TestProtocolDetection:
 
         assert protocol is not None
         assert protocol.protocol_mode == 6  # CBFF
+
+    def test_detect_protocol_cbff_encrypted_variant_header(self):
+        """Test detection of encrypted CBFF/Sunster protocol."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocols[6].set_device_sn("DC32623528D3")
+
+        data = bytearray.fromhex(
+            "ca8840416e5dc151720a71037d136442574153425cae2c0d7677"
+            "030b660b4254414b335cc9d8780200030a65f1c948"
+        )
+        header = (data[0] << 8) | data[1]
+
+        protocol, parsed_data = coordinator._detect_protocol(data, header)
+
+        assert protocol is not None
+        assert protocol.protocol_mode == 6  # CBFF
+        assert parsed_data is data
 
     def test_detect_protocol_unknown_returns_none(self):
         """Test that unknown data returns None."""
