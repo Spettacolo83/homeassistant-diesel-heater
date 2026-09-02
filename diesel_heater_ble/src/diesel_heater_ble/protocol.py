@@ -577,10 +577,10 @@ class ProtocolABBA(HeaterProtocol):
     - Byte 9: Voltage (decimal V)
     - Byte 10: Temperature Unit (0=C, 1=F)
     - Byte 11: Environment Temp (subtract 30 for C, 22 for F)
-    - Bytes 12-13: Case Temperature (uint16 LE)
+    - Bytes 12-13: Case Temperature (uint16 BE)
     - Byte 14: Altitude unit
     - Byte 15: High-altitude mode
-    - Bytes 16-17: Altitude (uint16 LE)
+    - Bytes 16-17: Altitude (uint16 BE)
     """
 
     protocol_mode = 5
@@ -649,8 +649,8 @@ class ProtocolABBA(HeaterProtocol):
         # Byte 15: High-altitude mode
         parsed["high_altitude"] = _u8_to_number(data[15])
 
-        # Bytes 16-17: Altitude (uint16 LE)
-        parsed["altitude"] = _u8_to_number(data[16]) | (_u8_to_number(data[17]) << 8)
+        # Bytes 16-17: Altitude (uint16 BE)
+        parsed["altitude"] = (_u8_to_number(data[16]) << 8) | _u8_to_number(data[17])
 
         return parsed
 
