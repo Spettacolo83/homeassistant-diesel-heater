@@ -34,7 +34,7 @@ Offset  Bytes  Field                Description
 12-13   2      Case Temperature     Big-endian uint16
 14      1      Altitude Unit        0=meters, 1=feet
 15      1      High Altitude Mode   0=off, 1=on
-16-17   2      Altitude             Little-endian uint16
+16-17   2      Altitude             Big-endian uint16
 18-20   3      Checksum/Padding
 ```
 
@@ -113,7 +113,7 @@ def parse(data: bytearray) -> dict:
 
     parsed["altitude_unit"] = data[14]
     parsed["high_altitude"] = data[15]
-    parsed["altitude"] = data[16] | (data[17] << 8)
+    parsed["altitude"] = (data[16] << 8) | data[17]
 
     return parsed
 ```

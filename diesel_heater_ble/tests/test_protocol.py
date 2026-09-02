@@ -724,8 +724,8 @@ def _make_abba_data(**overrides) -> bytearray:
     data[13] = overrides.get("case_lo", 0xDC)  # 220°C
     data[14] = overrides.get("altitude_unit", 0)
     data[15] = overrides.get("high_altitude", 0)
-    data[16] = overrides.get("altitude_lo", 0)
-    data[17] = overrides.get("altitude_hi", 0)
+    data[16] = overrides.get("altitude_hi", 0)
+    data[17] = overrides.get("altitude_lo", 0)
     data[18] = 0x00
     data[19] = 0x00
     data[20] = 0x00
@@ -836,8 +836,8 @@ class TestProtocolABBA:
         assert result["auto_start_stop"] is True
 
     def test_parse_altitude(self):
-        """Altitude: uint16 LE → byte16 | (byte17 << 8)."""
-        data = _make_abba_data(altitude_lo=0xE8, altitude_hi=0x03)
+        """Altitude: uint16 BE → (byte16 << 8) | byte17."""
+        data = _make_abba_data(altitude_hi=0x03, altitude_lo=0xE8)
         result = self.proto.parse(data)
         assert result["altitude"] == 1000
 
