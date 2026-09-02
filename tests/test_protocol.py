@@ -875,6 +875,11 @@ class TestProtocolABBA:
         assert pkt[3] == 0xDB
         assert pkt[4] == 25  # Temperature value
 
+    def test_build_command_level_step_packets(self):
+        """Command 5 uses ABBA level up/down button packets."""
+        assert self.proto.build_command(5, 1, 1234).hex() == "baab04bba20000c6"
+        assert self.proto.build_command(5, -1, 1234).hex() == "baab04bba30000c7"
+
     def test_build_command_const_temp_mode(self):
         """Command 2, argument 2 → const temp mode."""
         pkt = self.proto.build_command(2, 2, 1234)

@@ -1936,6 +1936,41 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """
         level = max(1, min(10, level))
 
+        if self._protocol_mode == 5:  # ABBA/HeaterCC uses level up/down button commands
+            current_level_raw = self.data.get("set_level")
+            try:
+                current_level = max(1, min(10, int(current_level_raw)))
+            except (TypeError, ValueError):
+                self._logger.warning("ABBA: Cannot set level without current set_level")
+                return
+
+            diff = level - current_level
+            if diff == 0:
+                self._logger.info("ABBA: Level already %d, skipping command", level)
+                return
+
+            step_arg = 1 if diff > 0 else -1
+            steps = abs(diff)
+            self._logger.info(
+                "SET LEVEL REQUEST: level=%d, current=%d, protocol=5 (cmd=5, steps=%d)",
+                level, current_level, steps
+            )
+
+            success = True
+            for index in range(steps):
+                success = await self._send_command(5, step_arg)
+                if not success:
+                    break
+                if index < steps - 1:
+                    await asyncio.sleep(0.1)
+
+            if success:
+                await self.async_request_refresh()
+                self._logger.info("✅ SET LEVEL SUCCESS: level=%d", level)
+            else:
+                self._logger.warning("❌ SET LEVEL FAILED: level=%d", level)
+            return
+
         # CBFF and Hcalory use SEPARATE commands: cmd 5 for level, cmd 4 for temperature
         # AAXX protocols use SAME command (cmd 4) for both level and temperature
         if self._protocol_mode in (6, 7):  # CBFF or Hcalory

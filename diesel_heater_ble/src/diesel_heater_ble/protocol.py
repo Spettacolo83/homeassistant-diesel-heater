@@ -669,6 +669,12 @@ class ProtocolABBA(HeaterProtocol):
         elif command == 4:
             temp_hex = format(argument, '02x')
             return self._build_abba(f"baab04db{temp_hex}0000")
+        elif command == 5:
+            if argument > 0:
+                return self._build_abba("baab04bba20000")  # Level up
+            elif argument < 0:
+                return self._build_abba("baab04bba30000")  # Level down
+            return self._build_abba("baab04cc000000")
         elif command == 2:
             if argument == 2:
                 return self._build_abba("baab04bbac0000")  # Const temp mode
