@@ -129,6 +129,24 @@ class TestVevorTankCapacityNumber:
 
         assert number.native_value == 10
 
+    def test_current_fuel_level_max_handles_none_capacity(self):
+        """A missing capacity must not reach max() as None."""
+        coordinator = create_mock_coordinator()
+        coordinator.data["tank_capacity"] = None
+        from custom_components.diesel_heater.number import VevorCurrentFuelLevelNumber
+
+        number = VevorCurrentFuelLevelNumber(coordinator)
+        assert number.native_max_value == 1
+
+    def test_current_fuel_level_value_handles_none_capacity(self):
+        """A missing capacity returns no estimated fuel value."""
+        coordinator = create_mock_coordinator()
+        coordinator.data["tank_capacity"] = None
+        from custom_components.diesel_heater.number import VevorCurrentFuelLevelNumber
+
+        number = VevorCurrentFuelLevelNumber(coordinator)
+        assert number.native_value is None
+
     def test_unique_id(self):
         """Test unique_id format."""
         coordinator = create_mock_coordinator()

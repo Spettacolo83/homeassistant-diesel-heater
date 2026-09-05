@@ -74,6 +74,12 @@ ABBA_SERVICE_UUID: Final = "0000fff0-0000-1000-8000-00805f9b34fb"
 ABBA_NOTIFY_UUID: Final = "0000fff1-0000-1000-8000-00805f9b34fb"
 ABBA_WRITE_UUID: Final = "0000fff2-0000-1000-8000-00805f9b34fb"
 
+# Sunster Neo DZ06 split-FFF0 transport.  Unlike legacy ABBA devices,
+# FFF1 is write-capable and FFF2 is notify-capable.
+DZ06_NEO_SERVICE_UUID: Final = ABBA_SERVICE_UUID
+DZ06_NEO_WRITE_UUID: Final = ABBA_NOTIFY_UUID
+DZ06_NEO_NOTIFY_UUID: Final = ABBA_WRITE_UUID
+
 # Hcalory Protocol (MVP1 and MVP2 heaters)
 # MVP1 uses service fff0, MVP2 uses service bd39
 HCALORY_MVP1_SERVICE_UUID: Final = "0000fff0-0000-1000-8000-00805f9b34fb"
