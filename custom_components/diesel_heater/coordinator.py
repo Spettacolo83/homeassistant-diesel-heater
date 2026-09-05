@@ -49,6 +49,8 @@ from .const import (
     HCALORY_MVP2_NOTIFY_UUID,
     HCALORY_MVP2_SERVICE_UUID,
     HCALORY_MVP2_WRITE_UUID,
+    DZ06_NEO_NOTIFY_UUID,
+    DZ06_NEO_WRITE_UUID,
     MAX_HEATER_OFFSET,
     MAX_HISTORY_DAYS,
     MIN_HEATER_OFFSET,
@@ -244,6 +246,22 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 return "CBFF V2.1 (Encrypted)"
 
         return base_name
+
+    @property
+    def is_dz06_neo(self) -> bool:
+        """Return whether the split-FFF0 Sunster Neo transport is active."""
+        return bool(
+            self._is_abba_device
+            and self._characteristic
+            and self._abba_write_char
+            and self._characteristic.uuid.lower() == DZ06_NEO_NOTIFY_UUID.lower()
+            and self._abba_write_char.uuid.lower() == DZ06_NEO_WRITE_UUID.lower()
+            and "notify" in self._characteristic.properties
+            and (
+                "write" in self._abba_write_char.properties
+                or "write-without-response" in self._abba_write_char.properties
+            )
+        )
 
     async def async_load_data(self) -> None:
         """Load persistent fuel consumption and runtime data."""
@@ -1211,15 +1229,28 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                         char_list = [f"{c.uuid} (props: {c.properties})" for c in service.characteristics]
                         self._logger.info("📋 ABBA service characteristics: %s", char_list)
 
-                        # Find notify and write characteristics
+                        # Find both characteristics before assigning direction.
+                        fff1_char = None
+                        fff2_char = None
                         for char in service.characteristics:
-                            if char.uuid.lower() == ABBA_NOTIFY_UUID.lower():
-                                self._characteristic = char
-                                self._active_char_uuid = ABBA_NOTIFY_UUID
-                                self._logger.info("✅ Found ABBA notify characteristic (fff1): %s", char.uuid)
-                            elif char.uuid.lower() == ABBA_WRITE_UUID.lower():
-                                self._abba_write_char = char
-                                self._logger.info("✅ Found ABBA write characteristic (fff2): %s", char.uuid)
+                            if char.uuid.lower() == DZ06_NEO_WRITE_UUID.lower():
+                                fff1_char = char
+                            elif char.uuid.lower() == DZ06_NEO_NOTIFY_UUID.lower():
+                                fff2_char = char
+
+                        if (
+                            fff1_char and fff2_char
+                            and ("write" in fff1_char.properties or "write-without-response" in fff1_char.properties)
+                            and "notify" in fff2_char.properties
+                        ):
+                            self._logger.info("Detected DZ06 split FFF0 layout: FFF1=write, FFF2=notify")
+                            self._characteristic = fff2_char
+                            self._active_char_uuid = fff2_char.uuid
+                            self._abba_write_char = fff1_char
+                        else:
+                            self._characteristic = fff1_char
+                            self._active_char_uuid = fff1_char.uuid if fff1_char else None
+                            self._abba_write_char = fff2_char
 
                         # Warning if write characteristic not found
                         if not self._abba_write_char:
@@ -1289,11 +1320,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     self._logger.warning("⚠️ MVP2 authentication failed, but continuing anyway")
                     # Continue anyway - will retry in _send_command if needed
 
-            # Send a wake-up ping to ensure device is responsive
-            # Some heaters go into deep sleep and need a nudge
-            # For MVP2, this is sent AFTER authentication
-            self._logger.debug("Sending wake-up ping to device")
-            await self._send_wake_up_ping()
+            if self.is_dz06_neo:
+                if not await self._send_dz06_neo_auth():
+                    await self._cleanup_connection()
+                    raise BleakError("DZ06 Neo authorization failed")
+            else:
+                await self._send_wake_up_ping()
 
             self._connection_attempts = 0  # Reset on successful connection
             self._logger.info("Successfully connected to Vevor Heater")
@@ -1306,6 +1338,22 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     @callback
     def _notification_callback(self, _sender: int, data: bytearray) -> None:
         """Handle notification from heater."""
+        if self.is_dz06_neo:
+            self._notification_data = bytearray(data)
+            if len(data) == 39 and data[:2] == bytearray((0x5A, 0x25)):
+                self.data.update({
+                    "connected": True,
+                    "supply_voltage": data[6] / 10.0,
+                    "set_temp": float(data[15]),
+                    "cab_temperature": float(data[35]),
+                })
+                raw_state = data[3]
+                self.data["neo_raw_state"] = raw_state
+                if raw_state in (1, 2, 4, 5):
+                    self.data["running_state"] = 1
+                elif raw_state in (0, 7, 8):
+                    self.data["running_state"] = 0
+            return
         # Log ALL received data for debugging
         self._logger.info(
             "📩 Received BLE data (%d bytes): %s",
@@ -1772,6 +1820,42 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         )
         return packet
 
+    @staticmethod
+    def _neo_packet(opcode: int, target: int) -> bytearray:
+        """Build a captured Sunster Neo packet with CRC16/MODBUS."""
+        packet = bytearray((0xA5, 0x09, 0x01, opcode, 0x02, target, 0, 0, 1))
+        crc = 0xFFFF
+        for value in packet:
+            crc ^= value
+            for _ in range(8):
+                crc = (crc >> 1) ^ 0xA001 if crc & 1 else crc >> 1
+        packet.extend(crc.to_bytes(2, "big"))
+        return packet
+
+    async def _send_dz06_neo_auth(self) -> bool:
+        """Send experimental Neo authorization; portability is unverified."""
+        now = dt_util.now()
+        timestamp = int(now.timestamp()) + int((now.utcoffset() or timedelta()).total_seconds())
+        packet = bytearray((0x29, 0x0D, 0x5C, 0))
+        packet.extend(timestamp.to_bytes(4, "big"))
+        packet.extend(bytes.fromhex("05F5E100"))
+        packet.append(1)
+        crc = 0xFFFF
+        for value in packet:
+            crc ^= value
+            for _ in range(8):
+                crc = (crc >> 1) ^ 0xA001 if crc & 1 else crc >> 1
+        packet.extend(crc.to_bytes(2, "big"))
+        self._notification_data = None
+        await self._write_gatt(packet)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            await asyncio.sleep(0.1)
+            response = self._notification_data
+            if response and len(response) >= 2 and response[:2] == bytearray((0x5C, 0x16)):
+                return True
+        return False
+
     async def _send_command(self, command: int, argument: int, timeout: float = 5.0, max_retries: int = 1) -> bool:
         """Send command to heater with retry logic (@Xev optimizations, issue #34).
 
@@ -1803,6 +1887,30 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 "Cannot send command: BLE characteristic not found. "
                 "Try reloading the integration."
             )
+            return False
+
+        if self.is_dz06_neo:
+            if command == 1:
+                packet = bytearray.fromhex("a5090100022300000189ae")
+                self._notification_data = None
+                try:
+                    await self._write_gatt(packet)
+                except Exception as err:
+                    self._logger.warning("DZ06 Neo status poll failed: %s", err)
+                    return False
+                deadline = time.monotonic() + timeout
+                while time.monotonic() < deadline:
+                    await asyncio.sleep(0.1)
+                    if (
+                        self._notification_data
+                        and len(self._notification_data) == 39
+                        and self._notification_data[:2] == bytearray((0x5A, 0x25))
+                    ):
+                        return True
+                    if self._notification_data:
+                        self._notification_data = None
+                return False
+            self._logger.warning("DZ06 Neo safety: blocking unimplemented legacy command cmd=%d", command)
             return False
 
         # For Hcalory MVP2: send password handshake if not yet done
@@ -1905,8 +2013,38 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         # Should not reach here, but just in case
         return False
 
+    async def _send_dz06_neo_power(self, turn_on: bool) -> bool:
+        """Send and confirm a captured Neo ON/OFF command."""
+        if not self.is_dz06_neo:
+            return False
+        try:
+            target = int(round(float(self.data.get("set_temp"))))
+        except (TypeError, ValueError):
+            return False
+        if not 8 <= target <= 36:
+            return False
+        self._notification_data = None
+        try:
+            await self._write_gatt(self._neo_packet(0x5A if turn_on else 0x5C, target))
+        except Exception:
+            return False
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            await asyncio.sleep(0.1)
+            response = self._notification_data
+            if response is None:
+                continue
+            if len(response) == 39 and response[:2] == bytearray((0x5A, 0x25)):
+                return True
+            self._notification_data = None
+        return False
+
     async def async_turn_on(self) -> None:
         """Turn heater on."""
+        if self.is_dz06_neo:
+            if await self._send_dz06_neo_power(True):
+                await self.async_request_refresh()
+            return
         # ABBA uses a toggle command (0xA1) for both ON and OFF.
         # Guard against accidental toggle: skip if already heating.
         if self._protocol_mode == 5 and self.data.get("running_state", 0) == 1:
@@ -1918,6 +2056,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
     async def async_turn_off(self) -> None:
         """Turn heater off."""
+        if self.is_dz06_neo:
+            if await self._send_dz06_neo_power(False):
+                await self.async_request_refresh()
+            return
         # ABBA uses a toggle command (0xA1) for both ON and OFF.
         # Guard against accidental toggle: skip if already off.
         if self._protocol_mode == 5 and self.data.get("running_state", 0) == 0:
@@ -1990,6 +2132,27 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         # Convert to int for command (protocols expect integer temperatures)
         command_temp = int(round(temperature))
+        if self.is_dz06_neo:
+            self._notification_data = None
+            try:
+                await self._write_gatt(self._neo_packet(0x51, command_temp))
+            except Exception:
+                return
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                await asyncio.sleep(0.1)
+                response = self._notification_data
+                if response is None:
+                    continue
+                if (
+                    len(response) == 39
+                    and response[:2] == bytearray((0x5A, 0x25))
+                    and response[15] == command_temp
+                ):
+                    await self.async_request_refresh()
+                    return
+                self._notification_data = None
+            return
         success = await self._send_command(4, command_temp)
 
         if success:
@@ -2056,6 +2219,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         AAXX/CBFF protocols: Time sent as 60 * hours + minutes
         Hcalory MVP2: Time sent as HH, MM, SS, DOW bytes in query packet
         """
+        if self.is_dz06_neo:
+            self._logger.info("DZ06 Neo: skipping legacy heater time-sync command")
+            return
         # Beta.29 fix: Use dt_util.now() for correct local timezone (issue #38)
         # datetime.now() uses UTC in Docker containers → 5hr offset for EST users
         now = dt_util.now()

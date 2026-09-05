@@ -337,7 +337,7 @@ class VevorCurrentFuelLevelNumber(CoordinatorEntity[VevorHeaterCoordinator], Num
     @property
     def native_max_value(self) -> float:
         """Return the dynamic max value based on tank capacity."""
-        capacity = self.coordinator.data.get("tank_capacity", 0)
+        capacity = self.coordinator.data.get("tank_capacity") or 0
         return max(1, capacity)  # Ensure at least 1L as max
 
     @property
@@ -348,7 +348,7 @@ class VevorCurrentFuelLevelNumber(CoordinatorEntity[VevorHeaterCoordinator], Num
         if estimated is not None:
             return estimated
         # If no fuel tracking data yet, assume tank is full
-        capacity = self.coordinator.data.get("tank_capacity", 0)
+        capacity = self.coordinator.data.get("tank_capacity") or 0
         return capacity if capacity > 0 else None
 
     async def async_set_native_value(self, value: float) -> None:
