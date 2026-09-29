@@ -259,8 +259,8 @@
       "high_altitude": {
         "name": "High Altitude Mode"
       },
-      "burnoff_on_shutdown": {
-        "name": "Burn-off on Shutdown"
+      "automatic_burnoff": {
+        "name": "Automatic Burn-off"
       }
     },
     "button": {
