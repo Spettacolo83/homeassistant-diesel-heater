@@ -381,7 +381,7 @@ class VevorCurrentFuelLevelNumber(CoordinatorEntity[VevorHeaterCoordinator], Num
 
 
 class VevorBurnoffDurationNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberEntity):
-    """Duration of max-power burn-off before shutdown, in minutes."""
+    """Length of a max-power burn-off cycle, in minutes."""
 
     _attr_has_entity_name = True
     _attr_name = "Burn-off Duration"

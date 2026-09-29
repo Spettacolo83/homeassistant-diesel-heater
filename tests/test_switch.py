@@ -144,7 +144,7 @@ class TestVevorHeaterPowerSwitch:
 
 
 class TestVevorBurnoffSwitch:
-    """Tests for burn-off on shutdown switch."""
+    """Tests for the Automatic Burn-off switch."""
 
     def test_is_on_when_enabled(self):
         """Test is_on follows coordinator.burnoff_enabled."""
