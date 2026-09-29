@@ -187,7 +187,7 @@ class TestVevorBurnoffSwitch:
         coordinator = create_mock_coordinator()
         switch = VevorBurnoffSwitch(coordinator)
 
-        assert switch._attr_unique_id.endswith("_burnoff_on_shutdown")
+        assert switch._attr_unique_id.endswith("_automatic_burnoff")
 
 
 # ---------------------------------------------------------------------------

@@ -255,8 +255,8 @@ STORAGE_KEY_LAST_REFUELED: Final = "last_refueled"
 # Auto offset persistence key
 STORAGE_KEY_AUTO_OFFSET_ENABLED: Final = "auto_offset_enabled"
 
-# Max-power burn-off (soot burn-off) before shutdown and in-run
-CONF_BURNOFF_ENABLED: Final = "burnoff_on_shutdown"
+# Max-power soot burn-off (automatic enable, in-run, and shutdown)
+CONF_BURNOFF_ENABLED: Final = "automatic_burnoff"
 CONF_BURNOFF_DURATION: Final = "burnoff_duration"
 CONF_BURNOFF_AFTER_CYCLES: Final = "burnoff_after_cycles"
 CONF_BURNOFF_AFTER_HOURS: Final = "burnoff_after_hours"

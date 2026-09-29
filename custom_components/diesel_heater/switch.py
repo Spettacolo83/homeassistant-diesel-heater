@@ -104,14 +104,14 @@ class VevorBurnoffSwitch(CoordinatorEntity[VevorHeaterCoordinator], SwitchEntity
     """Enable automatic soot burn-off (in-run thresholds and dirty HA Off)."""
 
     _attr_has_entity_name = True
-    _attr_name = "Burn-off on Shutdown"
+    _attr_name = "Automatic Burn-off"
     _attr_icon = "mdi:fire"
     _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
         """Initialize the switch."""
         super().__init__(coordinator)
-        self._attr_unique_id = f"{coordinator.address}_burnoff_on_shutdown"
+        self._attr_unique_id = f"{coordinator.address}_automatic_burnoff"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, coordinator.address)},
             "name": "Vevor Diesel Heater",
@@ -121,15 +121,15 @@ class VevorBurnoffSwitch(CoordinatorEntity[VevorHeaterCoordinator], SwitchEntity
 
     @property
     def is_on(self) -> bool:
-        """Return true if burn-off before shutdown is enabled."""
+        """Return true if automatic burn-off is enabled."""
         return self.coordinator.burnoff_enabled
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        """Enable burn-off before shutdown."""
+        """Enable automatic burn-off."""
         await self.coordinator.async_set_burnoff_enabled(True)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        """Disable burn-off before shutdown."""
+        """Disable automatic burn-off."""
         await self.coordinator.async_set_burnoff_enabled(False)
 
     @callback
