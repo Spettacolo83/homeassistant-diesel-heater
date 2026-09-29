@@ -110,6 +110,8 @@ Fan entity for heater level control (1-10) when in Level mode.
 | Daily Runtime | Hours of operation today |
 | Total Runtime | Cumulative hours of operation |
 | Burn-off Remaining | Seconds left in the current max-power burn-off cycle |
+| Heat Cycles Since Burn-off | Controller heat cycles since the last successful burn-off |
+| Heat Hours Since Burn-off | RUNNING hours since the last successful burn-off |
 
 Additional sensors for specific protocols:
 - **Carbon Monoxide** (CBFF): CO level in ppm
@@ -125,13 +127,14 @@ Additional sensors for specific protocols:
 | Connected | BLE connection status |
 | Auto Start/Stop | Auto temperature control status |
 | Burn-off Active | Whether a max-power burn-off cycle is running |
+| Burn-off Pending | Next RUNNING start will run in-run burn-off |
 
 ### Switches
 
 | Switch | Description |
 |--------|-------------|
 | Power | Turn heater on/off |
-| Burn-off on Shutdown | Run at max power before shutdown to burn off soot (off by default) |
+| Automatic Burn-off | Enable automatic soot burn-off (in-run, dirty HA Off, deferred external Off; off by default) |
 | Auto Temperature Offset | Enable automatic offset using external sensor |
 | Auto Start/Stop | Enable automatic temperature control with full stop |
 | Fahrenheit Mode | Use Fahrenheit for temperature display |
@@ -156,7 +159,9 @@ Additional sensors for specific protocols:
 | Target Temperature | Set target temperature (8-36°C) |
 | Temperature Offset | Manual temperature offset (-9 to +9) |
 | Tank Capacity | Tank capacity for fuel tracking |
-| Burn-off Duration | Minutes at max power before shutdown (1-30, default 10) |
+| Burn-off Duration | Minutes at max power for a burn-off cycle (1-30, default 10) |
+| Burn-off After Cycles | In-run burn-off after N controller heat cycles (0 = off) |
+| Burn-off After Hours | In-run burn-off after N RUNNING hours (0 = off) |
 
 ### Buttons
 
@@ -222,9 +227,15 @@ title: Daily Fuel Consumption
 
 Temperature control only works in **Temperature Mode**. Check the Running Mode select entity and switch from Level Mode if needed.
 
-### Burn-off on shutdown
+### Burn-off
 
-Turning the heater off can first run at maximum power (default 10 minutes) to burn off soot. This is off by default; enable `switch.*_burnoff_on_shutdown`. Burn-off starts only while the heater is actually heating, not from Auto Start/Stop idle. The previous heating mode is restored before the real off command. Off during an in-progress cycle, or **Power Off Now**, skips remaining time. If the physical controller or Auto Start/Stop stops the heater during a cycle, Home Assistant cancels the wait and defers restore until cooldown ends (no extra off command). ECU Auto Start/Stop shutdowns still cannot *start* a burn-off.
+When enabled (`switch.*_automatic_burnoff`, off by default), the heater runs at maximum power for a configurable duration (default 10 minutes) to burn off soot, then restores the previous heating mode and setpoint.
+
+- **HA Off while dirty and heating** (climate, power switch, or fan): max power, restore, then the real power-off. A clean Off powers off immediately. **Power Off Now**, or Off during an in-progress cycle, skips remaining time.
+- **In-run** (optional): after `number.*_burnoff_after_hours` of RUNNING time and/or `number.*_burnoff_after_cycles` controller heat cycles. Starts only on an established RUNNING step. Both thresholds default to 0 (disabled).
+- **LCD or ECU power Off while heating or in cooldown**: Home Assistant cannot intercept that Off. It sets pending and runs burn-off on the next RUNNING start. Off from Auto Start/Stop idle (ON + standby) does not set pending and does not re-ignite.
+
+Disabling `switch.*_automatic_burnoff` during a cycle restores the previous mode and keeps heating, and clears a deferred pending start. If the controller or ECU stops the heater while burn-off is already running, the cycle is cancelled and no extra off is sent. Restore waits until cooldown ends or the next Home Assistant turn-on.
 
 ### Commands not responding
 
