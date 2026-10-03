@@ -1357,6 +1357,55 @@ class TestProtocolCBFF:
         result = self.proto.parse(data)
         assert result["connected"] is True
 
+    def test_parse_complete_temperature_status_frame(self):
+        """A CBFF temperature reply exposes every available controller field."""
+        data = _make_cbff_data(
+            protocol_version=1, run_state=5, run_mode=2, run_param=25,
+            now_gear=7, run_step=3, fault_display=0xC3, temp_unit=1,
+            cab_temp=-5, altitude_unit=1, altitude=1234, voltage_raw=126,
+            case_temp_raw=1512, co_raw=110, pwr_onoff=1, hw_version=0x1234,
+            sw_version=0x5678, heater_offset=-4, language=2, tank_volume=5,
+            pump_byte=21, backlight=50, startup_temp_diff=4,
+            shutdown_temp_diff=6, wifi=1, auto_start_stop=1, heater_mode=2,
+            remain_run_time=120,
+        )
+
+        assert self.proto.parse(data) == {
+            "connected": True, "cbff_protocol_version": 1,
+            "running_state": 1, "running_step": 3, "running_mode": 2,
+            "set_temp": 25, "set_level": 7, "error_code": 3,
+            "temp_unit": 1, "cab_temperature": -5.0, "altitude_unit": 1,
+            "altitude": 123.4, "supply_voltage": 12.6,
+            "case_temperature": 151.2, "co_ppm": 11.0,
+            "heater_offset": -4, "language": 2, "tank_volume": 5,
+            "rf433_enabled": True, "pump_type": None, "pwr_onoff": 1,
+            "hardware_version": 4660, "software_version": 22136,
+            "backlight": 50, "startup_temp_diff": 4,
+            "shutdown_temp_diff": 6, "wifi_enabled": True,
+            "auto_start_stop": True, "heater_mode": 2,
+            "remain_run_time": 120,
+        }
+
+    def test_parse_decrypted_captured_v21_status_frame(self):
+        """The APK-decrypted #45 status capture keeps its complete state."""
+        data = bytearray.fromhex(
+            "feaa00002f00800001000100000000000000130001e40c7f0000000000"
+            "6e010000000000ffff0a020201000094816d"
+        )
+
+        assert self.proto.parse(data) == {
+            "connected": True, "cbff_protocol_version": 0,
+            "running_state": 0, "running_step": 0, "running_mode": 0,
+            "set_temp": 8, "error_code": 0, "temp_unit": 0,
+            "cab_temperature": 19.0, "altitude_unit": 1, "altitude": 330.0,
+            "supply_voltage": 12.7, "case_temperature": 0.0, "co_ppm": 0.0,
+            "heater_offset": 0, "language": 0, "pwr_onoff": 110,
+            "hardware_version": 1, "backlight": 10,
+            "startup_temp_diff": 2, "shutdown_temp_diff": 2,
+            "wifi_enabled": True, "auto_start_stop": False,
+            "heater_mode": 0, "remain_run_time": 33172,
+        }
+
     # --- CBFF encryption ---
 
     def test_set_device_sn(self):
@@ -1508,6 +1557,37 @@ class TestProtocolCBFF:
         pkt = self.proto.build_command(3, 1, 1234)  # power on
         expected_checksum = sum(pkt[:-1]) & 0xFF
         assert pkt[-1] == expected_checksum
+
+    def test_build_command_complete_default_packet_matrix(self):
+        """Every supported FEAA command has its APK-defined wire packet."""
+        expected_packets = {
+            (0, 0): "feaa000009000000b1", (1, 0): "feaa000009000000b1",
+            (3, 0): "feaa00000d0001000105ffffba",
+            (3, 1): "feaa00000d0001010105ffffbb",
+            (4, 25): "feaa00000d0001010219ffffd0",
+            (5, 7): "feaa00000d0001010107ffffbd",
+            (2, 1): "feaa00000d0001010105ffffbb",
+            (2, 2): "feaa00000d0001010215ffffcc",
+            (10, 0): "feaa000009000000b1",
+            (21, 0): "feaa000009000000b1",
+            (99, 0): "feaa000009000000b1",
+        }
+
+        for (command, argument), expected in expected_packets.items():
+            assert self.proto.build_command(command, argument, 1234).hex() == expected
+
+    def test_build_command_uses_complete_remembered_state(self):
+        """Power and mode packets preserve the controller-reported state."""
+        self.proto.parse(_make_cbff_data(run_mode=2, run_param=26, now_gear=5))
+
+        assert self.proto.build_command(3, 0, 1234).hex() == "feaa00000d000100021affffd0"
+        assert self.proto.build_command(3, 1, 1234).hex() == "feaa00000d000101021affffd1"
+        assert self.proto.build_command(2, 1, 1234).hex() == "feaa00000d0001010105ffffbb"
+        assert self.proto.build_command(2, 2, 1234).hex() == "feaa00000d000101021affffd1"
+
+    def test_build_handshake_complete_packet(self):
+        """The APK sends the PIN as little-endian base-100 bytes."""
+        assert self.proto.build_handshake(1234).hex() == "feaa00000b000600220ce7"
 
     def test_is_heater_protocol(self):
         assert isinstance(self.proto, HeaterProtocol)
