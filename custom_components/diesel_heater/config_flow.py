@@ -40,12 +40,16 @@ HEATER_NAME_PREFIXES = (
     "BAC-",
     "BYD-",
     "HC-",
+    "HCALORY",
 )
 
+
 def _is_likely_heater(discovery_info: BluetoothServiceInfoBleak) -> bool:
-    """Return True if a BLE advertisement has a known heater name."""
+    """Return True if a BLE advertisement has an app-recognized heater name."""
     name = (discovery_info.name or "").upper()
-    return any(name.startswith(prefix) for prefix in HEATER_NAME_PREFIXES)
+    return any(name.startswith(prefix) for prefix in HEATER_NAME_PREFIXES) or (
+        name.startswith("HEATER") and name[6:].isdigit()
+    )
 
 
 class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
