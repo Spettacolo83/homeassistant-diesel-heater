@@ -108,14 +108,14 @@ ABBA_ERROR_NAMES: Final = {
 
 # ABBA Protocol commands
 ABBA_CMD_HEAT_ON: Final = bytes.fromhex("baab04bba10000")
-ABBA_CMD_HEAT_OFF: Final = bytes.fromhex("baab04bba40000")  # Also used for ventilation
+ABBA_CMD_HEAT_OFF: Final = bytes.fromhex("baab04bba10000")  # 0xA1 is a heat toggle
 ABBA_CMD_VENTILATION: Final = bytes.fromhex("baab04bba40000")  # 0xA4 = fan-only mode
 ABBA_CMD_TEMP_UP: Final = bytes.fromhex("baab04bba20000")
 ABBA_CMD_TEMP_DOWN: Final = bytes.fromhex("baab04bba30000")
 ABBA_CMD_HIGH_ALTITUDE: Final = bytes.fromhex("baab04bba50000")
 ABBA_CMD_AUTO: Final = bytes.fromhex("baab04bba60000")
-ABBA_CMD_CONST_TEMP: Final = bytes.fromhex("baab04bbac0000")
-ABBA_CMD_OTHER_MODE: Final = bytes.fromhex("baab04bbad0000")
+ABBA_CMD_CONST_TEMP: Final = bytes.fromhex("baab04bbad0000")
+ABBA_CMD_OTHER_MODE: Final = bytes.fromhex("baab04bbac0000")
 ABBA_CMD_GET_TIME: Final = bytes.fromhex("baab04ec000000")
 ABBA_CMD_GET_AUTO_CONFIG: Final = bytes.fromhex("baab04dc000000")
 ABBA_CMD_STATUS: Final = bytes.fromhex("baab04cc00000035")

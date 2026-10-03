@@ -55,6 +55,7 @@ from .const import (
     PROTOCOL_HEADER_ABBA,
     PROTOCOL_HEADER_CBFF,
     PROTOCOL_HEADER_AA77,
+    RUNNING_STEP_COOLDOWN,
     RUNNING_STEP_RUNNING,
     SENSOR_TEMP_MAX,
     SENSOR_TEMP_MIN,
@@ -1908,10 +1909,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     async def async_turn_on(self) -> None:
         """Turn heater on."""
         # ABBA uses a toggle command (0xA1) for both ON and OFF.
-        # Guard against accidental toggle: skip if already heating.
-        if self._protocol_mode == 5 and self.data.get("running_state", 0) == 1:
-            self._logger.info("ABBA: Heater already on, skipping toggle command")
-            return
+        # Guard against accidental toggle while already running or cooling down.
+        if self._protocol_mode == 5:
+            if self.data.get("running_step") == RUNNING_STEP_COOLDOWN:
+                self._logger.info("ABBA: Heater is cooling down, skipping toggle command")
+                return
+            if self.data.get("running_state", 0) == 1:
+                self._logger.info("ABBA: Heater already on, skipping toggle command")
+                return
         success = await self._send_command(3, 1)
         if success:
             await self.async_request_refresh()
@@ -1919,10 +1924,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     async def async_turn_off(self) -> None:
         """Turn heater off."""
         # ABBA uses a toggle command (0xA1) for both ON and OFF.
-        # Guard against accidental toggle: skip if already off.
-        if self._protocol_mode == 5 and self.data.get("running_state", 0) == 0:
-            self._logger.info("ABBA: Heater already off, skipping toggle command")
-            return
+        # Guard against accidental toggle while already off or cooling down.
+        if self._protocol_mode == 5:
+            if self.data.get("running_step") == RUNNING_STEP_COOLDOWN:
+                self._logger.info("ABBA: Heater is cooling down, skipping toggle command")
+                return
+            if self.data.get("running_state", 0) == 0:
+                self._logger.info("ABBA: Heater already off, skipping toggle command")
+                return
         success = await self._send_command(3, 0)
         if success:
             await self.async_request_refresh()
@@ -1935,6 +1944,41 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         - AAXX protocols use SAME command (cmd 4) for both level and temperature
         """
         level = max(1, min(10, level))
+
+        if self._protocol_mode == 5:  # ABBA/HeaterCC uses level up/down button commands
+            current_level_raw = self.data.get("set_level")
+            try:
+                current_level = max(1, min(10, int(current_level_raw)))
+            except (TypeError, ValueError):
+                self._logger.warning("ABBA: Cannot set level without current set_level")
+                return
+
+            diff = level - current_level
+            if diff == 0:
+                self._logger.info("ABBA: Level already %d, skipping command", level)
+                return
+
+            step_arg = 1 if diff > 0 else -1
+            steps = abs(diff)
+            self._logger.info(
+                "SET LEVEL REQUEST: level=%d, current=%d, protocol=5 (cmd=5, steps=%d)",
+                level, current_level, steps
+            )
+
+            success = True
+            for index in range(steps):
+                success = await self._send_command(5, step_arg)
+                if not success:
+                    break
+                if index < steps - 1:
+                    await asyncio.sleep(0.1)
+
+            if success:
+                await self.async_request_refresh()
+                self._logger.info("✅ SET LEVEL SUCCESS: level=%d", level)
+            else:
+                self._logger.warning("❌ SET LEVEL FAILED: level=%d", level)
+            return
 
         # CBFF and Hcalory use SEPARATE commands: cmd 5 for level, cmd 4 for temperature
         # AAXX protocols use SAME command (cmd 4) for both level and temperature

@@ -5,9 +5,10 @@ Focuses on data processing, fuel/runtime tracking, and protocol handling.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
-from unittest.mock import MagicMock, AsyncMock, patch
 import asyncio
+from datetime import datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock, call, patch
+
 import pytest
 
 # Import stubs first
@@ -1211,6 +1212,52 @@ class TestAsyncCommands:
         call_args = coordinator._send_command.call_args
         assert call_args[0][0] == 4
         assert call_args[0][1] == 7
+
+    @pytest.mark.asyncio
+    async def test_async_set_level_abba_steps_up(self):
+        """ABBA level changes use repeated level-up button commands."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 5
+        coordinator.data["set_level"] = 3
+        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator.async_request_refresh = AsyncMock()
+
+        with patch("custom_components.diesel_heater.coordinator.asyncio.sleep", AsyncMock()) as sleep_mock:
+            await coordinator.async_set_level(6)
+
+        assert coordinator._send_command.call_args_list == [call(5, 1), call(5, 1), call(5, 1)]
+        assert sleep_mock.await_count == 2
+        coordinator.async_request_refresh.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_async_set_level_abba_steps_down(self):
+        """ABBA level changes use repeated level-down button commands."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 5
+        coordinator.data["set_level"] = 7
+        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator.async_request_refresh = AsyncMock()
+
+        with patch("custom_components.diesel_heater.coordinator.asyncio.sleep", AsyncMock()) as sleep_mock:
+            await coordinator.async_set_level(4)
+
+        assert coordinator._send_command.call_args_list == [call(5, -1), call(5, -1), call(5, -1)]
+        assert sleep_mock.await_count == 2
+        coordinator.async_request_refresh.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_async_set_level_abba_skips_when_current_level_unknown(self):
+        """ABBA level changes require a known current level."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 5
+        coordinator.data["set_level"] = None
+        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator.async_request_refresh = AsyncMock()
+
+        await coordinator.async_set_level(4)
+
+        coordinator._send_command.assert_not_called()
+        coordinator.async_request_refresh.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_async_set_temperature(self):
@@ -2976,6 +3023,32 @@ class TestABBAToggleGuard:
 
         coordinator._send_command.assert_called_once_with(3, 0)
         coordinator.async_request_refresh.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_turn_on_skipped_during_cooldown_abba(self):
+        """ABBA's heat toggle must not interrupt its mandatory cooldown."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 5
+        coordinator.data["running_state"] = 1
+        coordinator.data["running_step"] = 4
+        coordinator._send_command = AsyncMock()
+
+        await coordinator.async_turn_on()
+
+        coordinator._send_command.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_turn_off_skipped_during_cooldown_abba(self):
+        """ABBA's heat toggle must not interrupt its mandatory cooldown."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 5
+        coordinator.data["running_state"] = 1
+        coordinator.data["running_step"] = 4
+        coordinator._send_command = AsyncMock()
+
+        await coordinator.async_turn_off()
+
+        coordinator._send_command.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_turn_on_proceeds_non_abba_protocol(self):
