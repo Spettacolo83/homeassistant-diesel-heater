@@ -39,13 +39,17 @@ from .const import (
     CONF_AUTO_OFFSET_ENABLED,
     CONF_AUTO_OFFSET_MAX,
     CONF_EXTERNAL_TEMP_SENSOR,
+    CONF_FORCE_TEMP_UNIT,
     CONF_NEO_PASSWORD,
     CONF_PIN,
     CONF_TEMPERATURE_OFFSET,
     DEFAULT_AUTO_OFFSET_MAX,
+    DEFAULT_FORCE_TEMP_UNIT,
     DEFAULT_NEO_PASSWORD,
     DEFAULT_PIN,
     DEFAULT_TEMPERATURE_OFFSET,
+    FORCE_TEMP_UNIT_CELSIUS,
+    FORCE_TEMP_UNIT_FAHRENHEIT,
     DOMAIN,
     FUEL_CONSUMPTION_TABLE,
     HCALORY_MVP2_NOTIFY_UUID,
@@ -166,6 +170,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._max_stale_cycles = 3  # Keep last values for this many failed cycles
         self._last_valid_data: dict[str, Any] = {}  # Cache of last valid sensor readings
         self._heater_uses_fahrenheit: bool = False  # Detected from heater response
+        self._force_temp_unit: str = config_entry.data.get(
+            CONF_FORCE_TEMP_UNIT, DEFAULT_FORCE_TEMP_UNIT
+        )
         
         # Current state
         self.data: dict[str, Any] = {
@@ -1554,7 +1561,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         # Update coordinator state from parsed data
         if "temp_unit" in parsed:
-            self._heater_uses_fahrenheit = (parsed["temp_unit"] == 1)
+            if self._force_temp_unit == FORCE_TEMP_UNIT_CELSIUS:
+                self._heater_uses_fahrenheit = False
+            elif self._force_temp_unit == FORCE_TEMP_UNIT_FAHRENHEIT:
+                self._heater_uses_fahrenheit = True
+            else:
+                self._heater_uses_fahrenheit = (parsed["temp_unit"] == 1)
             # Sync Fahrenheit flag to Hcalory protocol handler for correct command building
             if self._protocol_mode == 7 and self._protocol and hasattr(self._protocol, '_uses_fahrenheit'):
                 self._protocol._uses_fahrenheit = self._heater_uses_fahrenheit

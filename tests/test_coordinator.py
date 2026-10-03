@@ -149,6 +149,7 @@ def create_mock_coordinator() -> VevorHeaterCoordinator:
     coordinator._external_temp_sensor = None
     coordinator._auto_offset_max = 5
     coordinator._heater_uses_fahrenheit = False
+    coordinator._force_temp_unit = "auto"
 
     # Add address property (used by statistics import)
     coordinator.address = "AA:BB:CC:DD:EE:FF"
@@ -3812,6 +3813,57 @@ class TestCBFFDecryption:
         coordinator._parse_response(data)
 
         assert coordinator._heater_uses_fahrenheit is False
+
+    def test_force_temp_unit_celsius_overrides_firmware_fahrenheit(self):
+        """force_temp_unit=celsius ignores a firmware temp_unit=1 (issue #64)."""
+        coordinator = create_mock_coordinator()
+        coordinator._force_temp_unit = "celsius"
+        coordinator._heater_uses_fahrenheit = True  # start from a non-default value
+
+        mock_protocol = MagicMock()
+        mock_protocol.protocol_mode = 1
+        mock_protocol.parse.return_value = {"temp_unit": 1, "running_state": 1}
+
+        coordinator._detect_protocol = MagicMock(return_value=(mock_protocol, bytearray(18)))
+
+        data = bytearray([0xAA, 0x55] + [0x00] * 16)
+        coordinator._parse_response(data)
+
+        assert coordinator._heater_uses_fahrenheit is False
+
+    def test_force_temp_unit_fahrenheit_overrides_firmware_celsius(self):
+        """force_temp_unit=fahrenheit ignores a firmware temp_unit=0."""
+        coordinator = create_mock_coordinator()
+        coordinator._force_temp_unit = "fahrenheit"
+        coordinator._heater_uses_fahrenheit = False
+
+        mock_protocol = MagicMock()
+        mock_protocol.protocol_mode = 1
+        mock_protocol.parse.return_value = {"temp_unit": 0, "running_state": 1}
+
+        coordinator._detect_protocol = MagicMock(return_value=(mock_protocol, bytearray(18)))
+
+        data = bytearray([0xAA, 0x55] + [0x00] * 16)
+        coordinator._parse_response(data)
+
+        assert coordinator._heater_uses_fahrenheit is True
+
+    def test_force_temp_unit_auto_follows_firmware(self):
+        """force_temp_unit=auto preserves the existing firmware-driven behavior."""
+        coordinator = create_mock_coordinator()
+        coordinator._force_temp_unit = "auto"
+        coordinator._heater_uses_fahrenheit = False
+
+        mock_protocol = MagicMock()
+        mock_protocol.protocol_mode = 1
+        mock_protocol.parse.return_value = {"temp_unit": 1, "running_state": 1}
+
+        coordinator._detect_protocol = MagicMock(return_value=(mock_protocol, bytearray(18)))
+
+        data = bytearray([0xAA, 0x55] + [0x00] * 16)
+        coordinator._parse_response(data)
+
+        assert coordinator._heater_uses_fahrenheit is True
 
 
 # ---------------------------------------------------------------------------

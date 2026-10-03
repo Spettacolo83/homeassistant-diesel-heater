@@ -125,6 +125,21 @@ MAX_AUTO_OFFSET_MAX: Final = 9
 AUTO_OFFSET_THROTTLE_SECONDS: Final = 60
 AUTO_OFFSET_THRESHOLD: Final = 1.0  # Only adjust if difference >= 1°C
 
+# Force temperature unit (workaround for firmware that mis-reports temp_unit — issue #64)
+# "auto"       → follow the firmware's temp_unit byte (default, preserves current behavior)
+# "celsius"    → treat received temperatures as °C regardless of firmware flag
+# "fahrenheit" → treat received temperatures as °F regardless of firmware flag
+CONF_FORCE_TEMP_UNIT: Final = "force_temp_unit"
+FORCE_TEMP_UNIT_AUTO: Final = "auto"
+FORCE_TEMP_UNIT_CELSIUS: Final = "celsius"
+FORCE_TEMP_UNIT_FAHRENHEIT: Final = "fahrenheit"
+FORCE_TEMP_UNIT_OPTIONS: Final = (
+    FORCE_TEMP_UNIT_AUTO,
+    FORCE_TEMP_UNIT_CELSIUS,
+    FORCE_TEMP_UNIT_FAHRENHEIT,
+)
+DEFAULT_FORCE_TEMP_UNIT: Final = FORCE_TEMP_UNIT_AUTO
+
 # Heater temperature offset (sent to heater via cmd 20)
 # Both positive and negative offsets now work via BLE
 # Encoding: arg1 = value % 256, arg2 = (value // 256) % 256
