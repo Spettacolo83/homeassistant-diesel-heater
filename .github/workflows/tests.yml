@@ -35,36 +35,12 @@ jobs:
           pip install homeassistant bleak bleak-retry-connector voluptuous
           pip install -e ./diesel_heater_ble
 
-      # Known pre-existing failures on main that are being fixed in separate PRs.
-      # When a fix lands and these pass, remove the corresponding --deselect line
-      # (the deselected test name will show as "unknown" and alert us to re-enable it).
+      # Known pre-existing failures on main. Removed as fixes land.
       #
-      # Hcalory MVP2 checksum (21 tests) — fixed by #58
       # CBFF/Sunster V2.1 build commands (13 tests) — pending protocol fix
       - name: Run protocol tests (excluding known-broken)
         run: |
           pytest tests/test_protocol.py tests/test_library_import.py -v --tb=short \
-            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_parse_standby_state" \
-            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_parse_temperature_mode" \
-            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_parse_gear_mode" \
-            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_parse_fan_mode" \
-            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_parse_fault_state" \
-            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_parse_auto_start_stop" \
-            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_parse_voltage" \
-            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_parse_temperatures" \
-            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_parse_negative_temperatures" \
-            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_parse_temp_unit" \
-            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_parse_altitude" \
-            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_build_command_power_on" \
-            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_build_command_power_off" \
-            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_build_command_set_temperature" \
-            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_build_command_set_level" \
-            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_build_command_set_temp_unit_celsius" \
-            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_build_command_set_temp_unit_fahrenheit" \
-            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_build_command_auto_start_stop_on" \
-            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_build_command_auto_start_stop_off" \
-            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_build_command_unknown_defaults_to_status" \
-            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_checksum_calculation" \
             --deselect "tests/test_protocol.py::TestProtocolCBFF::test_parse_level_mode" \
             --deselect "tests/test_protocol.py::TestProtocolCBFF::test_build_command_status_request" \
             --deselect "tests/test_protocol.py::TestProtocolCBFF::test_build_command_power_on" \
