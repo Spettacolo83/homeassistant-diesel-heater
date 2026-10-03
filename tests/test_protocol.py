@@ -455,6 +455,45 @@ class TestProtocolAA66:
     def test_is_heater_protocol(self):
         assert isinstance(self.proto, HeaterProtocol)
 
+    def test_parse_complete_status_frames(self):
+        """AA66 preserves each mode's APK-defined target and level bytes."""
+        frames = {
+            "aa6600010003e8030108007e00c8001900030000": {
+                "running_state": 1, "error_code": 3, "running_step": 3,
+                "altitude": 1000, "running_mode": 1, "set_level": 8,
+                "supply_voltage": 12.6, "case_temperature": 200.0,
+                "cab_temperature": 25,
+            },
+            "aa6600010003d204021704f000c800fbff000000": {
+                "running_state": 1, "error_code": 0, "running_step": 3,
+                "altitude": 1234, "running_mode": 2, "set_temp": 23,
+                "set_level": 5, "supply_voltage": 24.0,
+                "case_temperature": 200.0, "cab_temperature": -5,
+            },
+            "aa6600002a000000000006780000001200000000": {
+                "running_state": 0, "error_code": 0, "running_step": 0,
+                "altitude": 0, "running_mode": 0, "set_level": 7,
+                "supply_voltage": 12.0, "case_temperature": 0.0,
+                "cab_temperature": 18,
+            },
+        }
+
+        for frame, expected in frames.items():
+            assert self.proto.parse(bytearray.fromhex(frame)) == expected
+
+    def test_build_command_complete_aa55_packet_matrix(self):
+        """AA66 uses the shared, unencrypted AA55 control packet."""
+        expected_packets = {
+            (0, 0): "aa550c220000002e", (1, 0): "aa550c220100002f",
+            (2, 1): "aa550c2202010031", (2, 2): "aa550c2202020032",
+            (3, 0): "aa550c2203000031", (3, 1): "aa550c2203010032",
+            (4, 25): "aa550c220419004b", (5, 7): "aa550c220507003a",
+            (10, 510): "aa550c220afe0137", (15, 1): "aa550c220f01003e",
+            (19, 1): "aa550c2213010042", (99, 0): "aa550c2263000091",
+        }
+
+        for (command, argument), expected in expected_packets.items():
+            assert self.proto.build_command(command, argument, 1234).hex() == expected
 
 # ---------------------------------------------------------------------------
 # ProtocolAA55Encrypted (mode=2, 48 bytes, pre-decrypted)
@@ -780,6 +819,38 @@ class TestProtocolAA66Encrypted:
         result = self.proto.parse(data)
         assert result["pump_type"] == 2
         assert result["rf433_enabled"] is None
+
+    def test_parse_complete_encrypted_status_frame(self):
+        """AA66 encrypted retains status, configuration, and timer fields."""
+        data = _make_aa66enc_data(
+            running_state=2, error_code=7, running_step=3, altitude_raw=1234,
+            running_mode=2, set_temp_raw=26, set_level=7, voltage_raw=240,
+            case_temp_raw=-150, language=4, temp_unit=0, tank_volume=12,
+            pump_byte=21, altitude_unit=1, auto_start_stop=1, cab_temp_raw=-55,
+            heater_offset=-3, backlight=80, co_present=1, co_ppm_raw=300,
+            part_number_raw=0x78563412, motherboard_version=5,
+        )
+        data[19:26] = b"\x02\x3a\x01\x95\x00\x5a\x01"
+
+        assert self.proto.parse(data) == {
+            "running_state": 2, "error_code": 7, "running_step": 3,
+            "altitude": 123.4, "running_mode": 2, "set_level": 7,
+            "temp_unit": 0, "set_temp": 26, "auto_start_stop": True,
+            "language": 4, "tank_volume": 12, "pump_type": None,
+            "rf433_enabled": True, "altitude_unit": 1,
+            "supply_voltage": 24.0, "case_temperature": -150,
+            "cab_temperature": -5.5, "heater_offset": -3, "backlight": 80,
+            "co_ppm": 300.0, "part_number": "78563412",
+            "motherboard_version": 5, "device_time": "09:30",
+            "device_time_minutes": 570, "timer_start_minutes": 405,
+            "timer_duration_minutes": 90, "timer_enabled": True,
+            "timer": "Start: 06:45, Duration: 90 min, Status: ON",
+        }
+
+    def test_build_command_complete_aa55_packet_matrix(self):
+        """Encrypted AA66 uses the shared unencrypted AA55 control packet."""
+        assert self.proto.build_command(10, 510, 1234).hex() == "aa550c220afe0137"
+        assert self.proto.build_command(19, 1, 1234).hex() == "aa550c2213010042"
 
     def test_parse_rf433_off(self):
         data = _make_aa66enc_data(pump_byte=20)
