@@ -871,6 +871,65 @@ class TestProtocolABBA:
         result = self.proto.parse(data)
         assert result["connected"] is True
 
+    def test_parse_complete_level_status_frame(self):
+        """A level-mode ABBA reply exposes every HeaterCC status field."""
+        result = self.proto.parse(bytearray.fromhex(
+            "ab ba 00 00 01 00 07 00 01 0c 00 2e 02 bc 00 01 04 d2 00 00 00"
+        ))
+
+        assert result == {
+            "connected": True, "running_state": 1, "running_step": 3,
+            "error_code": 0, "running_mode": 1, "set_level": 7,
+            "auto_start_stop": True, "supply_voltage": 12.0, "temp_unit": 0,
+            "cab_temperature": 16.0, "cab_temperature_raw": 16.0,
+            "case_temperature": 700.0, "altitude_unit": 0,
+            "high_altitude": 1, "altitude": 1234,
+        }
+
+    def test_parse_complete_temperature_cooldown_status_frame(self):
+        """A Fahrenheit temperature-mode reply remains active during cooldown."""
+        result = self.proto.parse(bytearray.fromhex(
+            "ab ba 00 00 02 01 19 00 00 18 01 5f 03 20 01 00 14 a0 00 00 00"
+        ))
+
+        assert result == {
+            "connected": True, "running_state": 1, "running_step": 4,
+            "error_code": 0, "running_mode": 2, "set_temp": 25,
+            "auto_start_stop": False, "supply_voltage": 24.0, "temp_unit": 1,
+            "cab_temperature": 73.0, "cab_temperature_raw": 73.0,
+            "case_temperature": 800.0, "altitude_unit": 1,
+            "high_altitude": 0, "altitude": 5280,
+        }
+
+    def test_parse_complete_ventilation_status_frame(self):
+        """Ventilation is an active ABBA state, not an off-state reply."""
+        result = self.proto.parse(bytearray.fromhex(
+            "ab ba 00 00 04 00 03 00 00 0c 00 32 00 c8 00 00 00 64 00 00 00"
+        ))
+
+        assert result == {
+            "connected": True, "running_state": 1, "running_step": 6,
+            "error_code": 0, "running_mode": 1, "set_level": 3,
+            "auto_start_stop": False, "supply_voltage": 12.0, "temp_unit": 0,
+            "cab_temperature": 20.0, "cab_temperature_raw": 20.0,
+            "case_temperature": 200.0, "altitude_unit": 0,
+            "high_altitude": 0, "altitude": 100,
+        }
+
+    def test_parse_complete_error_status_frame(self):
+        """Error replies use byte 6 as an error code, not a set point."""
+        result = self.proto.parse(bytearray.fromhex(
+            "ab ba 00 00 06 ff 2a 00 01 0c 00 2d 01 2c 00 01 00 00 00 00 00"
+        ))
+
+        assert result == {
+            "connected": True, "running_state": 0, "running_step": 0,
+            "error_code": 42, "auto_start_stop": True, "supply_voltage": 12.0,
+            "temp_unit": 0, "cab_temperature": 15.0,
+            "cab_temperature_raw": 15.0, "case_temperature": 300.0,
+            "altitude_unit": 0, "high_altitude": 1, "altitude": 0,
+        }
+
     # --- Command building ---
 
     def test_build_command_status(self):
@@ -947,6 +1006,22 @@ class TestProtocolABBA:
         """Unknown command falls back to status request."""
         pkt = self.proto.build_command(255, 0, 1234)
         assert pkt[3] == 0xCC  # Same as status
+
+    def test_build_command_complete_heatercc_packet_matrix(self):
+        """Every supported HeaterCC action emits its complete BAAB packet."""
+        expected_packets = {
+            (1, 0): "baab04cc00000035", (3, 0): "baab04bba10000c5",
+            (4, 25): "baab04db1900005d", (5, 1): "baab04bba20000c6",
+            (5, -1): "baab04bba30000c7", (5, 0): "baab04cc00000035",
+            (2, 1): "baab04bbac0000d0", (2, 2): "baab04bbad0000d1",
+            (2, 3): "baab04bba40000c8", (15, 0): "baab04bba70000cb",
+            (15, 1): "baab04bba80000cc", (19, 0): "baab04bba90000cd",
+            (19, 1): "baab04bbaa0000ce", (99, 0): "baab04bba50000c9",
+            (101, 0): "baab04bba40000c8", (255, 0): "baab04cc00000035",
+        }
+
+        for (command, argument), expected in expected_packets.items():
+            assert self.proto.build_command(command, argument, 1234).hex() == expected
 
     def test_is_heater_protocol(self):
         assert isinstance(self.proto, HeaterProtocol)
