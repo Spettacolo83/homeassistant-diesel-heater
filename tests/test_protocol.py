@@ -967,7 +967,7 @@ def _make_cbff_data(**overrides) -> bytearray:
     data[1] = 0xFF
     data[2] = overrides.get("protocol_version", 0x01)
     # Byte 10: run_state
-    data[10] = overrides.get("run_state", 2)  # 2=OFF by default
+    data[10] = overrides.get("run_state", 2)  # 2=ON by default
     # Byte 11: run_mode
     data[11] = overrides.get("run_mode", 1)
     # Byte 12: run_param
@@ -1062,19 +1062,19 @@ class TestProtocolCBFF:
         data = bytearray(45)
         assert self.proto.parse(data) is None
 
-    def test_parse_running_state_off(self):
-        """run_state in {2, 5, 6} → OFF."""
+    def test_parse_running_state_on(self):
+        """run_state in {2, 5, 6} → ON."""
         for state in (2, 5, 6):
             data = _make_cbff_data(run_state=state)
             result = self.proto.parse(data)
-            assert result["running_state"] == 0, f"run_state={state} should be OFF"
+            assert result["running_state"] == 1, f"run_state={state} should be ON"
 
-    def test_parse_running_state_on(self):
-        """run_state not in {2, 5, 6} → ON."""
+    def test_parse_running_state_off(self):
+        """run_state not in {2, 5, 6} → OFF."""
         for state in (0, 1, 3, 4):
             data = _make_cbff_data(run_state=state)
             result = self.proto.parse(data)
-            assert result["running_state"] == 1, f"run_state={state} should be ON"
+            assert result["running_state"] == 0, f"run_state={state} should be OFF"
 
     def test_parse_level_mode(self):
         """run_mode 1 → RUNNING_MODE_LEVEL."""

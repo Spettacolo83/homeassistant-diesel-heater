@@ -77,7 +77,7 @@ ABBA_STATUS_MAP: Final = {
 }
 
 # CBFF Protocol (Sunster/v2.1) run_state mapping (byte 10)
-CBFF_RUN_STATE_OFF: Final = {2, 5, 6}
+CBFF_RUN_STATE_ON: Final = {2, 5, 6}
 
 # ABBA Protocol error codes
 ABBA_ERROR_NONE: Final = 0
