@@ -1399,18 +1399,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     )
                     self._protocol_mode = 6
                     self._protocol = cbff_protocol
-                # Send V2.1 handshake if not yet sent (required before commands)
-                if not self._v21_handshake_sent and hasattr(cbff_protocol, 'build_handshake'):
-                    self._logger.info(
-                        "🔑 Sending Sunster V2.1 handshake (PIN=%d)...",
-                        self._passkey
-                    )
-                    try:
-                        handshake_pkt = cbff_protocol.build_handshake(self._passkey)
-                        # Use create_task to avoid blocking notification handler
-                        asyncio.create_task(self._send_v21_handshake(handshake_pkt))
-                    except Exception as err:
-                        self._logger.warning("Failed to build V2.1 handshake: %s", err)
+                self._queue_v21_handshake(cbff_protocol)
             self._notification_data = data
             return
 
@@ -1457,6 +1446,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 if not protocol.v21_mode:
                     self._logger.info("🔐 Enabling Sunster V2.1 encrypted mode")
                     protocol.set_v21_mode(True)
+                self._queue_v21_handshake(protocol)
         elif parsed.pop("_cbff_data_suspect", False):
             proto_ver = parsed.pop("cbff_protocol_version", "?")
             self._logger.warning(
@@ -1708,6 +1698,21 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._logger.error("❌ MVP2 password handshake failed after %d attempts", max_retries)
         return False
 
+    def _queue_v21_handshake(self, protocol: HeaterProtocol) -> None:
+        """Queue the required Sunster V2.1 handshake once per connection."""
+        if self._v21_handshake_sent or not hasattr(protocol, "build_handshake"):
+            return
+
+        try:
+            handshake_pkt = protocol.build_handshake(self._passkey)
+        except Exception as err:
+            self._logger.warning("Failed to build V2.1 handshake: %s", err)
+            return
+
+        self._v21_handshake_sent = True
+        self._logger.info("🔑 Sending Sunster V2.1 handshake (PIN=%d)...", self._passkey)
+        asyncio.create_task(self._send_v21_handshake(handshake_pkt))
+
     async def _send_v21_handshake(self, packet: bytearray) -> None:
         """Send Sunster V2.1 handshake packet asynchronously."""
         try:
@@ -1719,6 +1724,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 packet.hex()
             )
         except Exception as err:
+            self._v21_handshake_sent = False
             self._logger.warning("⚠️ V2.1 handshake failed: %s", err)
 
     async def _write_gatt(self, packet: bytearray) -> None:
