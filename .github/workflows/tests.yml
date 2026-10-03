@@ -35,25 +35,9 @@ jobs:
           pip install homeassistant bleak bleak-retry-connector voluptuous
           pip install -e ./diesel_heater_ble
 
-      # Known pre-existing failures on main. Removed as fixes land.
-      #
-      # CBFF/Sunster V2.1 build commands (13 tests) — pending protocol fix
-      - name: Run protocol tests (excluding known-broken)
+      - name: Run protocol tests
         run: |
-          pytest tests/test_protocol.py tests/test_library_import.py -v --tb=short \
-            --deselect "tests/test_protocol.py::TestProtocolCBFF::test_parse_level_mode" \
-            --deselect "tests/test_protocol.py::TestProtocolCBFF::test_build_command_status_request" \
-            --deselect "tests/test_protocol.py::TestProtocolCBFF::test_build_command_power_on" \
-            --deselect "tests/test_protocol.py::TestProtocolCBFF::test_build_command_power_off" \
-            --deselect "tests/test_protocol.py::TestProtocolCBFF::test_build_command_set_temperature" \
-            --deselect "tests/test_protocol.py::TestProtocolCBFF::test_build_command_set_level" \
-            --deselect "tests/test_protocol.py::TestProtocolCBFF::test_build_command_set_mode" \
-            --deselect "tests/test_protocol.py::TestProtocolCBFF::test_build_command_config_uses_aa55_fallback" \
-            --deselect "tests/test_protocol.py::TestProtocolCBFF::test_build_command_unknown_defaults_to_status" \
-            --deselect "tests/test_protocol.py::TestProtocolCBFF::test_build_handshake_pin_encoding" \
-            --deselect "tests/test_protocol.py::TestProtocolCBFF::test_v21_command_encrypted_when_enabled" \
-            --deselect "tests/test_protocol.py::TestProtocolCBFF::test_v21_power_on_with_payload" \
-            --deselect "tests/test_protocol.py::TestProtocolCBFF::test_v21_power_off_no_payload"
+          pytest tests/test_protocol.py tests/test_library_import.py -v --tb=short
 
   integration-tests:
     name: Integration tests (HA environment)
