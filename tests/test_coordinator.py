@@ -3025,6 +3025,32 @@ class TestABBAToggleGuard:
         coordinator.async_request_refresh.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_turn_on_skipped_during_cooldown_abba(self):
+        """ABBA's heat toggle must not interrupt its mandatory cooldown."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 5
+        coordinator.data["running_state"] = 1
+        coordinator.data["running_step"] = 4
+        coordinator._send_command = AsyncMock()
+
+        await coordinator.async_turn_on()
+
+        coordinator._send_command.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_turn_off_skipped_during_cooldown_abba(self):
+        """ABBA's heat toggle must not interrupt its mandatory cooldown."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 5
+        coordinator.data["running_state"] = 1
+        coordinator.data["running_step"] = 4
+        coordinator._send_command = AsyncMock()
+
+        await coordinator.async_turn_off()
+
+        coordinator._send_command.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_turn_on_proceeds_non_abba_protocol(self):
         """Test async_turn_on always proceeds for non-ABBA protocols."""
         coordinator = create_mock_coordinator()

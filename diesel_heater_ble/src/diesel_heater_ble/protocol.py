@@ -596,7 +596,7 @@ class ProtocolABBA(HeaterProtocol):
 
         # Byte 4: Status
         status_byte = _u8_to_number(data[4])
-        parsed["running_state"] = 1 if status_byte == 0x01 else 0
+        parsed["running_state"] = 1 if status_byte in (0x01, 0x02, 0x04) else 0
         parsed["running_step"] = ABBA_STATUS_MAP.get(status_byte, status_byte)
 
         # Byte 5: Mode (0x00=Level, 0x01=Temperature, 0xFF=Error)
@@ -677,13 +677,13 @@ class ProtocolABBA(HeaterProtocol):
             return self._build_abba("baab04cc000000")
         elif command == 2:
             if argument == 2:
-                return self._build_abba("baab04bbac0000")  # Const temp mode
+                return self._build_abba("baab04bbad0000")  # Const temp mode
             elif argument == 3:
                 # Ventilation mode (fan-only) - 0xA4
                 # Only works when heater is in standby/off state
                 return self._build_abba("baab04bba40000")
             else:
-                return self._build_abba("baab04bbad0000")  # Other mode
+                return self._build_abba("baab04bbac0000")  # Level mode
         elif command == 15:
             if argument == 1:
                 return self._build_abba("baab04bba80000")  # Fahrenheit

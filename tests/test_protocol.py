@@ -761,13 +761,13 @@ class TestProtocolABBA:
     def test_parse_cooldown_state(self):
         data = _make_abba_data(status_byte=0x02)
         result = self.proto.parse(data)
-        assert result["running_state"] == 0
+        assert result["running_state"] == 1
         assert result["running_step"] == 4  # RUNNING_STEP_COOLDOWN
 
     def test_parse_ventilation_state(self):
         data = _make_abba_data(status_byte=0x04)
         result = self.proto.parse(data)
-        assert result["running_state"] == 0
+        assert result["running_state"] == 1
         assert result["running_step"] == 6  # RUNNING_STEP_VENTILATION
 
     def test_parse_level_mode(self):
@@ -883,12 +883,12 @@ class TestProtocolABBA:
     def test_build_command_const_temp_mode(self):
         """Command 2, argument 2 → const temp mode."""
         pkt = self.proto.build_command(2, 2, 1234)
-        assert pkt[4] == 0xAC  # openOnPlateau/const temp
+        assert pkt.hex() == "baab04bbad0000d1"
 
     def test_build_command_other_mode(self):
-        """Command 2, argument != 2 → other mode."""
+        """Command 2, argument 1 → level mode."""
         pkt = self.proto.build_command(2, 1, 1234)
-        assert pkt[4] == 0xAD  # Other mode
+        assert pkt.hex() == "baab04bbac0000d0"
 
     def test_build_command_fahrenheit(self):
         """Command 15, argument 1 → Fahrenheit."""
