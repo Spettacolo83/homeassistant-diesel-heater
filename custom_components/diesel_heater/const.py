@@ -18,7 +18,7 @@ from diesel_heater_ble.const import (  # noqa: F401
     ABBA_CMD_VENTILATION,
     ABBA_ERROR_NAMES,
     ABBA_STATUS_MAP,
-    CBFF_RUN_STATE_OFF,
+    CBFF_RUN_STATE_ON,
     ENCRYPTION_KEY,
     ERROR_NAMES,
     ERROR_NONE,
