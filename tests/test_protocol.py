@@ -1716,6 +1716,87 @@ class TestProtocolHcalory:
         assert result.get("temp_unit") == 1
         assert result.get("error_code") == 0
 
+    def test_parse_btsnoop_state_transitions(self):
+        """Parse captured MVP2 startup and control-state frames from issue #42."""
+        frames = (
+            (
+                "00010001000100230300001EFFFF01F40000000080014602008200049C"
+                "0002620000000000010000000064",
+                {
+                    "running_state": 1,
+                    "running_step": 0,
+                    "running_mode": 2,
+                    "set_temp": 70,
+                    "auto_start_stop": False,
+                    "supply_voltage": 13.0,
+                    "case_temperature": 118,
+                    "cab_temperature": 61,
+                },
+            ),
+            (
+                "00010001000100230300001EFFFF01F40000000081014602007800049C"
+                "000262000000000001000000005B",
+                {
+                    "running_state": 1,
+                    "running_step": 6,
+                    "running_mode": 2,
+                    "set_temp": 70,
+                    "auto_start_stop": False,
+                    "supply_voltage": 12.0,
+                    "case_temperature": 118,
+                    "cab_temperature": 61,
+                },
+            ),
+            (
+                "00010001000100230300001EFFFF01F40000000083014602008200049C"
+                "0002620000000000010000000067",
+                {
+                    "running_state": 1,
+                    "running_step": 2,
+                    "running_mode": 2,
+                    "set_temp": 70,
+                    "auto_start_stop": False,
+                    "supply_voltage": 13.0,
+                    "case_temperature": 118,
+                    "cab_temperature": 61,
+                },
+            ),
+            (
+                "00010001000100230300001EFFFF01F400000000850205020078000E9C"
+                "0002620000000000010000000029",
+                {
+                    "running_state": 1,
+                    "running_step": 3,
+                    "running_mode": 1,
+                    "set_level": 5,
+                    "auto_start_stop": False,
+                    "supply_voltage": 12.0,
+                    "case_temperature": 374,
+                    "cab_temperature": 61,
+                },
+            ),
+            (
+                "00010001000100230300001EFFFF01F400000000850156010078000E56"
+                "00026C000000000001000000003C",
+                {
+                    "running_state": 1,
+                    "running_step": 3,
+                    "running_mode": 2,
+                    "set_temp": 86,
+                    "auto_start_stop": True,
+                    "supply_voltage": 12.0,
+                    "case_temperature": 367,
+                    "cab_temperature": 62,
+                },
+            ),
+        )
+
+        for packet, expected in frames:
+            result = self.proto.parse(bytearray.fromhex(packet))
+            assert result is not None
+            for key, value in expected.items():
+                assert result[key] == value
+
     # Beta.33: Level mapping tests removed (issue #40)
     # Hcalory now uses 1-10 levels directly without mapping to 1-10
 
