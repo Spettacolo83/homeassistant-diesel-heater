@@ -531,6 +531,44 @@ class TestProtocolAA55Encrypted:
         assert result["error_code"] == 3
         assert result["running_step"] == 2
 
+    def test_parse_complete_encrypted_status_frame(self):
+        """A decrypted AA55 frame exposes every encrypted-protocol field."""
+        data = _make_aa55enc_data(
+            running_state=2, error_code=7, running_step=3, altitude_raw=1234,
+            running_mode=2, set_temp=26, set_level=7, voltage_raw=240,
+            case_temp_raw=-150, cab_temp_raw=-55, heater_offset=-3,
+            backlight=80, co_present=1, co_ppm_raw=300,
+            part_number_raw=0x78563412, motherboard_version=5,
+        )
+        data[19:26] = b"\x02\x3a\x01\x95\x00\x5a\x01"
+
+        assert self.proto.parse(data) == {
+            "running_state": 2, "error_code": 7, "running_step": 3,
+            "altitude": 123.4, "running_mode": 2, "set_level": 7,
+            "set_temp": 26, "supply_voltage": 24.0,
+            "case_temperature": -150, "cab_temperature": -5.5,
+            "heater_offset": -3, "backlight": 80, "co_ppm": 300.0,
+            "part_number": "78563412", "motherboard_version": 5,
+            "device_time": "09:30", "device_time_minutes": 570,
+            "timer_start_minutes": 405, "timer_duration_minutes": 90,
+            "timer_enabled": True,
+            "timer": "Start: 06:45, Duration: 90 min, Status: ON",
+        }
+
+    def test_build_command_complete_aa55_packet_matrix(self):
+        """Encrypted AA55 uses the same unencrypted control packet layout."""
+        expected_packets = {
+            (0, 0): "aa550c220000002e", (1, 0): "aa550c220100002f",
+            (2, 1): "aa550c2202010031", (2, 2): "aa550c2202020032",
+            (3, 0): "aa550c2203000031", (3, 1): "aa550c2203010032",
+            (4, 25): "aa550c220419004b", (5, 7): "aa550c220507003a",
+            (10, 510): "aa550c220afe0137", (15, 1): "aa550c220f01003e",
+            (19, 1): "aa550c2213010042", (99, 0): "aa550c2263000091",
+        }
+
+        for (command, argument), expected in expected_packets.items():
+            assert self.proto.build_command(command, argument, 1234).hex() == expected
+
     def test_parse_altitude(self):
         """Altitude = (byte7 + 256*byte6) / 10."""
         data = _make_aa55enc_data(altitude_raw=1000)
