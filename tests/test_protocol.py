@@ -1050,12 +1050,18 @@ class TestProtocolCBFF:
             assert result["running_state"] == 1, f"run_state={state} should be ON"
 
     def test_parse_level_mode(self):
-        """run_mode 1, 3, 4 → RUNNING_MODE_LEVEL."""
-        for mode in (1, 3, 4):
-            data = _make_cbff_data(run_mode=mode, run_param=7)
-            result = self.proto.parse(data)
-            assert result["running_mode"] == 1  # RUNNING_MODE_LEVEL
-            assert result["set_level"] == 7
+        """run_mode 1 → RUNNING_MODE_LEVEL."""
+        data = _make_cbff_data(run_mode=1, run_param=7)
+        result = self.proto.parse(data)
+        assert result["running_mode"] == 1  # RUNNING_MODE_LEVEL
+        assert result["set_level"] == 7
+
+    def test_parse_ventilation_mode(self):
+        """run_mode 3 → RUNNING_MODE_VENTILATION."""
+        data = _make_cbff_data(run_mode=3, run_param=7)
+        result = self.proto.parse(data)
+        assert result["running_mode"] == 3  # RUNNING_MODE_VENTILATION
+        assert result["set_level"] == 7
 
     def test_parse_temperature_mode(self):
         """run_mode 2 → RUNNING_MODE_TEMPERATURE."""
@@ -1066,10 +1072,11 @@ class TestProtocolCBFF:
         assert result["set_level"] == 6  # now_gear in temp mode
 
     def test_parse_other_mode(self):
-        """run_mode not 1-4 → RUNNING_MODE_MANUAL."""
-        data = _make_cbff_data(run_mode=0)
-        result = self.proto.parse(data)
-        assert result["running_mode"] == 0  # RUNNING_MODE_MANUAL
+        """run_mode values other than 1, 2, or 3 → RUNNING_MODE_MANUAL."""
+        for mode in (0, 4):
+            data = _make_cbff_data(run_mode=mode)
+            result = self.proto.parse(data)
+            assert result["running_mode"] == 0  # RUNNING_MODE_MANUAL
 
     def test_parse_voltage(self):
         data = _make_cbff_data(voltage_raw=120)
@@ -1297,80 +1304,79 @@ class TestProtocolCBFF:
     # --- FEAA command building ---
 
     def test_build_command_status_request(self):
-        """Status request uses FEAA format with cmd_1=0x80, cmd_2=0x00."""
+        """Status request uses FEAA format with cmd_1=0x00, cmd_2=0x00."""
         pkt = self.proto.build_command(1, 0, 1234)
         assert pkt[0] == 0xFE
         assert pkt[1] == 0xAA
-        assert pkt[6] == 0x80  # cmd_1 (status query)
+        assert pkt[6] == 0x00  # cmd_1 (status query)
         assert pkt[7] == 0x00  # cmd_2 (read)
         # Checksum is sum of all previous bytes & 0xFF
         assert pkt[-1] == sum(pkt[:-1]) & 0xFF
 
     def test_build_command_power_on(self):
-        """Power on uses FEAA with cmd_1=0x81, cmd_2=0x03, payload=1."""
+        """Power on uses FEAA with cmd_1=0x01, cmd_2=0x01 and state payload."""
         pkt = self.proto.build_command(3, 1, 1234)  # cmd=3 (power), arg=1 (on)
         assert pkt[0] == 0xFE
         assert pkt[1] == 0xAA
-        assert pkt[6] == 0x81  # cmd_1 (power command)
-        assert pkt[7] == 0x03  # cmd_2 (with payload)
-        assert pkt[8] == 0x01  # payload: on
+        assert pkt[6] == 0x01  # cmd_1 (power command)
+        assert pkt[7] == 0x01  # cmd_2 (power on)
+        assert pkt[8:12] == bytes([1, 5, 0xFF, 0xFF])
         assert pkt[-1] == sum(pkt[:-1]) & 0xFF
 
     def test_build_command_power_off(self):
-        """Power off uses FEAA with cmd_1=0x81, cmd_2=0x03, payload=0."""
+        """Power off uses FEAA with cmd_1=0x01, cmd_2=0x00 and state payload."""
         pkt = self.proto.build_command(3, 0, 1234)  # cmd=3 (power), arg=0 (off)
         assert pkt[0] == 0xFE
         assert pkt[1] == 0xAA
-        assert pkt[6] == 0x81  # cmd_1 (power command)
-        assert pkt[7] == 0x03  # cmd_2 (with payload)
-        assert pkt[8] == 0x00  # payload: off
+        assert pkt[6] == 0x01  # cmd_1 (power command)
+        assert pkt[7] == 0x00  # cmd_2 (power off)
+        assert pkt[8:12] == bytes([1, 5, 0xFF, 0xFF])
         assert pkt[-1] == sum(pkt[:-1]) & 0xFF
 
     def test_build_command_set_temperature(self):
-        """Set temperature uses FEAA with cmd_1=0x81, payload=[2, temp]."""
+        """Set temperature uses FEAA with cmd_1=0x01, payload=[2, temp]."""
         pkt = self.proto.build_command(4, 25, 1234)  # cmd=4 (set temp), arg=25
         assert pkt[0] == 0xFE
         assert pkt[1] == 0xAA
-        assert pkt[6] == 0x81  # cmd_1 (control command)
-        assert pkt[7] == 0x03  # cmd_2 (with payload)
+        assert pkt[6] == 0x01  # cmd_1 (control command)
+        assert pkt[7] == 0x01  # cmd_2 (with payload)
         assert pkt[8] == 0x02  # run_mode: temperature
         assert pkt[9] == 25    # run_param: temperature value
         assert pkt[-1] == sum(pkt[:-1]) & 0xFF
 
     def test_build_command_set_level(self):
-        """Set level uses FEAA with cmd_1=0x81, payload=[1, level]."""
+        """Set level uses FEAA with cmd_1=0x01, payload=[1, level]."""
         pkt = self.proto.build_command(5, 7, 1234)  # cmd=5 (set level), arg=7
         assert pkt[0] == 0xFE
         assert pkt[1] == 0xAA
-        assert pkt[6] == 0x81  # cmd_1 (control command)
-        assert pkt[7] == 0x03  # cmd_2 (with payload)
+        assert pkt[6] == 0x01  # cmd_1 (control command)
+        assert pkt[7] == 0x01  # cmd_2 (with payload)
         assert pkt[8] == 0x01  # run_mode: level
         assert pkt[9] == 7     # run_param: level value
         assert pkt[-1] == sum(pkt[:-1]) & 0xFF
 
     def test_build_command_set_mode(self):
-        """Set mode uses FEAA with cmd_1=0x81, cmd_2=0x02."""
+        """Set mode uses FEAA with cmd_1=0x01 and mode/state payload."""
         pkt = self.proto.build_command(2, 1, 1234)
         assert pkt[0] == 0xFE
         assert pkt[1] == 0xAA
-        assert pkt[6] == 0x81  # cmd_1 (control command)
-        assert pkt[7] == 0x02  # cmd_2 (without payload)
+        assert pkt[6] == 0x01  # cmd_1 (control command)
+        assert pkt[7] == 0x01  # cmd_2 (with payload)
+        assert pkt[8:12] == bytes([1, 5, 0xFF, 0xFF])
         assert pkt[-1] == sum(pkt[:-1]) & 0xFF
 
     def test_build_command_config_uses_aa55_fallback(self):
-        """Config commands (14-21) fall back to AA55 format."""
+        """Config commands (14-21) fall back to the FEAA status query."""
         for cmd in (14, 15, 16, 17, 19, 20, 21):
             pkt = self.proto.build_command(cmd, 0, 1234)
-            assert pkt[0] == 0xAA
-            assert pkt[1] == 0x55
-            assert len(pkt) == 8
+            assert pkt == self.proto.build_command(1, 0, 1234)
 
     def test_build_command_unknown_defaults_to_status(self):
         """Unknown command defaults to status request."""
         pkt = self.proto.build_command(99, 0, 1234)
         assert pkt[0] == 0xFE
         assert pkt[1] == 0xAA
-        assert pkt[6] == 0x80  # status query
+        assert pkt[6] == 0x00  # status query
         assert pkt[7] == 0x00  # read
 
     def test_feaa_packet_length_field(self):
@@ -1423,10 +1429,10 @@ class TestProtocolCBFF:
         proto = ProtocolCBFF()
         pkt = proto.build_handshake(1234)  # Should be [34, 12]
         # Without encryption, we can verify the payload
-        # Packet: FEAA + ver + pkg + len(2) + cmd1(0x86) + cmd2(0x00) + payload(2) + checksum
+        # Packet: FEAA + ver + pkg + len(2) + cmd1(0x06) + cmd2(0x00) + payload(2) + checksum
         assert pkt[0] == 0xFE
         assert pkt[1] == 0xAA
-        assert pkt[6] == 0x86  # CMD1 for password/handshake
+        assert pkt[6] == 0x06  # CMD1 for password/handshake
         assert pkt[7] == 0x00  # CMD2
         assert pkt[8] == 34    # 1234 % 100
         assert pkt[9] == 12    # 1234 // 100
@@ -1452,13 +1458,11 @@ class TestProtocolCBFF:
         expected = bytearray([0xCB, 0xFF, 0x45, 0x45, 0x3B, 0x5A, 0x31, 0x27, 0xC9])
         assert encrypted == expected
 
-    def test_v21_command_encrypted_when_enabled(self):
-        """Commands are encrypted when V2.1 mode is enabled."""
-        self.proto.set_device_sn("E466E5BC086D")
-        self.proto.set_v21_mode(False)
-        unencrypted = self.proto.build_command(0, 0, 1234)  # Status request
+    def test_v21_command_encrypted_when_device_sn_is_known(self):
+        """Commands are encrypted when the V2.1 device serial is known."""
+        unencrypted = self.proto.build_command(0, 0, 1234)
 
-        self.proto.set_v21_mode(True)
+        self.proto.set_device_sn("E466E5BC086D")
         encrypted = self.proto.build_command(0, 0, 1234)
 
         # Encrypted packet should be different
@@ -1476,7 +1480,7 @@ class TestProtocolCBFF:
         # Check packet structure (before encryption, since no device_sn)
         assert pkt[0] == 0xFE
         assert pkt[1] == 0xAA
-        assert pkt[6] == 0x81  # CMD1 for control
+        assert pkt[6] == 0x01  # CMD1 for control
         assert pkt[7] == 0x01  # CMD2 for power on
         # Payload: [mode, param, time_l, time_h] = [1, 5, 0xFF, 0xFF]
         assert pkt[8] == 1     # run_mode (level)
@@ -1490,11 +1494,11 @@ class TestProtocolCBFF:
         proto.set_v21_mode(True)
         pkt = proto.build_command(3, 0, 1234)  # Power OFF
 
-        assert pkt[6] == 0x81  # CMD1 for control
+        assert pkt[6] == 0x01  # CMD1 for control
         assert pkt[7] == 0x00  # CMD2 for power off
-        # Length should be 9 bytes (no payload)
+        # Length includes the current mode/parameter/time payload.
         length = pkt[4] | (pkt[5] << 8)
-        assert length == 9
+        assert length == 13
 
     def test_v21_set_temperature_with_payload(self):
         """V2.1 set temperature includes mode/param/time payload."""
