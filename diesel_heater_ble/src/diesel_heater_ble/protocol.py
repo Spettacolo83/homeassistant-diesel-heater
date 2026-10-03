@@ -459,6 +459,16 @@ class ProtocolAA66Encrypted(VevorCommandMixin, HeaterProtocol):
     protocol_mode = 4
     name = "AA66 encrypted"
 
+    def __init__(self) -> None:
+        """Initialize the AA66 encrypted protocol handler."""
+        self._temperature_unit_override: int | None = None
+
+    def set_temperature_unit_override(self, unit: int | None) -> None:
+        """Override the reported temperature unit for defective firmware."""
+        if unit not in (None, 0, 1):
+            raise ValueError("Temperature unit override must be None, 0, or 1")
+        self._temperature_unit_override = unit
+
     def parse(self, data: bytearray) -> dict[str, Any] | None:
         parsed: dict[str, Any] = {}
 
@@ -471,8 +481,11 @@ class ProtocolAA66Encrypted(VevorCommandMixin, HeaterProtocol):
 
         # Byte 27: Temperature unit (0=Celsius, 1=Fahrenheit)
         temp_unit_byte = _u8_to_number(data[27])
-        parsed["temp_unit"] = temp_unit_byte
-        heater_uses_fahrenheit = (temp_unit_byte == 1)
+        temp_unit = self._temperature_unit_override
+        if temp_unit is None:
+            temp_unit = temp_unit_byte
+        parsed["temp_unit"] = temp_unit
+        heater_uses_fahrenheit = (temp_unit == 1)
 
         # Byte 9: Set temperature (convert from F to C if needed)
         raw_set_temp = _u8_to_number(data[9])

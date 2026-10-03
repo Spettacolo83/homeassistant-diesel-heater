@@ -17,6 +17,8 @@ from . import conftest  # noqa: F401
 # Now we can import the coordinator
 from custom_components.diesel_heater.coordinator import VevorHeaterCoordinator
 from custom_components.diesel_heater.const import (
+    CONF_FORCE_TEMP_UNIT,
+    FORCE_TEMP_UNIT_CELSIUS,
     FUEL_CONSUMPTION_TABLE,
     RUNNING_STEP_RUNNING,
     STORAGE_KEY_TOTAL_FUEL,
@@ -158,6 +160,28 @@ def create_mock_coordinator() -> VevorHeaterCoordinator:
     coordinator.async_set_updated_data = MagicMock()
 
     return coordinator
+
+
+# ---------------------------------------------------------------------------
+# AA66 encrypted temperature-unit override tests
+# ---------------------------------------------------------------------------
+
+class TestAA66TemperatureUnitOverride:
+    """Tests AA66 temperature-unit override wiring."""
+
+    def test_coordinator_configures_aa66_before_parsing(self):
+        hass = MagicMock()
+        ble_device = MagicMock()
+        ble_device.address = "AA:BB:CC:DD:EE:FF"
+        entry = MagicMock()
+        entry.data = {
+            "address": ble_device.address,
+            CONF_FORCE_TEMP_UNIT: FORCE_TEMP_UNIT_CELSIUS,
+        }
+
+        coordinator = VevorHeaterCoordinator(hass, ble_device, entry)
+
+        assert coordinator._protocols[4]._temperature_unit_override == 0
 
 
 # ---------------------------------------------------------------------------
