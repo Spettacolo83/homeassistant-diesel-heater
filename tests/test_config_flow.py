@@ -258,6 +258,19 @@ class TestUserStep:
         assert result["step_id"] == "user"
         assert MOCK_ADDRESS in flow._discovered_devices
 
+    async def test_detects_lowercase_hcalory_name(self):
+        flow = VevorHeaterConfigFlow()
+        discovery = _make_ble_discovery(
+            name="hcalory5140",
+            service_uuids=[],
+            manufacturer_data={},
+        )
+
+        result = await flow.async_step_bluetooth(discovery)
+
+        assert result["type"] == "form"
+        assert result["step_id"] == "confirm"
+
     async def test_skips_generic_heater_name(self):
         flow = VevorHeaterConfigFlow()
         discovery = _make_ble_discovery(
