@@ -3598,6 +3598,37 @@ class TestNotificationCallback:
         assert coordinator.data["connected"] is True
 
 
+class TestCBFFV21Handshake:
+    """Tests for the encrypted CBFF/Sunster V2.1 handshake path."""
+
+    @pytest.mark.asyncio
+    async def test_decrypted_status_queues_handshake(self):
+        """Encrypted CBFF status starts the handshake before commands are sent."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 6
+        coordinator._send_v21_handshake = AsyncMock()
+        protocol = coordinator._protocols[6]
+        protocol.parse = MagicMock(return_value={"_cbff_decrypted": True})
+        protocol.set_v21_mode(False)
+
+        coordinator._parse_response(bytearray([0xCA, 0x88] + [0x00] * 45))
+        await asyncio.sleep(0)
+
+        assert protocol.v21_mode is True
+        coordinator._send_v21_handshake.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_failed_handshake_can_be_retried(self):
+        """A failed handshake does not prevent the next encrypted status retry."""
+        coordinator = create_mock_coordinator()
+        coordinator._write_gatt = AsyncMock(side_effect=RuntimeError("write failed"))
+        coordinator._v21_handshake_sent = True
+
+        await coordinator._send_v21_handshake(bytearray([0x01]))
+
+        assert coordinator._v21_handshake_sent is False
+
+
 class TestDetectProtocol:
     """Tests for protocol detection logic."""
 
