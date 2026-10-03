@@ -25,6 +25,7 @@ def coordinator_for_layout(neo: bool) -> VevorHeaterCoordinator:
     )
     coordinator.data = {"connected": False, "running_state": 1}
     coordinator._notification_data = None
+    coordinator._neo_password = 100000000
     coordinator._logger = MagicMock()
     coordinator.async_request_refresh = AsyncMock()
     return coordinator
@@ -47,11 +48,15 @@ def test_5a25_maps_only_observed_states(raw_state: int, expected: int) -> None:
     frame = bytearray(39)
     frame[:2] = b"Z%"
     frame[3], frame[6], frame[15], frame[35] = raw_state, 125, 30, 21
+    frame[32:34] = (1500).to_bytes(2, "big")
+    frame[34] = 2
     coordinator._notification_callback(FFF2, frame)
     assert coordinator.data["connected"] is True
     assert coordinator.data["supply_voltage"] == 12.5
     assert coordinator.data["set_temp"] == 30.0
     assert coordinator.data["cab_temperature"] == 21.0
+    assert coordinator.data["altitude"] == 1500
+    assert coordinator.data["neo_run_type"] == 2
     assert coordinator.data["neo_raw_state"] == raw_state
     assert coordinator.data["running_state"] == expected
 
@@ -64,10 +69,24 @@ def test_5a25_unknown_state_preserves_previous_running_state() -> None:
     assert coordinator.data["running_state"] == 1
 
 
-def test_neo_command_packets_match_captured_30c_vectors() -> None:
-    assert VevorHeaterCoordinator._neo_packet(0x51, 30) == bytearray.fromhex("a5090151021e000001a4ae")
-    assert VevorHeaterCoordinator._neo_packet(0x5A, 30) == bytearray.fromhex("a509015a021e000001dfaf")
-    assert VevorHeaterCoordinator._neo_packet(0x5C, 30) == bytearray.fromhex("a509015c021e000001b9af")
+def test_neo_command_packets_match_app_vectors() -> None:
+    assert VevorHeaterCoordinator._neo_packet(0x00, 1, 8, 1) == bytearray.fromhex("a50901000108000101fde2")
+    assert VevorHeaterCoordinator._neo_packet(0x51, 1, 30, 1) == bytearray.fromhex("a5090151011e00010134eb")
+    assert VevorHeaterCoordinator._neo_packet(0x5A, 2, 30, 1500) == bytearray.fromhex("a509015a021e05dc011ee7")
+    assert VevorHeaterCoordinator._neo_packet(0x5C, 2, 30, 1500) == bytearray.fromhex("a509015c021e05dc0178e7")
+
+
+@pytest.mark.asyncio
+async def test_status_poll_uses_app_startup_settings() -> None:
+    coordinator = coordinator_for_layout(True)
+    coordinator._client = SimpleNamespace(is_connected=True)
+    response = bytearray(39)
+    response[:2] = b"Z%"
+    coordinator._write_gatt = AsyncMock(
+        side_effect=lambda packet: coordinator._notification_callback(FFF2, response)
+    )
+    assert await coordinator._send_command(1, 0) is True
+    assert coordinator._write_gatt.await_args.args[0] == bytearray.fromhex("a50901000108000101fde2")
 
 
 @pytest.mark.asyncio
@@ -88,6 +107,20 @@ async def test_auth_succeeds_only_after_5c16() -> None:
         )
     )
     assert await coordinator._send_dz06_neo_auth() is True
+    assert coordinator._write_gatt.await_args.args[0][8:12] == bytearray.fromhex("05f5e100")
+
+
+@pytest.mark.asyncio
+async def test_auth_uses_configured_neo_connection_password() -> None:
+    coordinator = coordinator_for_layout(True)
+    coordinator._neo_password = 12345678
+    coordinator._write_gatt = AsyncMock(
+        side_effect=lambda packet: coordinator._notification_callback(
+            FFF2, bytearray.fromhex("5c16")
+        )
+    )
+    assert await coordinator._send_dz06_neo_auth() is True
+    assert coordinator._write_gatt.await_args.args[0][8:12] == bytearray.fromhex("00bc614e")
 
 
 @pytest.mark.asyncio
@@ -103,12 +136,38 @@ async def test_auth_without_5c16_fails_closed(monkeypatch: pytest.MonkeyPatch) -
 @pytest.mark.asyncio
 async def test_power_requires_confirmed_5a25() -> None:
     coordinator = coordinator_for_layout(True)
-    coordinator.data["set_temp"] = 30
+    coordinator.data.update({"set_temp": 30, "neo_run_type": 1, "altitude": 1})
     response = bytearray(39)
     response[:2] = b"Z%"
+    response[3] = 1
     coordinator._write_gatt = AsyncMock(side_effect=lambda packet: coordinator._notification_callback(FFF2, response))
     assert await coordinator._send_dz06_neo_power(True) is True
-    assert coordinator._write_gatt.await_args.args[0] == bytearray.fromhex("a509015a021e000001dfaf")
+    assert coordinator._write_gatt.await_args.args[0] == bytearray.fromhex("a509015a011e0001014fea")
+
+
+@pytest.mark.asyncio
+async def test_power_rejects_5a25_that_reports_the_wrong_state() -> None:
+    coordinator = coordinator_for_layout(True)
+    coordinator.data.update({"set_temp": 30, "neo_run_type": 1, "altitude": 1})
+    response = bytearray(39)
+    response[:2] = b"Z%"
+    coordinator._write_gatt = AsyncMock(
+        side_effect=lambda packet: coordinator._notification_callback(FFF2, response)
+    )
+    assert await coordinator._send_dz06_neo_power(True) is False
+
+
+@pytest.mark.asyncio
+async def test_neo_power_preserves_reported_mode_and_altitude() -> None:
+    coordinator = coordinator_for_layout(True)
+    coordinator.data.update({"set_temp": 30, "neo_run_type": 2, "altitude": 1500})
+    response = bytearray(39)
+    response[:2], response[3] = b"Z%", 1
+    coordinator._write_gatt = AsyncMock(
+        side_effect=lambda packet: coordinator._notification_callback(FFF2, response)
+    )
+    assert await coordinator._send_dz06_neo_power(True) is True
+    assert coordinator._write_gatt.await_args.args[0] == bytearray.fromhex("a509015a021e05dc011ee7")
 
 
 @pytest.mark.asyncio

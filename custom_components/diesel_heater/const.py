@@ -103,6 +103,12 @@ DEFAULT_PIN: Final = 1234
 MIN_PIN: Final = 0
 MAX_PIN: Final = 9999
 
+# Sunster Neo uses a separate numeric connection password.
+CONF_NEO_PASSWORD: Final = "neo_password"
+DEFAULT_NEO_PASSWORD: Final = 100000000
+MIN_NEO_PASSWORD: Final = 0
+MAX_NEO_PASSWORD: Final = 2147483647
+
 # Climate presets
 CONF_PRESET_AWAY_TEMP: Final = "preset_away_temp"
 CONF_PRESET_COMFORT_TEMP: Final = "preset_comfort_temp"

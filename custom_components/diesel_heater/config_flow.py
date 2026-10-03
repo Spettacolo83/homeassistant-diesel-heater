@@ -18,17 +18,21 @@ from homeassistant.helpers import selector
 from .const import (
     CONF_AUTO_OFFSET_MAX,
     CONF_EXTERNAL_TEMP_SENSOR,
+    CONF_NEO_PASSWORD,
     CONF_PIN,
     CONF_PRESET_AWAY_TEMP,
     CONF_PRESET_COMFORT_TEMP,
     DEFAULT_AUTO_OFFSET_MAX,
+    DEFAULT_NEO_PASSWORD,
     DEFAULT_PIN,
     DEFAULT_PRESET_AWAY_TEMP,
     DEFAULT_PRESET_COMFORT_TEMP,
     DOMAIN,
     MAX_AUTO_OFFSET_MAX,
+    MAX_NEO_PASSWORD,
     MAX_PIN,
     MIN_AUTO_OFFSET_MAX,
+    MIN_NEO_PASSWORD,
     MIN_PIN,
     SERVICE_UUID,
 )
@@ -71,6 +75,7 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 data={
                     CONF_ADDRESS: self._discovery_info.address,
                     CONF_PIN: user_input.get(CONF_PIN, DEFAULT_PIN),
+                    CONF_NEO_PASSWORD: user_input.get(CONF_NEO_PASSWORD, DEFAULT_NEO_PASSWORD),
                 },
             )
 
@@ -85,6 +90,13 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ): vol.All(
                     vol.Coerce(int),
                     vol.Range(min=MIN_PIN, max=MAX_PIN),
+                ),
+                vol.Optional(
+                    CONF_NEO_PASSWORD,
+                    default=DEFAULT_NEO_PASSWORD,
+                ): vol.All(
+                    vol.Coerce(int),
+                    vol.Range(min=MIN_NEO_PASSWORD, max=MAX_NEO_PASSWORD),
                 ),
             }),
             description_placeholders={
@@ -106,6 +118,7 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 data={
                     CONF_ADDRESS: address,
                     CONF_PIN: user_input.get(CONF_PIN, DEFAULT_PIN),
+                    CONF_NEO_PASSWORD: user_input.get(CONF_NEO_PASSWORD, DEFAULT_NEO_PASSWORD),
                 },
             )
 
@@ -174,6 +187,13 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     vol.Coerce(int),
                     vol.Range(min=MIN_PIN, max=MAX_PIN),
                 ),
+                vol.Optional(
+                    CONF_NEO_PASSWORD,
+                    default=DEFAULT_NEO_PASSWORD,
+                ): vol.All(
+                    vol.Coerce(int),
+                    vol.Range(min=MIN_NEO_PASSWORD, max=MAX_NEO_PASSWORD),
+                ),
             }),
         )
 
@@ -198,6 +218,7 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     data={
                         CONF_ADDRESS: address,
                         CONF_PIN: user_input.get(CONF_PIN, DEFAULT_PIN),
+                        CONF_NEO_PASSWORD: user_input.get(CONF_NEO_PASSWORD, DEFAULT_NEO_PASSWORD),
                     },
                 )
 
@@ -211,6 +232,13 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ): vol.All(
                     vol.Coerce(int),
                     vol.Range(min=MIN_PIN, max=MAX_PIN),
+                ),
+                vol.Optional(
+                    CONF_NEO_PASSWORD,
+                    default=DEFAULT_NEO_PASSWORD,
+                ): vol.All(
+                    vol.Coerce(int),
+                    vol.Range(min=MIN_NEO_PASSWORD, max=MAX_NEO_PASSWORD),
                 ),
             }),
             errors=errors,
@@ -272,6 +300,13 @@ class VevorHeaterOptionsFlowHandler(config_entries.OptionsFlow):
             ): vol.All(
                 vol.Coerce(int),
                 vol.Range(min=MIN_PIN, max=MAX_PIN),
+            ),
+            vol.Optional(
+                CONF_NEO_PASSWORD,
+                default=self.config_entry.data.get(CONF_NEO_PASSWORD, DEFAULT_NEO_PASSWORD),
+            ): vol.All(
+                vol.Coerce(int),
+                vol.Range(min=MIN_NEO_PASSWORD, max=MAX_NEO_PASSWORD),
             ),
             vol.Optional(
                 CONF_PRESET_AWAY_TEMP,

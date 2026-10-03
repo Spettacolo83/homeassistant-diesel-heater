@@ -39,9 +39,11 @@ from .const import (
     CONF_AUTO_OFFSET_ENABLED,
     CONF_AUTO_OFFSET_MAX,
     CONF_EXTERNAL_TEMP_SENSOR,
+    CONF_NEO_PASSWORD,
     CONF_PIN,
     CONF_TEMPERATURE_OFFSET,
     DEFAULT_AUTO_OFFSET_MAX,
+    DEFAULT_NEO_PASSWORD,
     DEFAULT_PIN,
     DEFAULT_TEMPERATURE_OFFSET,
     DOMAIN,
@@ -131,6 +133,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._notification_data: bytearray | None = None
         # Get passkey from config, default to 1234 (factory default for most heaters)
         self._passkey = config_entry.data.get(CONF_PIN, DEFAULT_PIN)
+        self._neo_password = config_entry.data.get(CONF_NEO_PASSWORD, DEFAULT_NEO_PASSWORD)
         self._protocol_mode = 0  # Will be detected from response (1-6)
         self._protocol: HeaterProtocol | None = None  # Active protocol handler
         cbff = ProtocolCBFF()
@@ -1347,6 +1350,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     "supply_voltage": data[6] / 10.0,
                     "set_temp": float(data[15]),
                     "cab_temperature": float(data[35]),
+                    "altitude": int.from_bytes(data[32:34], "big"),
+                    "neo_run_type": data[34],
                 })
                 raw_state = data[3]
                 self.data["neo_raw_state"] = raw_state
@@ -1832,9 +1837,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         return packet
 
     @staticmethod
-    def _neo_packet(opcode: int, target: int) -> bytearray:
-        """Build a captured Sunster Neo packet with CRC16/MODBUS."""
-        packet = bytearray((0xA5, 0x09, 0x01, opcode, 0x02, target, 0, 0, 1))
+    def _neo_packet(opcode: int, run_type: int, target: int, altitude: int) -> bytearray:
+        """Build a Sunster Neo control packet with CRC16/MODBUS."""
+        packet = bytearray((0xA5, 0x09, 0x01, opcode, run_type, target))
+        packet.extend(altitude.to_bytes(2, "big"))
+        packet.append(1)
         crc = 0xFFFF
         for value in packet:
             crc ^= value
@@ -1843,13 +1850,41 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         packet.extend(crc.to_bytes(2, "big"))
         return packet
 
+    def _neo_control_settings(
+        self, use_startup_defaults: bool = False
+    ) -> tuple[int, int, int] | None:
+        """Return controller settings required for a Neo packet."""
+        if use_startup_defaults:
+            run_type = self.data.get("neo_run_type", 1)
+            target = self.data.get("set_temp", 8)
+            altitude = self.data.get("altitude", 1)
+        else:
+            run_type = self.data.get("neo_run_type")
+            target = self.data.get("set_temp")
+            altitude = self.data.get("altitude")
+        try:
+            run_type = int(run_type)
+            target = int(round(float(target)))
+            altitude = int(altitude)
+        except (TypeError, ValueError):
+            return None
+        if run_type not in (1, 2) or not 8 <= target <= 36 or not 0 <= altitude <= 0xFFFF:
+            return None
+        return run_type, target, altitude
+
     async def _send_dz06_neo_auth(self) -> bool:
-        """Send experimental Neo authorization; portability is unverified."""
+        """Read Neo configuration using its configured connection password."""
         now = dt_util.now()
         timestamp = int(now.timestamp()) + int((now.utcoffset() or timedelta()).total_seconds())
         packet = bytearray((0x29, 0x0D, 0x5C, 0))
         packet.extend(timestamp.to_bytes(4, "big"))
-        packet.extend(bytes.fromhex("05F5E100"))
+        try:
+            password = int(self._neo_password)
+        except (TypeError, ValueError):
+            return False
+        if not 0 <= password <= 0x7FFFFFFF:
+            return False
+        packet.extend(password.to_bytes(4, "big"))
         packet.append(1)
         crc = 0xFFFF
         for value in packet:
@@ -1902,7 +1937,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         if self.is_dz06_neo:
             if command == 1:
-                packet = bytearray.fromhex("a5090100022300000189ae")
+                settings = self._neo_control_settings(use_startup_defaults=True)
+                if settings is None:
+                    return False
+                packet = self._neo_packet(0x00, *settings)
                 self._notification_data = None
                 try:
                     await self._write_gatt(packet)
@@ -2028,15 +2066,15 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """Send and confirm a captured Neo ON/OFF command."""
         if not self.is_dz06_neo:
             return False
-        try:
-            target = int(round(float(self.data.get("set_temp"))))
-        except (TypeError, ValueError):
+        settings = self._neo_control_settings()
+        if settings is None:
             return False
-        if not 8 <= target <= 36:
-            return False
+        run_type, target, altitude = settings
         self._notification_data = None
         try:
-            await self._write_gatt(self._neo_packet(0x5A if turn_on else 0x5C, target))
+            await self._write_gatt(
+                self._neo_packet(0x5A if turn_on else 0x5C, run_type, target, altitude)
+            )
         except Exception:
             return False
         deadline = time.monotonic() + 3
@@ -2046,7 +2084,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             if response is None:
                 continue
             if len(response) == 39 and response[:2] == bytearray((0x5A, 0x25)):
-                return True
+                raw_state = response[3]
+                if raw_state in (1, 2, 4, 5):
+                    return turn_on
+                if raw_state in (0, 7, 8):
+                    return not turn_on
+                return False
             self._notification_data = None
         return False
 
@@ -2187,9 +2230,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         # Convert to int for command (protocols expect integer temperatures)
         command_temp = int(round(temperature))
         if self.is_dz06_neo:
+            settings = self._neo_control_settings()
+            if settings is None:
+                return
+            run_type, _, altitude = settings
             self._notification_data = None
             try:
-                await self._write_gatt(self._neo_packet(0x51, command_temp))
+                await self._write_gatt(self._neo_packet(0x51, run_type, command_temp, altitude))
             except Exception:
                 return
             deadline = time.monotonic() + 3
