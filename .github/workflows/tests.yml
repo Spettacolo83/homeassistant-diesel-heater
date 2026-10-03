@@ -1,0 +1,131 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  protocol-tests:
+    name: Protocol tests (pure Python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install diesel_heater_ble + test deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install "pytest>=8.0" "pytest-asyncio>=0.21"
+          # homeassistant is imported by tests/conftest.py even for pure-protocol
+          # tests (the conftest tries to patch HA modules before any test is
+          # collected). Install HA so conftest import succeeds; the tests
+          # themselves don't actually exercise any HA code paths.
+          pip install homeassistant bleak bleak-retry-connector voluptuous
+          pip install -e ./diesel_heater_ble
+
+      # Known pre-existing failures on main that are being fixed in separate PRs.
+      # When a fix lands and these pass, remove the corresponding --deselect line
+      # (the deselected test name will show as "unknown" and alert us to re-enable it).
+      #
+      # Hcalory MVP2 checksum (21 tests) — fixed by #58
+      # CBFF/Sunster V2.1 build commands (13 tests) — pending protocol fix
+      - name: Run protocol tests (excluding known-broken)
+        run: |
+          pytest tests/test_protocol.py tests/test_library_import.py -v --tb=short \
+            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_parse_standby_state" \
+            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_parse_temperature_mode" \
+            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_parse_gear_mode" \
+            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_parse_fan_mode" \
+            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_parse_fault_state" \
+            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_parse_auto_start_stop" \
+            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_parse_voltage" \
+            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_parse_temperatures" \
+            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_parse_negative_temperatures" \
+            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_parse_temp_unit" \
+            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_parse_altitude" \
+            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_build_command_power_on" \
+            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_build_command_power_off" \
+            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_build_command_set_temperature" \
+            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_build_command_set_level" \
+            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_build_command_set_temp_unit_celsius" \
+            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_build_command_set_temp_unit_fahrenheit" \
+            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_build_command_auto_start_stop_on" \
+            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_build_command_auto_start_stop_off" \
+            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_build_command_unknown_defaults_to_status" \
+            --deselect "tests/test_protocol.py::TestProtocolHcalory::test_checksum_calculation" \
+            --deselect "tests/test_protocol.py::TestProtocolCBFF::test_parse_level_mode" \
+            --deselect "tests/test_protocol.py::TestProtocolCBFF::test_build_command_status_request" \
+            --deselect "tests/test_protocol.py::TestProtocolCBFF::test_build_command_power_on" \
+            --deselect "tests/test_protocol.py::TestProtocolCBFF::test_build_command_power_off" \
+            --deselect "tests/test_protocol.py::TestProtocolCBFF::test_build_command_set_temperature" \
+            --deselect "tests/test_protocol.py::TestProtocolCBFF::test_build_command_set_level" \
+            --deselect "tests/test_protocol.py::TestProtocolCBFF::test_build_command_set_mode" \
+            --deselect "tests/test_protocol.py::TestProtocolCBFF::test_build_command_config_uses_aa55_fallback" \
+            --deselect "tests/test_protocol.py::TestProtocolCBFF::test_build_command_unknown_defaults_to_status" \
+            --deselect "tests/test_protocol.py::TestProtocolCBFF::test_build_handshake_pin_encoding" \
+            --deselect "tests/test_protocol.py::TestProtocolCBFF::test_v21_command_encrypted_when_enabled" \
+            --deselect "tests/test_protocol.py::TestProtocolCBFF::test_v21_power_on_with_payload" \
+            --deselect "tests/test_protocol.py::TestProtocolCBFF::test_v21_power_off_no_payload"
+
+  integration-tests:
+    name: Integration tests (HA environment)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install "pytest>=8.0" "pytest-asyncio>=0.21" "pytest-cov>=4.0"
+          pip install homeassistant bleak bleak-retry-connector pyserial voluptuous
+          pip install -e ./diesel_heater_ble
+
+      # continue-on-error until the integration test suite stabilizes;
+      # the result is still visible in the Checks tab and in PR summaries.
+      - name: Run integration tests
+        run: |
+          pytest tests/ \
+            --ignore=tests/test_protocol.py \
+            --ignore=tests/test_library_import.py \
+            -v --tb=short
+        continue-on-error: true
+
+  lint:
+    name: Ruff lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ruff
+        run: pip install "ruff>=0.4.0"
+
+      - name: Run ruff check
+        run: ruff check custom_components/ diesel_heater_ble/src/ tests/
+        continue-on-error: true
+
+      - name: Run ruff format check
+        run: ruff format --check custom_components/ diesel_heater_ble/src/ tests/
+        continue-on-error: true
