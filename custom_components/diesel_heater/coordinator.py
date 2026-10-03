@@ -81,6 +81,8 @@ from .const import (
     STORAGE_KEY_DAILY_RUNTIME_HISTORY,
     STORAGE_KEY_TOTAL_FUEL,
     STORAGE_KEY_TOTAL_RUNTIME,
+    TEMP_UNIT_CELSIUS,
+    TEMP_UNIT_FAHRENHEIT,
     UPDATE_INTERVAL,
     UPDATE_INTERVAL_HCALORY,
 )
@@ -140,6 +142,15 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._neo_password = config_entry.data.get(CONF_NEO_PASSWORD, DEFAULT_NEO_PASSWORD)
         self._protocol_mode = 0  # Will be detected from response (1-6)
         self._protocol: HeaterProtocol | None = None  # Active protocol handler
+        force_temp_unit = config_entry.data.get(
+            CONF_FORCE_TEMP_UNIT, DEFAULT_FORCE_TEMP_UNIT
+        )
+        aa66_encrypted = ProtocolAA66Encrypted()
+        if force_temp_unit == FORCE_TEMP_UNIT_CELSIUS:
+            aa66_encrypted.set_temperature_unit_override(TEMP_UNIT_CELSIUS)
+        elif force_temp_unit == FORCE_TEMP_UNIT_FAHRENHEIT:
+            aa66_encrypted.set_temperature_unit_override(TEMP_UNIT_FAHRENHEIT)
+
         cbff = ProtocolCBFF()
         # CBFF encryption uses BLE MAC (without colons, uppercased) as key2
         device_sn = ble_device.address.replace(":", "").replace("-", "").upper()
@@ -149,7 +160,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             1: ProtocolAA55(),
             2: ProtocolAA55Encrypted(),
             3: ProtocolAA66(),
-            4: ProtocolAA66Encrypted(),
+            4: aa66_encrypted,
             5: ProtocolABBA(),
             6: cbff,
             7: ProtocolHcalory(),
@@ -170,9 +181,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._max_stale_cycles = 3  # Keep last values for this many failed cycles
         self._last_valid_data: dict[str, Any] = {}  # Cache of last valid sensor readings
         self._heater_uses_fahrenheit: bool = False  # Detected from heater response
-        self._force_temp_unit: str = config_entry.data.get(
-            CONF_FORCE_TEMP_UNIT, DEFAULT_FORCE_TEMP_UNIT
-        )
+        self._force_temp_unit: str = force_temp_unit
         
         # Current state
         self.data: dict[str, Any] = {

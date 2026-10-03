@@ -648,6 +648,21 @@ class TestProtocolAA66Encrypted:
         assert result["temp_unit"] == 1
         assert result["set_temp"] == 22
 
+    def test_force_celsius_override_preserves_celsius_target(self):
+        """Issue #64 firmware flags Fahrenheit while AA66 values remain Celsius."""
+        self.proto.set_temperature_unit_override(0)
+        data = _make_aa66enc_data(
+            temp_unit=1,
+            set_temp_raw=25,
+            cab_temp_raw=160,
+        )
+
+        result = self.proto.parse(data)
+
+        assert result["temp_unit"] == 0
+        assert result["set_temp"] == 25
+        assert result["cab_temperature"] == 16.0
+
     def test_parse_fahrenheit_clamped(self):
         """Converted temp clamped to 8-36°C."""
         # 100°F → (100-32)*5/9 = 37.8 → clamped to 36
