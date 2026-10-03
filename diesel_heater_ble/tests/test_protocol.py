@@ -261,6 +261,53 @@ class TestProtocolAA55:
         assert result["running_state"] == 1
         assert result["set_level"] == 5
 
+    def test_parse_complete_level_status_frame(self):
+        """A level-mode AA55 reply exposes every decoded controller field."""
+        data = bytearray.fromhex("aa5500010303e8030108007e00c800190000")
+
+        assert self.proto.parse(data) == {
+            "running_state": 1, "error_code": 3, "running_step": 3,
+            "altitude": 1000, "running_mode": 1, "set_level": 8,
+            "supply_voltage": 12.6, "case_temperature": 200,
+            "cab_temperature": 25,
+        }
+
+    def test_parse_complete_temperature_status_frame(self):
+        """A temperature-mode AA55 reply carries target and current level."""
+        data = bytearray.fromhex("aa5500010003d204021704f0009cfffbff00")
+
+        assert self.proto.parse(data) == {
+            "running_state": 1, "error_code": 0, "running_step": 3,
+            "altitude": 1234, "running_mode": 2, "set_temp": 23,
+            "set_level": 5, "supply_voltage": 24.0,
+            "case_temperature": -100, "cab_temperature": -5,
+        }
+
+    def test_parse_complete_manual_status_frame(self):
+        """A manual-mode AA55 reply takes its level from byte 10."""
+        data = bytearray.fromhex("aa5500002a00000000000678000000120000")
+
+        assert self.proto.parse(data) == {
+            "running_state": 0, "error_code": 42, "running_step": 0,
+            "altitude": 0, "running_mode": 0, "set_level": 7,
+            "supply_voltage": 12.0, "case_temperature": 0,
+            "cab_temperature": 18,
+        }
+
+    def test_build_command_complete_aa55_packet_matrix(self):
+        """AA55 commands retain the APK-defined eight-byte wire layout."""
+        expected_packets = {
+            (0, 0): "aa550c220000002e", (1, 0): "aa550c220100002f",
+            (2, 1): "aa550c2202010031", (2, 2): "aa550c2202020032",
+            (3, 0): "aa550c2203000031", (3, 1): "aa550c2203010032",
+            (4, 25): "aa550c220419004b", (5, 7): "aa550c220507003a",
+            (10, 510): "aa550c220afe0137", (15, 1): "aa550c220f01003e",
+            (19, 1): "aa550c2213010042", (99, 0): "aa550c2263000091",
+        }
+
+        for (command, argument), expected in expected_packets.items():
+            assert self.proto.build_command(command, argument, 1234).hex() == expected
+
     def test_is_heater_protocol(self):
         assert isinstance(self.proto, HeaterProtocol)
 
@@ -279,6 +326,7 @@ def _make_aa66_data(
     altitude=0,
     running_mode=1,
     byte9=5,
+    byte10=0,
     voltage_lo=120,
     voltage_hi=0,
     case_lo=150,
@@ -291,18 +339,20 @@ def _make_aa66_data(
     data[1] = 0x66
     data[2] = 0x00
     data[3] = running_state
-    data[4] = error_code
+    data[4] = 0x00
     data[5] = running_step
-    data[6] = altitude
-    data[7] = 0x00
+    data[6] = altitude & 0xFF
+    data[7] = (altitude >> 8) & 0xFF
     data[8] = running_mode
     data[9] = byte9
-    data[10] = 0x00
+    data[10] = byte10
     data[11] = voltage_lo
     data[12] = voltage_hi
     data[13] = case_lo
     data[14] = case_hi
-    data[15] = cab_temp
+    data[15] = cab_temp & 0xFF
+    data[16] = (cab_temp >> 8) & 0xFF
+    data[17] = error_code
     return data
 
 
@@ -331,10 +381,11 @@ class TestProtocolAA66:
         assert result["set_level"] == 10  # max(1, min(10, 15))
 
     def test_parse_temperature_mode(self):
-        data = _make_aa66_data(running_mode=2, byte9=25)
+        data = _make_aa66_data(running_mode=2, byte9=25, byte10=4)
         result = self.proto.parse(data)
         assert result["running_mode"] == 2
         assert result["set_temp"] == 25
+        assert result["set_level"] == 5
 
     def test_parse_temperature_mode_clamped(self):
         """set_temp clamped to 8-36."""
@@ -380,14 +431,69 @@ class TestProtocolAA66:
         result = self.proto.parse(data)
         assert result["cab_temperature"] == 25
 
-    def test_parse_altitude(self):
-        data = _make_aa66_data(altitude=100)
+    def test_parse_cab_temperature_signed(self):
+        data = _make_aa66_data(cab_temp=0xFFF6)
         result = self.proto.parse(data)
-        assert result["altitude"] == 100
+        assert result["cab_temperature"] == -10
+
+    def test_parse_altitude(self):
+        data = _make_aa66_data(altitude=1000)
+        result = self.proto.parse(data)
+        assert result["altitude"] == 1000
+
+    def test_parse_manual_mode_level(self):
+        data = _make_aa66_data(running_mode=0, byte10=3)
+        result = self.proto.parse(data)
+        assert result["set_level"] == 4
+
+    def test_parse_error_code_from_byte_17(self):
+        data = _make_aa66_data(error_code=12)
+        data[4] = 99
+        result = self.proto.parse(data)
+        assert result["error_code"] == 12
 
     def test_is_heater_protocol(self):
         assert isinstance(self.proto, HeaterProtocol)
 
+    def test_parse_complete_status_frames(self):
+        """AA66 preserves each mode's APK-defined target and level bytes."""
+        frames = {
+            "aa6600010003e8030108007e00c8001900030000": {
+                "running_state": 1, "error_code": 3, "running_step": 3,
+                "altitude": 1000, "running_mode": 1, "set_level": 8,
+                "supply_voltage": 12.6, "case_temperature": 200.0,
+                "cab_temperature": 25,
+            },
+            "aa6600010003d204021704f000c800fbff000000": {
+                "running_state": 1, "error_code": 0, "running_step": 3,
+                "altitude": 1234, "running_mode": 2, "set_temp": 23,
+                "set_level": 5, "supply_voltage": 24.0,
+                "case_temperature": 200.0, "cab_temperature": -5,
+            },
+            "aa6600002a000000000006780000001200000000": {
+                "running_state": 0, "error_code": 0, "running_step": 0,
+                "altitude": 0, "running_mode": 0, "set_level": 7,
+                "supply_voltage": 12.0, "case_temperature": 0.0,
+                "cab_temperature": 18,
+            },
+        }
+
+        for frame, expected in frames.items():
+            assert self.proto.parse(bytearray.fromhex(frame)) == expected
+
+    def test_build_command_complete_aa55_packet_matrix(self):
+        """AA66 uses the shared, unencrypted AA55 control packet."""
+        expected_packets = {
+            (0, 0): "aa550c220000002e", (1, 0): "aa550c220100002f",
+            (2, 1): "aa550c2202010031", (2, 2): "aa550c2202020032",
+            (3, 0): "aa550c2203000031", (3, 1): "aa550c2203010032",
+            (4, 25): "aa550c220419004b", (5, 7): "aa550c220507003a",
+            (10, 510): "aa550c220afe0137", (15, 1): "aa550c220f01003e",
+            (19, 1): "aa550c2213010042", (99, 0): "aa550c2263000091",
+        }
+
+        for (command, argument), expected in expected_packets.items():
+            assert self.proto.build_command(command, argument, 1234).hex() == expected
 
 # ---------------------------------------------------------------------------
 # ProtocolAA55Encrypted (mode=2, 48 bytes, pre-decrypted)
@@ -463,6 +569,44 @@ class TestProtocolAA55Encrypted:
         assert result["running_state"] == 1
         assert result["error_code"] == 3
         assert result["running_step"] == 2
+
+    def test_parse_complete_encrypted_status_frame(self):
+        """A decrypted AA55 frame exposes every encrypted-protocol field."""
+        data = _make_aa55enc_data(
+            running_state=2, error_code=7, running_step=3, altitude_raw=1234,
+            running_mode=2, set_temp=26, set_level=7, voltage_raw=240,
+            case_temp_raw=-150, cab_temp_raw=-55, heater_offset=-3,
+            backlight=80, co_present=1, co_ppm_raw=300,
+            part_number_raw=0x78563412, motherboard_version=5,
+        )
+        data[19:26] = b"\x02\x3a\x01\x95\x00\x5a\x01"
+
+        assert self.proto.parse(data) == {
+            "running_state": 2, "error_code": 7, "running_step": 3,
+            "altitude": 123.4, "running_mode": 2, "set_level": 7,
+            "set_temp": 26, "supply_voltage": 24.0,
+            "case_temperature": -150, "cab_temperature": -5.5,
+            "heater_offset": -3, "backlight": 80, "co_ppm": 300.0,
+            "part_number": "78563412", "motherboard_version": 5,
+            "device_time": "09:30", "device_time_minutes": 570,
+            "timer_start_minutes": 405, "timer_duration_minutes": 90,
+            "timer_enabled": True,
+            "timer": "Start: 06:45, Duration: 90 min, Status: ON",
+        }
+
+    def test_build_command_complete_aa55_packet_matrix(self):
+        """Encrypted AA55 uses the same unencrypted control packet layout."""
+        expected_packets = {
+            (0, 0): "aa550c220000002e", (1, 0): "aa550c220100002f",
+            (2, 1): "aa550c2202010031", (2, 2): "aa550c2202020032",
+            (3, 0): "aa550c2203000031", (3, 1): "aa550c2203010032",
+            (4, 25): "aa550c220419004b", (5, 7): "aa550c220507003a",
+            (10, 510): "aa550c220afe0137", (15, 1): "aa550c220f01003e",
+            (19, 1): "aa550c2213010042", (99, 0): "aa550c2263000091",
+        }
+
+        for (command, argument), expected in expected_packets.items():
+            assert self.proto.build_command(command, argument, 1234).hex() == expected
 
     def test_parse_altitude(self):
         """Altitude = (byte7 + 256*byte6) / 10."""
@@ -661,6 +805,38 @@ class TestProtocolAA66Encrypted:
         assert result["pump_type"] == 2
         assert result["rf433_enabled"] is None
 
+    def test_parse_complete_encrypted_status_frame(self):
+        """AA66 encrypted retains status, configuration, and timer fields."""
+        data = _make_aa66enc_data(
+            running_state=2, error_code=7, running_step=3, altitude_raw=1234,
+            running_mode=2, set_temp_raw=26, set_level=7, voltage_raw=240,
+            case_temp_raw=-150, language=4, temp_unit=0, tank_volume=12,
+            pump_byte=21, altitude_unit=1, auto_start_stop=1, cab_temp_raw=-55,
+            heater_offset=-3, backlight=80, co_present=1, co_ppm_raw=300,
+            part_number_raw=0x78563412, motherboard_version=5,
+        )
+        data[19:26] = b"\x02\x3a\x01\x95\x00\x5a\x01"
+
+        assert self.proto.parse(data) == {
+            "running_state": 2, "error_code": 7, "running_step": 3,
+            "altitude": 123.4, "running_mode": 2, "set_level": 7,
+            "temp_unit": 0, "set_temp": 26, "auto_start_stop": True,
+            "language": 4, "tank_volume": 12, "pump_type": None,
+            "rf433_enabled": True, "altitude_unit": 1,
+            "supply_voltage": 24.0, "case_temperature": -150,
+            "cab_temperature": -5.5, "heater_offset": -3, "backlight": 80,
+            "co_ppm": 300.0, "part_number": "78563412",
+            "motherboard_version": 5, "device_time": "09:30",
+            "device_time_minutes": 570, "timer_start_minutes": 405,
+            "timer_duration_minutes": 90, "timer_enabled": True,
+            "timer": "Start: 06:45, Duration: 90 min, Status: ON",
+        }
+
+    def test_build_command_complete_aa55_packet_matrix(self):
+        """Encrypted AA66 uses the shared unencrypted AA55 control packet."""
+        assert self.proto.build_command(10, 510, 1234).hex() == "aa550c220afe0137"
+        assert self.proto.build_command(19, 1, 1234).hex() == "aa550c2213010042"
+
     def test_parse_rf433_off(self):
         data = _make_aa66enc_data(pump_byte=20)
         result = self.proto.parse(data)
@@ -724,8 +900,8 @@ def _make_abba_data(**overrides) -> bytearray:
     data[13] = overrides.get("case_lo", 0xDC)  # 220°C
     data[14] = overrides.get("altitude_unit", 0)
     data[15] = overrides.get("high_altitude", 0)
-    data[16] = overrides.get("altitude_lo", 0)
-    data[17] = overrides.get("altitude_hi", 0)
+    data[16] = overrides.get("altitude_hi", 0)
+    data[17] = overrides.get("altitude_lo", 0)
     data[18] = 0x00
     data[19] = 0x00
     data[20] = 0x00
@@ -763,13 +939,13 @@ class TestProtocolABBA:
     def test_parse_cooldown_state(self):
         data = _make_abba_data(status_byte=0x02)
         result = self.proto.parse(data)
-        assert result["running_state"] == 0
+        assert result["running_state"] == 1
         assert result["running_step"] == 4  # RUNNING_STEP_COOLDOWN
 
     def test_parse_ventilation_state(self):
         data = _make_abba_data(status_byte=0x04)
         result = self.proto.parse(data)
-        assert result["running_state"] == 0
+        assert result["running_state"] == 1
         assert result["running_step"] == 6  # RUNNING_STEP_VENTILATION
 
     def test_parse_level_mode(self):
@@ -836,8 +1012,8 @@ class TestProtocolABBA:
         assert result["auto_start_stop"] is True
 
     def test_parse_altitude(self):
-        """Altitude: uint16 LE → byte16 | (byte17 << 8)."""
-        data = _make_abba_data(altitude_lo=0xE8, altitude_hi=0x03)
+        """Altitude: uint16 BE → (byte16 << 8) | byte17."""
+        data = _make_abba_data(altitude_hi=0x03, altitude_lo=0xE8)
         result = self.proto.parse(data)
         assert result["altitude"] == 1000
 
@@ -880,12 +1056,12 @@ class TestProtocolABBA:
     def test_build_command_const_temp_mode(self):
         """Command 2, argument 2 → const temp mode."""
         pkt = self.proto.build_command(2, 2, 1234)
-        assert pkt[4] == 0xAC  # openOnPlateau/const temp
+        assert pkt.hex() == "baab04bbad0000d1"
 
     def test_build_command_other_mode(self):
-        """Command 2, argument != 2 → other mode."""
+        """Command 2, argument 1 → level mode."""
         pkt = self.proto.build_command(2, 1, 1234)
-        assert pkt[4] == 0xAD  # Other mode
+        assert pkt.hex() == "baab04bbac0000d0"
 
     def test_build_command_fahrenheit(self):
         """Command 15, argument 1 → Fahrenheit."""
@@ -942,7 +1118,7 @@ def _make_cbff_data(**overrides) -> bytearray:
     data[1] = 0xFF
     data[2] = overrides.get("protocol_version", 0x01)
     # Byte 10: run_state
-    data[10] = overrides.get("run_state", 2)  # 2=OFF by default
+    data[10] = overrides.get("run_state", 2)  # 2=ON by default
     # Byte 11: run_mode
     data[11] = overrides.get("run_mode", 1)
     # Byte 12: run_param
@@ -1037,19 +1213,19 @@ class TestProtocolCBFF:
         data = bytearray(45)
         assert self.proto.parse(data) is None
 
-    def test_parse_running_state_off(self):
-        """run_state in {2, 5, 6} → OFF."""
+    def test_parse_running_state_on(self):
+        """run_state in {2, 5, 6} → ON."""
         for state in (2, 5, 6):
             data = _make_cbff_data(run_state=state)
             result = self.proto.parse(data)
-            assert result["running_state"] == 0, f"run_state={state} should be OFF"
+            assert result["running_state"] == 1, f"run_state={state} should be ON"
 
-    def test_parse_running_state_on(self):
-        """run_state not in {2, 5, 6} → ON."""
+    def test_parse_running_state_off(self):
+        """run_state not in {2, 5, 6} → OFF."""
         for state in (0, 1, 3, 4):
             data = _make_cbff_data(run_state=state)
             result = self.proto.parse(data)
-            assert result["running_state"] == 1, f"run_state={state} should be ON"
+            assert result["running_state"] == 0, f"run_state={state} should be OFF"
 
     def test_parse_level_mode(self):
         """run_mode 1 → RUNNING_MODE_LEVEL."""
@@ -1242,6 +1418,55 @@ class TestProtocolCBFF:
         result = self.proto.parse(data)
         assert result["connected"] is True
 
+    def test_parse_complete_temperature_status_frame(self):
+        """A CBFF temperature reply exposes every available controller field."""
+        data = _make_cbff_data(
+            protocol_version=1, run_state=5, run_mode=2, run_param=25,
+            now_gear=7, run_step=3, fault_display=0xC3, temp_unit=1,
+            cab_temp=-5, altitude_unit=1, altitude=1234, voltage_raw=126,
+            case_temp_raw=1512, co_raw=110, pwr_onoff=1, hw_version=0x1234,
+            sw_version=0x5678, heater_offset=-4, language=2, tank_volume=5,
+            pump_byte=21, backlight=50, startup_temp_diff=4,
+            shutdown_temp_diff=6, wifi=1, auto_start_stop=1, heater_mode=2,
+            remain_run_time=120,
+        )
+
+        assert self.proto.parse(data) == {
+            "connected": True, "cbff_protocol_version": 1,
+            "running_state": 1, "running_step": 3, "running_mode": 2,
+            "set_temp": 25, "set_level": 7, "error_code": 3,
+            "temp_unit": 1, "cab_temperature": -5.0, "altitude_unit": 1,
+            "altitude": 123.4, "supply_voltage": 12.6,
+            "case_temperature": 151.2, "co_ppm": 11.0,
+            "heater_offset": -4, "language": 2, "tank_volume": 5,
+            "rf433_enabled": True, "pump_type": None, "pwr_onoff": 1,
+            "hardware_version": 4660, "software_version": 22136,
+            "backlight": 50, "startup_temp_diff": 4,
+            "shutdown_temp_diff": 6, "wifi_enabled": True,
+            "auto_start_stop": True, "heater_mode": 2,
+            "remain_run_time": 120,
+        }
+
+    def test_parse_decrypted_captured_v21_status_frame(self):
+        """The APK-decrypted #45 status capture keeps its complete state."""
+        data = bytearray.fromhex(
+            "feaa00002f00800001000100000000000000130001e40c7f0000000000"
+            "6e010000000000ffff0a020201000094816d"
+        )
+
+        assert self.proto.parse(data) == {
+            "connected": True, "cbff_protocol_version": 0,
+            "running_state": 0, "running_step": 0, "running_mode": 0,
+            "set_temp": 8, "error_code": 0, "temp_unit": 0,
+            "cab_temperature": 19.0, "altitude_unit": 1, "altitude": 330.0,
+            "supply_voltage": 12.7, "case_temperature": 0.0, "co_ppm": 0.0,
+            "heater_offset": 0, "language": 0, "pwr_onoff": 110,
+            "hardware_version": 1, "backlight": 10,
+            "startup_temp_diff": 2, "shutdown_temp_diff": 2,
+            "wifi_enabled": True, "auto_start_stop": False,
+            "heater_mode": 0, "remain_run_time": 33172,
+        }
+
     # --- CBFF encryption ---
 
     def test_set_device_sn(self):
@@ -1382,6 +1607,37 @@ class TestProtocolCBFF:
         assert pkt[10] == 0xFF  # time
         assert pkt[11] == 0xFF  # time
         assert pkt[-1] == sum(pkt[:-1]) & 0xFF
+
+    def test_build_command_complete_default_packet_matrix(self):
+        """Every supported FEAA command has its APK-defined wire packet."""
+        expected_packets = {
+            (0, 0): "feaa000009000000b1", (1, 0): "feaa000009000000b1",
+            (3, 0): "feaa00000d0001000105ffffba",
+            (3, 1): "feaa00000d0001010105ffffbb",
+            (4, 25): "feaa00000d0001010219ffffd0",
+            (5, 7): "feaa00000d0001010107ffffbd",
+            (2, 1): "feaa00000d0001010105ffffbb",
+            (2, 2): "feaa00000d0001010215ffffcc",
+            (10, 0): "feaa000009000000b1",
+            (21, 0): "feaa000009000000b1",
+            (99, 0): "feaa000009000000b1",
+        }
+
+        for (command, argument), expected in expected_packets.items():
+            assert self.proto.build_command(command, argument, 1234).hex() == expected
+
+    def test_build_command_uses_complete_remembered_state(self):
+        """Power and mode packets preserve the controller-reported state."""
+        self.proto.parse(_make_cbff_data(run_mode=2, run_param=26, now_gear=5))
+
+        assert self.proto.build_command(3, 0, 1234).hex() == "feaa00000d000100021affffd0"
+        assert self.proto.build_command(3, 1, 1234).hex() == "feaa00000d000101021affffd1"
+        assert self.proto.build_command(2, 1, 1234).hex() == "feaa00000d0001010105ffffbb"
+        assert self.proto.build_command(2, 2, 1234).hex() == "feaa00000d000101021affffd1"
+
+    def test_build_handshake_complete_packet(self):
+        """The APK sends the PIN as little-endian base-100 bytes."""
+        assert self.proto.build_handshake(1234).hex() == "feaa00000b000600220ce7"
 
     def test_feaa_status_encrypted_matches_btsnoop(self):
         """Encrypted status query must match @BradleyDeLar btsnoop capture."""

@@ -84,6 +84,27 @@ class TestVevorHeaterClimate:
 
         assert climate.target_temperature == 22
 
+    def test_abba_target_temperature_uses_restored_target(self):
+        """ABBA level-mode status packets omit the temperature target."""
+        coordinator = create_mock_coordinator()
+        coordinator.protocol_mode = 5
+        coordinator._heater_uses_fahrenheit = False
+        coordinator.data["set_temp"] = None
+        climate = VevorHeaterClimate(coordinator, create_mock_config_entry())
+        climate._restored_abba_target = 21.0
+
+        assert climate.target_temperature == 21.0
+
+    def test_abba_target_temperature_updates_restored_target(self):
+        """A valid ABBA temperature-mode update replaces the restored target."""
+        coordinator = create_mock_coordinator()
+        coordinator.protocol_mode = 5
+        coordinator._heater_uses_fahrenheit = False
+        climate = VevorHeaterClimate(coordinator, create_mock_config_entry())
+
+        assert climate.target_temperature == 22
+        assert climate._restored_abba_target == 22.0
+
     def test_unique_id(self):
         """Test unique_id format."""
         coordinator = create_mock_coordinator()

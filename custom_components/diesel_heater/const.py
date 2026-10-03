@@ -18,7 +18,7 @@ from diesel_heater_ble.const import (  # noqa: F401
     ABBA_CMD_VENTILATION,
     ABBA_ERROR_NAMES,
     ABBA_STATUS_MAP,
-    CBFF_RUN_STATE_OFF,
+    CBFF_RUN_STATE_ON,
     ENCRYPTION_KEY,
     ERROR_NAMES,
     ERROR_NONE,
@@ -74,6 +74,12 @@ ABBA_SERVICE_UUID: Final = "0000fff0-0000-1000-8000-00805f9b34fb"
 ABBA_NOTIFY_UUID: Final = "0000fff1-0000-1000-8000-00805f9b34fb"
 ABBA_WRITE_UUID: Final = "0000fff2-0000-1000-8000-00805f9b34fb"
 
+# Sunster Neo DZ06 split-FFF0 transport.  Unlike legacy ABBA devices,
+# FFF1 is write-capable and FFF2 is notify-capable.
+DZ06_NEO_SERVICE_UUID: Final = ABBA_SERVICE_UUID
+DZ06_NEO_WRITE_UUID: Final = ABBA_NOTIFY_UUID
+DZ06_NEO_NOTIFY_UUID: Final = ABBA_WRITE_UUID
+
 # Hcalory Protocol (MVP1 and MVP2 heaters)
 # MVP1 uses service fff0, MVP2 uses service bd39
 HCALORY_MVP1_SERVICE_UUID: Final = "0000fff0-0000-1000-8000-00805f9b34fb"
@@ -97,6 +103,12 @@ DEFAULT_PIN: Final = 1234
 MIN_PIN: Final = 0
 MAX_PIN: Final = 9999
 
+# Sunster Neo uses a separate numeric connection password.
+CONF_NEO_PASSWORD: Final = "neo_password"
+DEFAULT_NEO_PASSWORD: Final = 100000000
+MIN_NEO_PASSWORD: Final = 0
+MAX_NEO_PASSWORD: Final = 2147483647
+
 # Climate presets
 CONF_PRESET_AWAY_TEMP: Final = "preset_away_temp"
 CONF_PRESET_COMFORT_TEMP: Final = "preset_comfort_temp"
@@ -112,6 +124,21 @@ MIN_AUTO_OFFSET_MAX: Final = 1
 MAX_AUTO_OFFSET_MAX: Final = 9
 AUTO_OFFSET_THROTTLE_SECONDS: Final = 60
 AUTO_OFFSET_THRESHOLD: Final = 1.0  # Only adjust if difference >= 1°C
+
+# Force temperature unit (workaround for firmware that mis-reports temp_unit — issue #64)
+# "auto"       → follow the firmware's temp_unit byte (default, preserves current behavior)
+# "celsius"    → treat received temperatures as °C regardless of firmware flag
+# "fahrenheit" → treat received temperatures as °F regardless of firmware flag
+CONF_FORCE_TEMP_UNIT: Final = "force_temp_unit"
+FORCE_TEMP_UNIT_AUTO: Final = "auto"
+FORCE_TEMP_UNIT_CELSIUS: Final = "celsius"
+FORCE_TEMP_UNIT_FAHRENHEIT: Final = "fahrenheit"
+FORCE_TEMP_UNIT_OPTIONS: Final = (
+    FORCE_TEMP_UNIT_AUTO,
+    FORCE_TEMP_UNIT_CELSIUS,
+    FORCE_TEMP_UNIT_FAHRENHEIT,
+)
+DEFAULT_FORCE_TEMP_UNIT: Final = FORCE_TEMP_UNIT_AUTO
 
 # Heater temperature offset (sent to heater via cmd 20)
 # Both positive and negative offsets now work via BLE

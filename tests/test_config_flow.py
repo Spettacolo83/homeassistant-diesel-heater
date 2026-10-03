@@ -5,10 +5,9 @@ manual MAC entry, and options flow.
 """
 from __future__ import annotations
 
-import pytest
 from unittest.mock import MagicMock, patch
 
-from tests.conftest import _AbortFlow
+import pytest
 
 from custom_components.diesel_heater.config_flow import (
     VevorHeaterConfigFlow,
@@ -22,12 +21,13 @@ from custom_components.diesel_heater.const import (
     CONF_PIN,
     CONF_PRESET_AWAY_TEMP,
     CONF_PRESET_COMFORT_TEMP,
-    DEFAULT_AUTO_OFFSET_MAX,
     DEFAULT_PIN,
     DEFAULT_PRESET_AWAY_TEMP,
     DEFAULT_PRESET_COMFORT_TEMP,
+    HCALORY_MVP2_SERVICE_UUID,
     SERVICE_UUID,
 )
+from tests.conftest import _AbortFlow
 
 CONF_ADDRESS = "address"  # matches homeassistant.const.CONF_ADDRESS stub
 MOCK_ADDRESS = "AA:BB:CC:DD:EE:FF"
@@ -35,7 +35,7 @@ MOCK_ADDRESS = "AA:BB:CC:DD:EE:FF"
 
 def _make_ble_discovery(
     address=MOCK_ADDRESS,
-    name="Diesel Heater",
+    name="BYD-DC32623528D3",
     service_uuids=None,
     manufacturer_data=None,
 ):
@@ -79,6 +79,19 @@ class TestBluetoothDiscovery:
 
         with pytest.raises(_AbortFlow, match="already_configured"):
             await flow.async_step_bluetooth(discovery)
+
+    async def test_discovery_ignores_unknown_device(self):
+        flow = VevorHeaterConfigFlow()
+        discovery = _make_ble_discovery(
+            name="Unknown",
+            service_uuids=[SERVICE_UUID],
+            manufacturer_data={65535: b"\x01\x02"},
+        )
+
+        result = await flow.async_step_bluetooth(discovery)
+
+        assert result["type"] == "abort"
+        assert result["reason"] == "not_supported"
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +158,7 @@ class TestUserStep:
         assert result["type"] == "form"
         assert result["step_id"] == "manual"
 
-    async def test_detects_device_by_service_uuid(self):
+    async def test_skips_service_uuid_without_heater_name(self):
         flow = VevorHeaterConfigFlow()
         discovery = _make_ble_discovery(
             name="Unknown",
@@ -160,13 +173,13 @@ class TestUserStep:
             result = await flow.async_step_user()
 
         assert result["type"] == "form"
-        assert result["step_id"] == "user"
-        assert MOCK_ADDRESS in flow._discovered_devices
+        assert result["step_id"] == "manual"
+        assert MOCK_ADDRESS not in flow._discovered_devices
 
-    async def test_detects_device_by_name_vevor(self):
+    async def test_detects_device_by_byd_name(self):
         flow = VevorHeaterConfigFlow()
         discovery = _make_ble_discovery(
-            name="VEVOR_HT_123",
+            name="BYD-DC32623528D3",
             service_uuids=[],
             manufacturer_data={},
         )
@@ -180,10 +193,43 @@ class TestUserStep:
         assert result["step_id"] == "user"
         assert MOCK_ADDRESS in flow._discovered_devices
 
-    async def test_detects_device_by_name_heater(self):
+    async def test_detects_device_by_bac_name(self):
         flow = VevorHeaterConfigFlow()
         discovery = _make_ble_discovery(
-            name="Air Heater Pro",
+            name="BAC-123456",
+            service_uuids=[],
+            manufacturer_data={},
+        )
+
+        with patch(
+            "custom_components.diesel_heater.config_flow.bluetooth"
+        ) as mock_bt:
+            mock_bt.async_discovered_service_info.return_value = [discovery]
+            await flow.async_step_user()
+
+        assert MOCK_ADDRESS in flow._discovered_devices
+
+    async def test_detects_hc_name(self):
+        flow = VevorHeaterConfigFlow()
+        discovery = _make_ble_discovery(
+            name="HC-123456",
+            service_uuids=[HCALORY_MVP2_SERVICE_UUID],
+            manufacturer_data={},
+        )
+
+        with patch(
+            "custom_components.diesel_heater.config_flow.bluetooth"
+        ) as mock_bt:
+            mock_bt.async_discovered_service_info.return_value = [discovery]
+            result = await flow.async_step_user()
+
+        assert result["step_id"] == "user"
+        assert MOCK_ADDRESS in flow._discovered_devices
+
+    async def test_detects_airheatercc_name(self):
+        flow = VevorHeaterConfigFlow()
+        discovery = _make_ble_discovery(
+            name="Heater5097",
             service_uuids=[],
             manufacturer_data={},
         )
@@ -194,9 +240,57 @@ class TestUserStep:
             mock_bt.async_discovered_service_info.return_value = [discovery]
             result = await flow.async_step_user()
 
+        assert result["step_id"] == "user"
         assert MOCK_ADDRESS in flow._discovered_devices
 
-    async def test_detects_device_by_manufacturer_id(self):
+    async def test_detects_hcalory_name(self):
+        flow = VevorHeaterConfigFlow()
+        discovery = _make_ble_discovery(
+            name="Hcalory5140",
+            service_uuids=[],
+            manufacturer_data={},
+        )
+
+        with patch(
+            "custom_components.diesel_heater.config_flow.bluetooth"
+        ) as mock_bt:
+            mock_bt.async_discovered_service_info.return_value = [discovery]
+            result = await flow.async_step_user()
+
+        assert result["step_id"] == "user"
+        assert MOCK_ADDRESS in flow._discovered_devices
+
+    async def test_detects_lowercase_hcalory_name(self):
+        flow = VevorHeaterConfigFlow()
+        discovery = _make_ble_discovery(
+            name="hcalory5140",
+            service_uuids=[],
+            manufacturer_data={},
+        )
+
+        result = await flow.async_step_bluetooth(discovery)
+
+        assert result["type"] == "form"
+        assert result["step_id"] == "confirm"
+
+    async def test_skips_generic_heater_name(self):
+        flow = VevorHeaterConfigFlow()
+        discovery = _make_ble_discovery(
+            name="Heater 1",
+            service_uuids=[SERVICE_UUID],
+            manufacturer_data={},
+        )
+
+        with patch(
+            "custom_components.diesel_heater.config_flow.bluetooth"
+        ) as mock_bt:
+            mock_bt.async_discovered_service_info.return_value = [discovery]
+            result = await flow.async_step_user()
+
+        assert result["step_id"] == "manual"
+        assert MOCK_ADDRESS not in flow._discovered_devices
+
+    async def test_skips_manufacturer_id_without_heater_name(self):
         flow = VevorHeaterConfigFlow()
         discovery = _make_ble_discovery(
             name="Unknown",
@@ -210,8 +304,8 @@ class TestUserStep:
             mock_bt.async_discovered_service_info.return_value = [discovery]
             result = await flow.async_step_user()
 
-        assert result["step_id"] == "user"
-        assert MOCK_ADDRESS in flow._discovered_devices
+        assert result["step_id"] == "manual"
+        assert MOCK_ADDRESS not in flow._discovered_devices
 
     async def test_skips_non_vevor_device(self):
         flow = VevorHeaterConfigFlow()
@@ -296,12 +390,12 @@ class TestUserStep:
         flow = VevorHeaterConfigFlow()
         d1 = _make_ble_discovery(
             address="11:22:33:44:55:66",
-            name="Heater 1",
+            name="BYD-123456",
             service_uuids=[SERVICE_UUID],
         )
         d2 = _make_ble_discovery(
             address="77:88:99:AA:BB:CC",
-            name="Heater 2",
+            name="HC-123456",
             manufacturer_data={65535: b"\x00"},
         )
 

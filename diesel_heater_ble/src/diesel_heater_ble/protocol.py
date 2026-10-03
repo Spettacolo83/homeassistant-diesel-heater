@@ -23,7 +23,7 @@ from typing import Any
 
 from .const import (
     ABBA_STATUS_MAP,
-    CBFF_RUN_STATE_OFF,
+    CBFF_RUN_STATE_ON,
     ENCRYPTION_KEY,
     HCALORY_ALTITUDE_TOGGLE_CMD,
     HCALORY_CMD_POWER,
@@ -56,6 +56,7 @@ from .const import (
     RUNNING_MODE_TEMPERATURE,
     RUNNING_MODE_VENTILATION,
     SUNSTER_V21_KEY,
+    PROTOCOL_HEADER_FEAA,
 )
 
 # ---------------------------------------------------------------------------
@@ -340,15 +341,18 @@ class ProtocolAA66(VevorCommandMixin, HeaterProtocol):
         parsed: dict[str, Any] = {}
 
         parsed["running_state"] = _u8_to_number(data[3])
-        parsed["error_code"] = _u8_to_number(data[4])
+        parsed["error_code"] = _u8_to_number(data[17])
         parsed["running_step"] = _u8_to_number(data[5])
-        parsed["altitude"] = _u8_to_number(data[6])
+        parsed["altitude"] = _u8_to_number(data[6]) + 256 * _u8_to_number(data[7])
         parsed["running_mode"] = _u8_to_number(data[8])
 
         if parsed["running_mode"] == RUNNING_MODE_LEVEL:
             parsed["set_level"] = max(1, min(10, _u8_to_number(data[9])))
         elif parsed["running_mode"] == RUNNING_MODE_TEMPERATURE:
             parsed["set_temp"] = max(MIN_TEMP_CELSIUS, min(MAX_TEMP_CELSIUS, _u8_to_number(data[9])))
+            parsed["set_level"] = max(1, min(10, _u8_to_number(data[10]) + 1))
+        elif parsed["running_mode"] == RUNNING_MODE_MANUAL:
+            parsed["set_level"] = max(1, min(10, _u8_to_number(data[10]) + 1))
 
         voltage_raw = _u8_to_number(data[11]) | (_u8_to_number(data[12]) << 8)
         parsed["supply_voltage"] = voltage_raw / 10.0
@@ -360,7 +364,7 @@ class ProtocolAA66(VevorCommandMixin, HeaterProtocol):
         else:
             parsed["case_temperature"] = float(case_temp_raw)
 
-        parsed["cab_temperature"] = _u8_to_number(data[15])
+        parsed["cab_temperature"] = _unsign_to_sign(256 * data[16] + data[15])
 
         return parsed
 
@@ -455,6 +459,16 @@ class ProtocolAA66Encrypted(VevorCommandMixin, HeaterProtocol):
     protocol_mode = 4
     name = "AA66 encrypted"
 
+    def __init__(self) -> None:
+        """Initialize the AA66 encrypted protocol handler."""
+        self._temperature_unit_override: int | None = None
+
+    def set_temperature_unit_override(self, unit: int | None) -> None:
+        """Override the reported temperature unit for defective firmware."""
+        if unit not in (None, 0, 1):
+            raise ValueError("Temperature unit override must be None, 0, or 1")
+        self._temperature_unit_override = unit
+
     def parse(self, data: bytearray) -> dict[str, Any] | None:
         parsed: dict[str, Any] = {}
 
@@ -467,8 +481,11 @@ class ProtocolAA66Encrypted(VevorCommandMixin, HeaterProtocol):
 
         # Byte 27: Temperature unit (0=Celsius, 1=Fahrenheit)
         temp_unit_byte = _u8_to_number(data[27])
-        parsed["temp_unit"] = temp_unit_byte
-        heater_uses_fahrenheit = (temp_unit_byte == 1)
+        temp_unit = self._temperature_unit_override
+        if temp_unit is None:
+            temp_unit = temp_unit_byte
+        parsed["temp_unit"] = temp_unit
+        heater_uses_fahrenheit = (temp_unit == 1)
 
         # Byte 9: Set temperature (convert from F to C if needed)
         raw_set_temp = _u8_to_number(data[9])
@@ -577,10 +594,10 @@ class ProtocolABBA(HeaterProtocol):
     - Byte 9: Voltage (decimal V)
     - Byte 10: Temperature Unit (0=C, 1=F)
     - Byte 11: Environment Temp (subtract 30 for C, 22 for F)
-    - Bytes 12-13: Case Temperature (uint16 LE)
+    - Bytes 12-13: Case Temperature (uint16 BE)
     - Byte 14: Altitude unit
     - Byte 15: High-altitude mode
-    - Bytes 16-17: Altitude (uint16 LE)
+    - Bytes 16-17: Altitude (uint16 BE)
     """
 
     protocol_mode = 5
@@ -596,7 +613,7 @@ class ProtocolABBA(HeaterProtocol):
 
         # Byte 4: Status
         status_byte = _u8_to_number(data[4])
-        parsed["running_state"] = 1 if status_byte == 0x01 else 0
+        parsed["running_state"] = 1 if status_byte in (0x01, 0x02, 0x04) else 0
         parsed["running_step"] = ABBA_STATUS_MAP.get(status_byte, status_byte)
 
         # Byte 5: Mode (0x00=Level, 0x01=Temperature, 0xFF=Error)
@@ -649,8 +666,8 @@ class ProtocolABBA(HeaterProtocol):
         # Byte 15: High-altitude mode
         parsed["high_altitude"] = _u8_to_number(data[15])
 
-        # Bytes 16-17: Altitude (uint16 LE)
-        parsed["altitude"] = _u8_to_number(data[16]) | (_u8_to_number(data[17]) << 8)
+        # Bytes 16-17: Altitude (uint16 BE)
+        parsed["altitude"] = (_u8_to_number(data[16]) << 8) | _u8_to_number(data[17])
 
         return parsed
 
@@ -669,15 +686,21 @@ class ProtocolABBA(HeaterProtocol):
         elif command == 4:
             temp_hex = format(argument, '02x')
             return self._build_abba(f"baab04db{temp_hex}0000")
+        elif command == 5:
+            if argument > 0:
+                return self._build_abba("baab04bba20000")  # Level up
+            elif argument < 0:
+                return self._build_abba("baab04bba30000")  # Level down
+            return self._build_abba("baab04cc000000")
         elif command == 2:
             if argument == 2:
-                return self._build_abba("baab04bbac0000")  # Const temp mode
+                return self._build_abba("baab04bbad0000")  # Const temp mode
             elif argument == 3:
                 # Ventilation mode (fan-only) - 0xA4
                 # Only works when heater is in standby/off state
                 return self._build_abba("baab04bba40000")
             else:
-                return self._build_abba("baab04bbad0000")  # Other mode
+                return self._build_abba("baab04bbac0000")  # Level mode
         elif command == 15:
             if argument == 1:
                 return self._build_abba("baab04bba80000")  # Fahrenheit
@@ -957,6 +980,32 @@ class ProtocolCBFF(HeaterProtocol):
             parsed.pop(key, None)
         return parsed
 
+    def is_feaa_frame(self, data: bytearray) -> bool:
+        """Return True if raw or decrypted data is a valid FEAA packet."""
+        if self._has_valid_feaa_packet(data):
+            return True
+
+        if self._device_sn:
+            decrypted = self._decrypt_cbff(data, self._device_sn)
+            return self._has_valid_feaa_packet(decrypted)
+
+        return False
+
+    @staticmethod
+    def _has_valid_feaa_packet(data: bytearray) -> bool:
+        if len(data) < 9:
+            return False
+
+        header = (_u8_to_number(data[0]) << 8) | _u8_to_number(data[1])
+        if header != PROTOCOL_HEADER_FEAA:
+            return False
+
+        packet_length = _u8_to_number(data[4]) | (_u8_to_number(data[5]) << 8)
+        if packet_length != len(data):
+            return False
+
+        return (sum(data[:-1]) & 0xFF) == _u8_to_number(data[-1])
+
     @staticmethod
     def _is_data_suspect(parsed: dict[str, Any]) -> bool:
         """Check if parsed CBFF data has physically impossible values."""
@@ -1007,8 +1056,8 @@ class ProtocolCBFF(HeaterProtocol):
         # Byte 2: protocol_version (stored for diagnostics)
         parsed["cbff_protocol_version"] = _u8_to_number(data[2])
 
-        # Byte 10: run_state (2/5/6 = OFF)
-        parsed["running_state"] = 0 if _u8_to_number(data[10]) in CBFF_RUN_STATE_OFF else 1
+        # Byte 10: run_state (2/5/6 = ON)
+        parsed["running_state"] = 1 if _u8_to_number(data[10]) in CBFF_RUN_STATE_ON else 0
 
         # Byte 14: run_step
         parsed["running_step"] = _u8_to_number(data[14])
@@ -1585,8 +1634,8 @@ class ProtocolHcalory(HeaterProtocol):
         packet.extend(timestamp)
         packet.append(0x00)
 
-        # Calculate checksum
-        checksum = sum(packet) & 0xFF
+        # MVP2 uses the same command/payload checksum window as _build_hcalory_cmd.
+        checksum = sum(packet[8:]) & 0xFF
         packet.append(checksum)
 
         return packet

@@ -21,6 +21,7 @@ from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from . import VevorHeaterConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
@@ -51,7 +52,9 @@ async def async_setup_entry(
     async_add_entities([VevorHeaterClimate(coordinator, entry)])
 
 
-class VevorHeaterClimate(CoordinatorEntity[VevorHeaterCoordinator], ClimateEntity):
+class VevorHeaterClimate(
+    CoordinatorEntity[VevorHeaterCoordinator], ClimateEntity, RestoreEntity
+):
     """Climate entity for Vevor Heater."""
 
     _attr_has_entity_name = True
@@ -75,6 +78,7 @@ class VevorHeaterClimate(CoordinatorEntity[VevorHeaterCoordinator], ClimateEntit
         super().__init__(coordinator)
         self._config_entry = config_entry
         self._current_preset: str | None = None
+        self._restored_abba_target: float | None = None
         self._user_cleared_preset: bool = False  # Track if user explicitly selected "None"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, coordinator.address)},
@@ -97,6 +101,20 @@ class VevorHeaterClimate(CoordinatorEntity[VevorHeaterCoordinator], ClimateEntit
             self._attr_max_temp = 40  # Hcalory supports 0-40°C, other protocols up to 36°C
             self._attr_target_temperature_step = 1.0  # 1°C step (40 possible values)
 
+    async def async_added_to_hass(self) -> None:
+        """Restore the last valid ABBA Celsius target for level-mode status packets."""
+        await super().async_added_to_hass()
+        if self.coordinator.protocol_mode != 5:
+            return
+
+        last_state = await self.async_get_last_state()
+        if last_state is None:
+            return
+
+        target = last_state.attributes.get(ATTR_TEMPERATURE)
+        if isinstance(target, (int, float)) and 8 <= target <= 36:
+            self._restored_abba_target = float(target)
+
     @property
     def supported_features(self) -> ClimateEntityFeature:
         """Hide target temperature and presets during burn-off.
@@ -116,7 +134,13 @@ class VevorHeaterClimate(CoordinatorEntity[VevorHeaterCoordinator], ClimateEntit
     @property
     def target_temperature(self) -> float | None:
         """Return the target temperature."""
-        return self.coordinator.data.get("set_temp")
+        target = self.coordinator.data.get("set_temp")
+        if self.coordinator.protocol_mode == 5:
+            if isinstance(target, (int, float)) and 8 <= target <= 36:
+                self._restored_abba_target = float(target)
+                return target
+            return self._restored_abba_target
+        return target
 
     @property
     def hvac_mode(self) -> HVACMode:

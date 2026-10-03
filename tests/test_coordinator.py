@@ -5,10 +5,11 @@ Focuses on data processing, fuel/runtime tracking, and protocol handling.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, AsyncMock, patch
-from contextlib import suppress
 import asyncio
+from contextlib import suppress
+from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, MagicMock, call, patch
+
 import pytest
 
 # Import stubs first
@@ -18,6 +19,8 @@ from . import conftest  # noqa: F401
 from custom_components.diesel_heater.burnoff import BurnoffController, BurnoffPhase
 from custom_components.diesel_heater.coordinator import VevorHeaterCoordinator
 from custom_components.diesel_heater.const import (
+    CONF_FORCE_TEMP_UNIT,
+    FORCE_TEMP_UNIT_CELSIUS,
     FUEL_CONSUMPTION_TABLE,
     MAX_LEVEL,
     RUNNING_MODE_LEVEL,
@@ -174,6 +177,7 @@ def create_mock_coordinator() -> VevorHeaterCoordinator:
     coordinator._external_temp_sensor = None
     coordinator._auto_offset_max = 5
     coordinator._heater_uses_fahrenheit = False
+    coordinator._force_temp_unit = "auto"
 
     # Add address property (used by statistics import)
     coordinator.address = "AA:BB:CC:DD:EE:FF"
@@ -186,6 +190,28 @@ def create_mock_coordinator() -> VevorHeaterCoordinator:
     coordinator._burnoff = BurnoffController(coordinator)
 
     return coordinator
+
+
+# ---------------------------------------------------------------------------
+# AA66 encrypted temperature-unit override tests
+# ---------------------------------------------------------------------------
+
+class TestAA66TemperatureUnitOverride:
+    """Tests AA66 temperature-unit override wiring."""
+
+    def test_coordinator_configures_aa66_before_parsing(self):
+        hass = MagicMock()
+        ble_device = MagicMock()
+        ble_device.address = "AA:BB:CC:DD:EE:FF"
+        entry = MagicMock()
+        entry.data = {
+            "address": ble_device.address,
+            CONF_FORCE_TEMP_UNIT: FORCE_TEMP_UNIT_CELSIUS,
+        }
+
+        coordinator = VevorHeaterCoordinator(hass, ble_device, entry)
+
+        assert coordinator._protocols[4]._temperature_unit_override == 0
 
 
 # ---------------------------------------------------------------------------
@@ -438,6 +464,23 @@ class TestProtocolDetection:
 
         assert protocol is not None
         assert protocol.protocol_mode == 6  # CBFF
+
+    def test_detect_protocol_cbff_encrypted_variant_header(self):
+        """Test detection of encrypted CBFF/Sunster protocol."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocols[6].set_device_sn("DC32623528D3")
+
+        data = bytearray.fromhex(
+            "ca8840416e5dc151720a71037d136442574153425cae2c0d7677"
+            "030b660b4254414b335cc9d8780200030a65f1c948"
+        )
+        header = (data[0] << 8) | data[1]
+
+        protocol, parsed_data = coordinator._detect_protocol(data, header)
+
+        assert protocol is not None
+        assert protocol.protocol_mode == 6  # CBFF
+        assert parsed_data is data
 
     def test_detect_protocol_unknown_returns_none(self):
         """Test that unknown data returns None."""
@@ -1243,6 +1286,52 @@ class TestAsyncCommands:
         call_args = coordinator._send_command.call_args
         assert call_args[0][0] == 4
         assert call_args[0][1] == 7
+
+    @pytest.mark.asyncio
+    async def test_async_set_level_abba_steps_up(self):
+        """ABBA level changes use repeated level-up button commands."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 5
+        coordinator.data["set_level"] = 3
+        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator.async_request_refresh = AsyncMock()
+
+        with patch("custom_components.diesel_heater.coordinator.asyncio.sleep", AsyncMock()) as sleep_mock:
+            await coordinator.async_set_level(6)
+
+        assert coordinator._send_command.call_args_list == [call(5, 1), call(5, 1), call(5, 1)]
+        assert sleep_mock.await_count == 2
+        coordinator.async_request_refresh.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_async_set_level_abba_steps_down(self):
+        """ABBA level changes use repeated level-down button commands."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 5
+        coordinator.data["set_level"] = 7
+        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator.async_request_refresh = AsyncMock()
+
+        with patch("custom_components.diesel_heater.coordinator.asyncio.sleep", AsyncMock()) as sleep_mock:
+            await coordinator.async_set_level(4)
+
+        assert coordinator._send_command.call_args_list == [call(5, -1), call(5, -1), call(5, -1)]
+        assert sleep_mock.await_count == 2
+        coordinator.async_request_refresh.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_async_set_level_abba_skips_when_current_level_unknown(self):
+        """ABBA level changes require a known current level."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 5
+        coordinator.data["set_level"] = None
+        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator.async_request_refresh = AsyncMock()
+
+        await coordinator.async_set_level(4)
+
+        coordinator._send_command.assert_not_called()
+        coordinator.async_request_refresh.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_async_set_temperature(self):
@@ -3010,6 +3099,32 @@ class TestABBAToggleGuard:
         coordinator.async_request_refresh.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_turn_on_skipped_during_cooldown_abba(self):
+        """ABBA's heat toggle must not interrupt its mandatory cooldown."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 5
+        coordinator.data["running_state"] = 1
+        coordinator.data["running_step"] = 4
+        coordinator._send_command = AsyncMock()
+
+        await coordinator.async_turn_on()
+
+        coordinator._send_command.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_turn_off_skipped_during_cooldown_abba(self):
+        """ABBA's heat toggle must not interrupt its mandatory cooldown."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 5
+        coordinator.data["running_state"] = 1
+        coordinator.data["running_step"] = 4
+        coordinator._send_command = AsyncMock()
+
+        await coordinator.async_turn_off()
+
+        coordinator._send_command.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_turn_on_proceeds_non_abba_protocol(self):
         """Test async_turn_on always proceeds for non-ABBA protocols."""
         coordinator = create_mock_coordinator()
@@ -3478,6 +3593,7 @@ class TestNotificationCallback:
     def test_parse_response_aa77_ack_full(self):
         """Test _parse_response handles full AA77 ACK."""
         coordinator = create_mock_coordinator()
+        coordinator._v21_handshake_sent = True
         coordinator._notification_data = None
 
         data = bytearray([0xAA, 0x77] + [0x00] * 8)  # Full AA77
@@ -3537,6 +3653,37 @@ class TestNotificationCallback:
         coordinator._parse_response(data)
 
         assert coordinator.data["connected"] is True
+
+
+class TestCBFFV21Handshake:
+    """Tests for the encrypted CBFF/Sunster V2.1 handshake path."""
+
+    @pytest.mark.asyncio
+    async def test_decrypted_status_queues_handshake(self):
+        """Encrypted CBFF status starts the handshake before commands are sent."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 6
+        coordinator._send_v21_handshake = AsyncMock()
+        protocol = coordinator._protocols[6]
+        protocol.parse = MagicMock(return_value={"_cbff_decrypted": True})
+        protocol.set_v21_mode(False)
+
+        coordinator._parse_response(bytearray([0xCA, 0x88] + [0x00] * 45))
+        await asyncio.sleep(0)
+
+        assert protocol.v21_mode is True
+        coordinator._send_v21_handshake.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_failed_handshake_can_be_retried(self):
+        """A failed handshake does not prevent the next encrypted status retry."""
+        coordinator = create_mock_coordinator()
+        coordinator._write_gatt = AsyncMock(side_effect=RuntimeError("write failed"))
+        coordinator._v21_handshake_sent = True
+
+        await coordinator._send_v21_handshake(bytearray([0x01]))
+
+        assert coordinator._v21_handshake_sent is False
 
 
 class TestDetectProtocol:
@@ -3655,6 +3802,7 @@ class TestCBFFDecryption:
     def test_cbff_decrypted_flag_logged(self):
         """Test CBFF decrypted flag triggers info log."""
         coordinator = create_mock_coordinator()
+        coordinator._v21_handshake_sent = True
         coordinator.address = "AA:BB:CC:DD:EE:FF"
 
         mock_protocol = MagicMock()
@@ -3719,6 +3867,57 @@ class TestCBFFDecryption:
         coordinator._parse_response(data)
 
         assert coordinator._heater_uses_fahrenheit is False
+
+    def test_force_temp_unit_celsius_overrides_firmware_fahrenheit(self):
+        """force_temp_unit=celsius ignores a firmware temp_unit=1 (issue #64)."""
+        coordinator = create_mock_coordinator()
+        coordinator._force_temp_unit = "celsius"
+        coordinator._heater_uses_fahrenheit = True  # start from a non-default value
+
+        mock_protocol = MagicMock()
+        mock_protocol.protocol_mode = 1
+        mock_protocol.parse.return_value = {"temp_unit": 1, "running_state": 1}
+
+        coordinator._detect_protocol = MagicMock(return_value=(mock_protocol, bytearray(18)))
+
+        data = bytearray([0xAA, 0x55] + [0x00] * 16)
+        coordinator._parse_response(data)
+
+        assert coordinator._heater_uses_fahrenheit is False
+
+    def test_force_temp_unit_fahrenheit_overrides_firmware_celsius(self):
+        """force_temp_unit=fahrenheit ignores a firmware temp_unit=0."""
+        coordinator = create_mock_coordinator()
+        coordinator._force_temp_unit = "fahrenheit"
+        coordinator._heater_uses_fahrenheit = False
+
+        mock_protocol = MagicMock()
+        mock_protocol.protocol_mode = 1
+        mock_protocol.parse.return_value = {"temp_unit": 0, "running_state": 1}
+
+        coordinator._detect_protocol = MagicMock(return_value=(mock_protocol, bytearray(18)))
+
+        data = bytearray([0xAA, 0x55] + [0x00] * 16)
+        coordinator._parse_response(data)
+
+        assert coordinator._heater_uses_fahrenheit is True
+
+    def test_force_temp_unit_auto_follows_firmware(self):
+        """force_temp_unit=auto preserves the existing firmware-driven behavior."""
+        coordinator = create_mock_coordinator()
+        coordinator._force_temp_unit = "auto"
+        coordinator._heater_uses_fahrenheit = False
+
+        mock_protocol = MagicMock()
+        mock_protocol.protocol_mode = 1
+        mock_protocol.parse.return_value = {"temp_unit": 1, "running_state": 1}
+
+        coordinator._detect_protocol = MagicMock(return_value=(mock_protocol, bytearray(18)))
+
+        data = bytearray([0xAA, 0x55] + [0x00] * 16)
+        coordinator._parse_response(data)
+
+        assert coordinator._heater_uses_fahrenheit is True
 
 
 # ---------------------------------------------------------------------------
@@ -4405,6 +4604,7 @@ class TestBurnoffOnShutdown:
         coordinator = create_mock_coordinator()
         coordinator._protocol_mode = 5
         _set_heating(coordinator)
+        coordinator.data["set_level"] = 10
         coordinator._send_command = AsyncMock(return_value=True)
         coordinator._burnoff.cycle.phase = BurnoffPhase.RUNNING
         coordinator._burnoff.cycle.saved_mode = RUNNING_MODE_LEVEL
@@ -4414,7 +4614,8 @@ class TestBurnoffOnShutdown:
 
         commands = [call[0] for call in coordinator._send_command.call_args_list]
         assert (2, RUNNING_MODE_LEVEL) in commands
-        assert (4, 4) in commands
+        # ABBA restores level with up/down steps, from burn-off level 10 back to 4.
+        assert commands.count((5, -1)) == 6
         assert commands[-1] == (3, 0)
         assert coordinator.burnoff_active is False
 

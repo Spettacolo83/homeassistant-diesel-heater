@@ -1,0 +1,91 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  protocol-tests:
+    name: Protocol tests (pure Python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install diesel_heater_ble + test deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install "pytest>=8.0" "pytest-asyncio>=0.21"
+          # homeassistant is imported by tests/conftest.py even for pure-protocol
+          # tests (the conftest tries to patch HA modules before any test is
+          # collected). Install HA so conftest import succeeds; the tests
+          # themselves don't actually exercise any HA code paths.
+          pip install homeassistant bleak bleak-retry-connector voluptuous
+          pip install -e ./diesel_heater_ble
+
+      - name: Run protocol tests
+        run: |
+          pytest tests/test_protocol.py tests/test_library_import.py -v --tb=short
+
+  integration-tests:
+    name: Integration tests (HA environment)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install "pytest>=8.0" "pytest-asyncio>=0.21" "pytest-cov>=4.0"
+          pip install homeassistant bleak bleak-retry-connector pyserial voluptuous
+          pip install -e ./diesel_heater_ble
+
+      # continue-on-error until the integration test suite stabilizes;
+      # the result is still visible in the Checks tab and in PR summaries.
+      - name: Run integration tests
+        run: |
+          pytest tests/ \
+            --ignore=tests/test_protocol.py \
+            --ignore=tests/test_library_import.py \
+            -v --tb=short
+        continue-on-error: true
+
+  lint:
+    name: Ruff lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ruff
+        run: pip install "ruff>=0.4.0"
+
+      - name: Run ruff check
+        run: ruff check custom_components/ diesel_heater_ble/src/ tests/
+        continue-on-error: true
+
+      - name: Run ruff format check
+        run: ruff format --check custom_components/ diesel_heater_ble/src/ tests/
+        continue-on-error: true
