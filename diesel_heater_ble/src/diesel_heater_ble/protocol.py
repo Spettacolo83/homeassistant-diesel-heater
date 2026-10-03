@@ -1591,8 +1591,8 @@ class ProtocolHcalory(HeaterProtocol):
         packet.extend(timestamp)
         packet.append(0x00)
 
-        # Calculate checksum
-        checksum = sum(packet) & 0xFF
+        # MVP2 uses the same command/payload checksum window as _build_hcalory_cmd.
+        checksum = sum(packet[8:]) & 0xFF
         packet.append(checksum)
 
         return packet
