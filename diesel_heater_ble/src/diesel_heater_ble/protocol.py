@@ -23,7 +23,7 @@ from typing import Any
 
 from .const import (
     ABBA_STATUS_MAP,
-    CBFF_RUN_STATE_OFF,
+    CBFF_RUN_STATE_ON,
     ENCRYPTION_KEY,
     HCALORY_ALTITUDE_TOGGLE_CMD,
     HCALORY_CMD_POWER,
@@ -1043,8 +1043,8 @@ class ProtocolCBFF(HeaterProtocol):
         # Byte 2: protocol_version (stored for diagnostics)
         parsed["cbff_protocol_version"] = _u8_to_number(data[2])
 
-        # Byte 10: run_state (2/5/6 = OFF)
-        parsed["running_state"] = 0 if _u8_to_number(data[10]) in CBFF_RUN_STATE_OFF else 1
+        # Byte 10: run_state (2/5/6 = ON)
+        parsed["running_state"] = 1 if _u8_to_number(data[10]) in CBFF_RUN_STATE_ON else 0
 
         # Byte 14: run_step
         parsed["running_step"] = _u8_to_number(data[14])
