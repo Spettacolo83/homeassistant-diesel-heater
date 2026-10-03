@@ -28,6 +28,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install "pytest>=8.0" "pytest-asyncio>=0.21"
+          # homeassistant is imported by tests/conftest.py even for pure-protocol
+          # tests (the conftest tries to patch HA modules before any test is
+          # collected). Install HA so conftest import succeeds; the tests
+          # themselves don't actually exercise any HA code paths.
+          pip install homeassistant bleak bleak-retry-connector voluptuous
           pip install -e ./diesel_heater_ble
 
       # Known pre-existing failures on main that are being fixed in separate PRs.
