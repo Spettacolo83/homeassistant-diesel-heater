@@ -125,6 +125,7 @@ def create_mock_coordinator() -> VevorHeaterCoordinator:
     coordinator._max_stale_cycles = 3
     coordinator._is_abba_device = False
     coordinator._is_hcalory_device = False
+    coordinator._v21_handshake_sent = False
     coordinator._connection_attempts = 0
     coordinator._last_connection_attempt = 0.0
     coordinator._client = None
@@ -3537,6 +3538,7 @@ class TestNotificationCallback:
     def test_parse_response_aa77_ack_full(self):
         """Test _parse_response handles full AA77 ACK."""
         coordinator = create_mock_coordinator()
+        coordinator._v21_handshake_sent = True
         coordinator._notification_data = None
 
         data = bytearray([0xAA, 0x77] + [0x00] * 8)  # Full AA77
@@ -3745,6 +3747,7 @@ class TestCBFFDecryption:
     def test_cbff_decrypted_flag_logged(self):
         """Test CBFF decrypted flag triggers info log."""
         coordinator = create_mock_coordinator()
+        coordinator._v21_handshake_sent = True
         coordinator.address = "AA:BB:CC:DD:EE:FF"
 
         mock_protocol = MagicMock()
