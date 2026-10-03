@@ -16,16 +16,19 @@ from homeassistant.helpers import selector
 from .const import (
     CONF_AUTO_OFFSET_MAX,
     CONF_EXTERNAL_TEMP_SENSOR,
+    CONF_FORCE_TEMP_UNIT,
     CONF_NEO_PASSWORD,
     CONF_PIN,
     CONF_PRESET_AWAY_TEMP,
     CONF_PRESET_COMFORT_TEMP,
     DEFAULT_AUTO_OFFSET_MAX,
+    DEFAULT_FORCE_TEMP_UNIT,
     DEFAULT_NEO_PASSWORD,
     DEFAULT_PIN,
     DEFAULT_PRESET_AWAY_TEMP,
     DEFAULT_PRESET_COMFORT_TEMP,
     DOMAIN,
+    FORCE_TEMP_UNIT_OPTIONS,
     MAX_AUTO_OFFSET_MAX,
     MAX_NEO_PASSWORD,
     MAX_PIN,
@@ -339,6 +342,18 @@ class VevorHeaterOptionsFlowHandler(config_entries.OptionsFlow):
                 selector.EntitySelectorConfig(
                     domain="sensor",
                     device_class="temperature",
+                )
+            ),
+            vol.Optional(
+                CONF_FORCE_TEMP_UNIT,
+                default=self.config_entry.data.get(
+                    CONF_FORCE_TEMP_UNIT, DEFAULT_FORCE_TEMP_UNIT
+                ),
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=list(FORCE_TEMP_UNIT_OPTIONS),
+                    translation_key=CONF_FORCE_TEMP_UNIT,
+                    mode=selector.SelectSelectorMode.DROPDOWN,
                 )
             ),
         }
