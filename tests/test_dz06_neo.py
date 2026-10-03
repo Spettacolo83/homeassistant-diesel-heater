@@ -1,13 +1,14 @@
 """Focused tests for the experimentally supported Sunster Neo transport."""
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 
-from . import conftest  # noqa: F401
 from custom_components.diesel_heater import coordinator as coordinator_module
 from custom_components.diesel_heater.coordinator import VevorHeaterCoordinator
+
+from . import conftest  # noqa: F401
 
 FFF1 = "0000fff1-0000-1000-8000-00805f9b34fb"
 FFF2 = "0000fff2-0000-1000-8000-00805f9b34fb"
@@ -136,7 +137,7 @@ async def test_auth_without_5c16_fails_closed(monkeypatch: pytest.MonkeyPatch) -
 @pytest.mark.asyncio
 async def test_power_requires_confirmed_5a25() -> None:
     coordinator = coordinator_for_layout(True)
-    coordinator.data.update({"set_temp": 30, "neo_run_type": 1, "altitude": 1})
+    coordinator.data.update({"set_temp": 30, "neo_run_type": 1, "altitude": 1, "neo_raw_state": 1})
     response = bytearray(39)
     response[:2] = b"Z%"
     response[3] = 1
@@ -148,7 +149,7 @@ async def test_power_requires_confirmed_5a25() -> None:
 @pytest.mark.asyncio
 async def test_power_rejects_5a25_that_reports_the_wrong_state() -> None:
     coordinator = coordinator_for_layout(True)
-    coordinator.data.update({"set_temp": 30, "neo_run_type": 1, "altitude": 1})
+    coordinator.data.update({"set_temp": 30, "neo_run_type": 1, "altitude": 1, "neo_raw_state": 1})
     response = bytearray(39)
     response[:2] = b"Z%"
     coordinator._write_gatt = AsyncMock(
@@ -160,7 +161,7 @@ async def test_power_rejects_5a25_that_reports_the_wrong_state() -> None:
 @pytest.mark.asyncio
 async def test_neo_power_preserves_reported_mode_and_altitude() -> None:
     coordinator = coordinator_for_layout(True)
-    coordinator.data.update({"set_temp": 30, "neo_run_type": 2, "altitude": 1500})
+    coordinator.data.update({"set_temp": 30, "neo_run_type": 2, "altitude": 1500, "neo_raw_state": 1})
     response = bytearray(39)
     response[:2], response[3] = b"Z%", 1
     coordinator._write_gatt = AsyncMock(
@@ -181,6 +182,7 @@ async def test_power_missing_target_fails_without_writing() -> None:
 @pytest.mark.asyncio
 async def test_temperature_requires_matching_5a25_target() -> None:
     coordinator = coordinator_for_layout(True)
+    coordinator.data.update({"set_temp": 30, "neo_run_type": 1, "altitude": 1, "neo_raw_state": 1})
     response = bytearray(39)
     response[:2] = b"Z%"
     response[15] = 29
@@ -200,3 +202,46 @@ def test_arbitrary_neo_notification_does_not_connect() -> None:
     coordinator = coordinator_for_layout(True)
     coordinator._notification_callback(FFF2, bytearray.fromhex("5c16"))
     assert coordinator.data["connected"] is False
+
+
+@pytest.mark.asyncio
+async def test_power_before_first_status_fails_closed_with_warning() -> None:
+    coordinator = coordinator_for_layout(True)
+    coordinator.data.update({"set_temp": 30, "neo_run_type": 1, "altitude": 1})
+    coordinator._write_gatt = AsyncMock()
+
+    assert await coordinator._send_dz06_neo_power(True) is False
+    coordinator._write_gatt.assert_not_awaited()
+    coordinator._logger.warning.assert_called_once_with(
+        "DZ06 Neo control blocked until first 5A25 status frame"
+    )
+
+
+@pytest.mark.asyncio
+async def test_power_write_failure_is_logged() -> None:
+    coordinator = coordinator_for_layout(True)
+    coordinator.data.update(
+        {"set_temp": 30, "neo_run_type": 1, "altitude": 1, "neo_raw_state": 1}
+    )
+    coordinator._write_gatt = AsyncMock(side_effect=RuntimeError("write failed"))
+
+    assert await coordinator._send_dz06_neo_power(True) is False
+    coordinator._logger.warning.assert_called_once_with(
+        "DZ06 Neo power write failed: %s", ANY
+    )
+
+
+@pytest.mark.asyncio
+async def test_temperature_write_failure_is_logged() -> None:
+    coordinator = coordinator_for_layout(True)
+    coordinator.data.update(
+        {"set_temp": 30, "neo_run_type": 1, "altitude": 1, "neo_raw_state": 1}
+    )
+    coordinator._write_gatt = AsyncMock(side_effect=RuntimeError("write failed"))
+
+    await coordinator.async_set_temperature(30)
+
+    coordinator._logger.warning.assert_called_once_with(
+        "DZ06 Neo temperature write failed: %s", ANY
+    )
+    coordinator.async_request_refresh.assert_not_awaited()

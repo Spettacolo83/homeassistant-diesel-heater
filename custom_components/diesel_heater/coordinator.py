@@ -203,6 +203,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             "fuel_remaining": None,
             "fuel_consumed_since_reset": 0.0,
             "last_refueled": None,  # ISO timestamp of last refuel reset
+            "neo_raw_state": None,  # Set only after an authenticated DZ06 status frame
+            "neo_run_type": None,
         }
 
         # Fuel consumption tracking (minimal)
@@ -1856,6 +1858,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             run_type = self.data.get("neo_run_type")
             target = self.data.get("set_temp")
             altitude = self.data.get("altitude")
+            if self.data.get("neo_raw_state") is None:
+                self._logger.warning("DZ06 Neo control blocked until first 5A25 status frame")
+                return None
         try:
             run_type = int(run_type)
             target = int(round(float(target)))
@@ -2069,7 +2074,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             await self._write_gatt(
                 self._neo_packet(0x5A if turn_on else 0x5C, run_type, target, altitude)
             )
-        except Exception:
+        except Exception as err:
+            self._logger.warning("DZ06 Neo power write failed: %s", err)
             return False
         deadline = time.monotonic() + 3
         while time.monotonic() < deadline:
@@ -2231,7 +2237,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._notification_data = None
             try:
                 await self._write_gatt(self._neo_packet(0x51, run_type, command_temp, altitude))
-            except Exception:
+            except Exception as err:
+                self._logger.warning("DZ06 Neo temperature write failed: %s", err)
                 return
             deadline = time.monotonic() + 3
             while time.monotonic() < deadline:
