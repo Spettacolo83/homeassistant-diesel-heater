@@ -31,6 +31,10 @@
     {
       "connectable": true,
       "local_name": "Hcalory*"
+    },
+    {
+      "connectable": true,
+      "local_name": "hcalory*"
     }
   ],
   "version": "2.1.5-beta.1"
