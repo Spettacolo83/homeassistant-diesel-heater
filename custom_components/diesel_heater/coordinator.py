@@ -71,6 +71,7 @@ from .const import (
     MAX_BURNOFF_AFTER_HOURS,
     MAX_BURNOFF_DURATION,
     MAX_HEATER_OFFSET,
+    MAX_LEVEL,
     MAX_HISTORY_DAYS,
     MIN_BURNOFF_AFTER_CYCLES,
     MIN_BURNOFF_AFTER_HOURS,
@@ -79,8 +80,13 @@ from .const import (
     PROTOCOL_HEADER_ABBA,
     PROTOCOL_HEADER_CBFF,
     PROTOCOL_HEADER_AA77,
+    RUNNING_MODE_LEVEL,
+    RUNNING_MODE_TEMPERATURE,
+    RUNNING_STATE_OFF,
+    RUNNING_STATE_ON,
     RUNNING_STEP_COOLDOWN,
     RUNNING_STEP_RUNNING,
+    RUNNING_STEP_STANDBY,
     SENSOR_TEMP_MAX,
     SENSOR_TEMP_MIN,
     SERVICE_UUID,
@@ -243,6 +249,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             "last_refueled": None,  # ISO timestamp of last refuel reset
             "neo_raw_state": None,  # Set only after an authenticated DZ06 status frame
             "neo_run_type": None,
+            "neo_min_target": None,
+            "neo_max_target": None,
         }
 
         # Fuel consumption tracking (minimal)
@@ -1446,21 +1454,35 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """Handle notification from heater."""
         if self.is_dz06_neo:
             self._notification_data = bytearray(data)
+            if len(data) >= 6 and data[:2] == bytearray((0x5C, 0x16)):
+                minimum, maximum = data[4], data[5]
+                if minimum <= maximum:
+                    self.data["neo_min_target"] = minimum
+                    self.data["neo_max_target"] = maximum
             if len(data) == 39 and data[:2] == bytearray((0x5A, 0x25)):
+                run_type = data[34]
                 self.data.update({
                     "connected": True,
                     "supply_voltage": data[6] / 10.0,
                     "set_temp": float(data[15]),
                     "cab_temperature": float(data[35]),
                     "altitude": int.from_bytes(data[32:34], "big"),
-                    "neo_run_type": data[34],
+                    "neo_run_type": run_type,
                 })
                 raw_state = data[3]
                 self.data["neo_raw_state"] = raw_state
                 if raw_state in (1, 2, 4, 5):
-                    self.data["running_state"] = 1
+                    self.data["running_state"] = RUNNING_STATE_ON
+                    self.data["running_step"] = RUNNING_STEP_RUNNING
                 elif raw_state in (0, 7, 8):
-                    self.data["running_state"] = 0
+                    self.data["running_state"] = RUNNING_STATE_OFF
+                    self.data["running_step"] = RUNNING_STEP_STANDBY
+                if run_type == 1:
+                    self.data["running_mode"] = RUNNING_MODE_LEVEL
+                elif run_type == 2:
+                    self.data["running_mode"] = RUNNING_MODE_TEMPERATURE
+                self._burnoff.observe_status()
+                self._burnoff.schedule_abort_if_ecu_stopped()
             return
         # Log ALL received data for debugging
         self._logger.info(
@@ -1977,7 +1999,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """Return controller settings required for a Neo packet."""
         if use_startup_defaults:
             run_type = self.data.get("neo_run_type", 1)
-            target = self.data.get("set_temp", 8)
+            target = self.data.get("set_temp", self.data.get("neo_min_target", 8))
             altitude = self.data.get("altitude", 1)
         else:
             run_type = self.data.get("neo_run_type")
@@ -1992,9 +2014,60 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             altitude = int(altitude)
         except (TypeError, ValueError):
             return None
-        if run_type not in (1, 2) or not 8 <= target <= 36 or not 0 <= altitude <= 0xFFFF:
+        minimum = self.data.get("neo_min_target")
+        maximum = self.data.get("neo_max_target")
+        try:
+            minimum = int(minimum) if minimum is not None else 8
+            maximum = int(maximum) if maximum is not None else 36
+        except (TypeError, ValueError):
+            return None
+        if (
+            run_type not in (1, 2)
+            or minimum > maximum
+            or not minimum <= target <= maximum
+            or not 0 <= altitude <= 0xFFFF
+        ):
             return None
         return run_type, target, altitude
+
+    async def _async_set_dz06_neo_control(
+        self, run_type: int, target: int, altitude: int
+    ) -> bool:
+        # Send Neo's app-backed control packet and await its matching status.
+        minimum = self.data.get("neo_min_target", 8)
+        maximum = self.data.get("neo_max_target", 36)
+        try:
+            minimum, maximum = int(minimum), int(maximum)
+        except (TypeError, ValueError):
+            return False
+        if (
+            run_type not in (1, 2)
+            or not minimum <= target <= maximum
+            or not 0 <= altitude <= 0xFFFF
+        ):
+            return False
+        self._notification_data = None
+        try:
+            await self._write_gatt(self._neo_packet(0x51, run_type, target, altitude))
+        except Exception as err:
+            self._logger.warning("DZ06 Neo control write failed: %s", err)
+            return False
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            await asyncio.sleep(0.1)
+            response = self._notification_data
+            if response is None:
+                continue
+            if (
+                len(response) == 39
+                and response[:2] == bytearray((0x5A, 0x25))
+                and response[15] == target
+                and response[34] == run_type
+            ):
+                await self.async_request_refresh()
+                return True
+            self._notification_data = None
+        return False
 
     async def _send_dz06_neo_auth(self) -> bool:
         """Read Neo configuration using its configured connection password."""
@@ -2303,8 +2376,94 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self.async_set_updated_data(self.data)
         self._burnoff.maybe_start_in_run()
 
+    def burnoff_protocol_snapshot(self) -> dict[str, int]:
+        """Return protocol state needed to restore a burn-off snapshot."""
+        snapshot = {"protocol_mode": self._protocol_mode}
+        if self._protocol_mode == 8:
+            raw_mode = self.data.get("heatgenie_run_mode")
+            if raw_mode in (0, 1, 2):
+                snapshot["heatgenie_run_mode"] = raw_mode
+        if self.is_dz06_neo:
+            settings = self._neo_control_settings()
+            if settings is not None:
+                run_type, target, altitude = settings
+                snapshot.update(
+                    {
+                        "neo_run_type": run_type,
+                        "neo_target": target,
+                        "neo_altitude": altitude,
+                    }
+                )
+        return snapshot
+
+    async def async_apply_burnoff_max_power(self, cycle: Any) -> bool:
+        """Apply the app-backed maximum-power operation for this protocol."""
+        if self._protocol_mode == 8:
+            # HeatGenie's DB0_DN_SHORT_PARA uses raw mode 1 for manual heating.
+            mode_ok = bool(await self._send_command(2, 1))
+            return bool(await self.async_set_level(MAX_LEVEL)) and mode_ok
+
+        if self.is_dz06_neo:
+            maximum = self.data.get("neo_max_target")
+            altitude = self.data.get("altitude")
+            try:
+                maximum, altitude = int(maximum), int(altitude)
+            except (TypeError, ValueError):
+                self._logger.warning(
+                    "DZ06 Neo burn-off requires authenticated target limits"
+                )
+                return False
+            # Neo manual heating is opcode 0x51, run type 1, at the app's upper target.
+            return await self._async_set_dz06_neo_control(1, maximum, altitude)
+
+        mode_ok = True
+        if self.data.get("running_mode") != RUNNING_MODE_LEVEL:
+            mode_ok = bool(await self.async_set_mode(RUNNING_MODE_LEVEL))
+        return bool(await self.async_set_level(MAX_LEVEL)) and mode_ok
+
+    async def async_restore_burnoff_snapshot(self, cycle: Any) -> bool:
+        """Restore the app-native mode and target captured before burn-off."""
+        mode = cycle.saved_mode
+        if mode is None:
+            return True
+
+        snapshot = cycle.saved_protocol_state or {}
+        if self.is_dz06_neo:
+            try:
+                return await self._async_set_dz06_neo_control(
+                    int(snapshot["neo_run_type"]),
+                    int(snapshot["neo_target"]),
+                    int(snapshot["neo_altitude"]),
+                )
+            except (KeyError, TypeError, ValueError):
+                self._logger.warning("DZ06 Neo burn-off snapshot is incomplete")
+                return False
+
+        if self._protocol_mode == 8:
+            raw_mode = snapshot.get("heatgenie_run_mode")
+            if raw_mode not in (0, 1, 2):
+                self._logger.warning("HeatGenie burn-off snapshot is missing raw mode")
+                return False
+            mode_ok = bool(await self._send_command(2, raw_mode))
+            if raw_mode == 1 and cycle.saved_level is not None:
+                return bool(await self.async_set_level(int(cycle.saved_level))) and mode_ok
+            if raw_mode in (0, 2) and cycle.saved_temp is not None:
+                return bool(await self.async_set_temperature(float(cycle.saved_temp))) and mode_ok
+            return mode_ok
+
+        mode_ok = bool(await self.async_set_mode(int(mode)))
+        if mode == RUNNING_MODE_LEVEL and cycle.saved_level is not None:
+            return bool(await self.async_set_level(int(cycle.saved_level))) and mode_ok
+        if mode == RUNNING_MODE_TEMPERATURE and cycle.saved_temp is not None:
+            return bool(await self.async_set_temperature(float(cycle.saved_temp))) and mode_ok
+        return mode_ok
+
     async def _power_off(self) -> None:
         """Send the real power-off command."""
+        if self.is_dz06_neo:
+            if await self._send_dz06_neo_power(False):
+                await self.async_request_refresh()
+            return
         # So the observer does not count this shutdown as a controller heat cycle.
         self._burnoff.ha_power_off = True
         # ABBA uses a toggle command (0xA1) for both ON and OFF.
@@ -2397,12 +2556,6 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         configured duration, restores the previous heating mode, then sends the
         real power-off command. Pass immediate=True to skip burn-off.
         """
-        if self.is_dz06_neo:
-            await self._burnoff.cancel(restore=False)
-            if await self._send_dz06_neo_power(False):
-                await self.async_request_refresh()
-            return
-
         if immediate:
             # Power Off Now: skip burn-off now and do not pending on the Off edge.
             self._burnoff.skip_pending_on_off = True
@@ -2549,29 +2702,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if self.is_dz06_neo:
             settings = self._neo_control_settings()
             if settings is None:
-                return
+                return False
             run_type, _, altitude = settings
-            self._notification_data = None
-            try:
-                await self._write_gatt(self._neo_packet(0x51, run_type, command_temp, altitude))
-            except Exception as err:
-                self._logger.warning("DZ06 Neo temperature write failed: %s", err)
-                return
-            deadline = time.monotonic() + 3
-            while time.monotonic() < deadline:
-                await asyncio.sleep(0.1)
-                response = self._notification_data
-                if response is None:
-                    continue
-                if (
-                    len(response) == 39
-                    and response[:2] == bytearray((0x5A, 0x25))
-                    and response[15] == command_temp
-                ):
-                    await self.async_request_refresh()
-                    return
-                self._notification_data = None
-            return
+            return await self._async_set_dz06_neo_control(
+                run_type, command_temp, altitude
+            )
         success = await self._send_command(4, command_temp)
 
         if success:

@@ -26,6 +26,7 @@ def coordinator_for_layout(neo: bool) -> VevorHeaterCoordinator:
         properties=["write-without-response"] if neo else ["write"],
     )
     coordinator.data = {"connected": False, "running_state": 1}
+    coordinator.config_entry = SimpleNamespace(data={})
     coordinator._burnoff = BurnoffController(coordinator)
     coordinator._notification_data = None
     coordinator._neo_password = 100000000
@@ -244,6 +245,62 @@ async def test_temperature_write_failure_is_logged() -> None:
     await coordinator.async_set_temperature(30)
 
     coordinator._logger.warning.assert_called_once_with(
-        "DZ06 Neo temperature write failed: %s", ANY
+        "DZ06 Neo control write failed: %s", ANY
     )
     coordinator.async_request_refresh.assert_not_awaited()
+
+
+def test_authenticated_config_sets_neo_target_range() -> None:
+    coordinator = coordinator_for_layout(True)
+    coordinator._notification_callback(FFF2, bytearray((0x5C, 0x16, 0, 0, 8, 36)))
+    assert coordinator.data["neo_min_target"] == 8
+    assert coordinator.data["neo_max_target"] == 36
+
+
+@pytest.mark.asyncio
+async def test_max_power_control_uses_the_app_packet_and_configured_limit() -> None:
+    coordinator = coordinator_for_layout(True)
+    coordinator.data.update(
+        {
+            "neo_min_target": 8,
+            "neo_max_target": 36,
+            "neo_raw_state": 1,
+            "set_temp": 22,
+            "altitude": 1500,
+        }
+    )
+    response = bytearray(39)
+    response[:2], response[3], response[15], response[34] = b"Z%", 1, 36, 1
+    coordinator._write_gatt = AsyncMock(
+        side_effect=lambda packet: coordinator._notification_callback(FFF2, response)
+    )
+
+    assert await coordinator._async_set_dz06_neo_control(1, 36, 1500) is True
+    assert coordinator._write_gatt.await_args.args[0] == bytearray.fromhex(
+        "a5090151012405dc01bdae"
+    )
+
+
+@pytest.mark.asyncio
+async def test_burnoff_shutdown_uses_neo_app_power_off_packet() -> None:
+    coordinator = coordinator_for_layout(True)
+    coordinator.data.update(
+        {
+            "neo_min_target": 8,
+            "neo_max_target": 36,
+            "neo_raw_state": 1,
+            "neo_run_type": 1,
+            "set_temp": 30,
+            "altitude": 1,
+        }
+    )
+    response = bytearray(39)
+    response[:2], response[3] = b"Z%", 0
+    coordinator._write_gatt = AsyncMock(
+        side_effect=lambda packet: coordinator._notification_callback(FFF2, response)
+    )
+
+    await coordinator._power_off()
+    assert coordinator._write_gatt.await_args.args[0] == bytearray.fromhex(
+        "a509015c011e00010129ea"
+    )

@@ -60,6 +60,7 @@ def test_storage_payload_writes_phase_and_legacy_flag():
     controller.cycle.shutdown_after = False
     controller.cycle.saved_mode = RUNNING_MODE_TEMPERATURE
     controller.cycle.saved_temp = 21
+    controller.cycle.saved_protocol_state = {"heatgenie_run_mode": 1}
     controller.cycle.ends_at = datetime.now(UTC)
 
     payload = controller.storage_payload()
@@ -68,6 +69,7 @@ def test_storage_payload_writes_phase_and_legacy_flag():
     assert payload["phase"] == BurnoffPhase.RESTORING
     assert payload["awaiting_snapshot_write"] is True
     assert payload["saved_mode"] == RUNNING_MODE_TEMPERATURE
+    assert payload["saved_protocol_state"] == {"heatgenie_run_mode": 1}
 
 
 @pytest.mark.asyncio
