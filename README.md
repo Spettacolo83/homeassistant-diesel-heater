@@ -184,6 +184,8 @@ logger:
 
 ### Burn-off
 
+> **Tested only on AA55 Encrypted.** Burn-off has been verified only on heaters that use the AA55 encrypted protocol (AirHeaterBLE). It has not been tested on other protocols.
+
 When enabled (`switch.*_automatic_burnoff`, off by default), the integration runs the heater at **maximum power** for a configurable duration (default 10 minutes) to burn off soot, then restores the previous heating mode and setpoint.
 
 Burn-off is **off by default**. Timing is unified across modes:
@@ -628,6 +630,7 @@ This integration communicates via Bluetooth LE and supports 6 protocol variants 
 
 ### Version 2.1.5-beta.1
 - **Automatic burn-off**: Run at maximum power to burn soot, then restore the previous heating mode and setpoint
+  - **Tested only on AA55 Encrypted devices.** Behavior on other protocols is unverified.
   - Enable with `switch.*_automatic_burnoff` (off by default)
   - Duration via `number.*_burnoff_duration` (default 10 minutes, range 1-30)
   - In-run after `number.*_burnoff_after_hours` of RUNNING time and/or `number.*_burnoff_after_cycles` controller heat cycles (both default 0). Starts only on an established RUNNING step
