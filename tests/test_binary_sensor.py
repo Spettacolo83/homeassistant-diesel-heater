@@ -12,6 +12,7 @@ from custom_components.diesel_heater.binary_sensor import (
     VevorHeaterProblemSensor,
     VevorHeaterConnectedSensor,
     VevorAutoStartStopSensor,
+    VevorComponentActiveSensor,
     async_setup_entry,
 )
 from custom_components.diesel_heater.const import (
@@ -224,6 +225,38 @@ class TestAsyncSetupEntry:
 # ---------------------------------------------------------------------------
 # Auto Start/Stop sensor tests
 # ---------------------------------------------------------------------------
+
+class TestHeatGenieEntitySetup:
+    """Tests for HeatGenie component-state entities."""
+
+    @pytest.mark.asyncio
+    async def test_creates_component_entities_only_for_heatgenie(self):
+        """HeatGenie reports independently addressable component state bits."""
+        coordinator = create_mock_coordinator(protocol_mode=8)
+        coordinator.data.update(pump_active=False, fan_active=True, glow_plug_active=False)
+        entry = MagicMock()
+        entry.runtime_data = coordinator
+        async_add_entities = MagicMock()
+
+        await async_setup_entry(MagicMock(), entry, async_add_entities)
+
+        component_sensors = [
+            entity for entity in async_add_entities.call_args[0][0] if isinstance(entity, VevorComponentActiveSensor)
+        ]
+        assert [sensor._key for sensor in component_sensors] == ["pump_active", "fan_active", "glow_plug_active"]
+
+    @pytest.mark.asyncio
+    async def test_does_not_create_component_entities_for_other_protocols(self):
+        """Other protocols have no APK-proven independent component bits."""
+        coordinator = create_mock_coordinator(protocol_mode=1)
+        entry = MagicMock()
+        entry.runtime_data = coordinator
+        async_add_entities = MagicMock()
+
+        await async_setup_entry(MagicMock(), entry, async_add_entities)
+
+        assert not any(isinstance(entity, VevorComponentActiveSensor) for entity in async_add_entities.call_args[0][0])
+
 
 class TestVevorAutoStartStopSensor:
     """Tests for Vevor Auto Start/Stop binary sensor."""

@@ -94,6 +94,11 @@ async def async_setup_entry(
             VevorShutdownTempDiffSensor(coordinator),
         ])
 
+    # A HeatGenie frame omits each probe that the controller marks unsupported.
+    if mode == 8 and "intake_temperature" in coordinator.data:
+        entities.append(VevorAuxTemperatureSensor(coordinator, "intake_temperature", "Intake Temperature"))
+    if mode == 8 and "outlet_temperature" in coordinator.data:
+        entities.append(VevorAuxTemperatureSensor(coordinator, "outlet_temperature", "Outlet Temperature"))
     async_add_entities(entities)
 
 
@@ -180,6 +185,26 @@ class VevorCabTemperatureSensor(VevorSensorBase):
     def native_value(self) -> float | None:
         """Return the state."""
         return self.coordinator.data.get("cab_temperature")
+
+
+class VevorAuxTemperatureSensor(VevorSensorBase):
+    """Temperature sensor exposed only by protocols that report it."""
+
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: VevorHeaterCoordinator, key: str, name: str) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, key, name)
+        self._attr_native_unit_of_measurement = (
+            UnitOfTemperature.FAHRENHEIT if coordinator._heater_uses_fahrenheit else UnitOfTemperature.CELSIUS
+        )
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the state."""
+        return self.coordinator.data.get(self._key)
 
 
 class VevorRawInteriorTemperatureSensor(VevorSensorBase):

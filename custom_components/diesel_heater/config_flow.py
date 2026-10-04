@@ -28,6 +28,7 @@ from .const import (
     DEFAULT_PRESET_AWAY_TEMP,
     DEFAULT_PRESET_COMFORT_TEMP,
     DOMAIN,
+    HEATGENIE_SERVICE_UUID,
     FORCE_TEMP_UNIT_OPTIONS,
     MAX_AUTO_OFFSET_MAX,
     MAX_NEO_PASSWORD,
@@ -38,6 +39,17 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+HEATGENIE_NAME_PATTERN = re.compile(r"^C1:[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}:FE:[0-9A-F]{2}$")
+
+
+def _is_heatgenie_device(discovery_info: BluetoothServiceInfoBleak) -> bool:
+    """Return True only for the HeatGenie identities recognized by its app."""
+    service_uuids = {uuid.lower() for uuid in discovery_info.service_uuids}
+    if HEATGENIE_SERVICE_UUID.lower() not in service_uuids:
+        return False
+    name = (discovery_info.name or "").upper()
+    return "BOYGU" in name or bool(HEATGENIE_NAME_PATTERN.fullmatch(name))
+
 
 HEATER_NAME_PREFIXES = (
     "BAC-",
@@ -50,8 +62,10 @@ HEATER_NAME_PREFIXES = (
 def _is_likely_heater(discovery_info: BluetoothServiceInfoBleak) -> bool:
     """Return True if a BLE advertisement has an app-recognized heater name."""
     name = (discovery_info.name or "").upper()
-    return any(name.startswith(prefix) for prefix in HEATER_NAME_PREFIXES) or (
-        name.startswith("HEATER") and name[6:].isdigit()
+    return (
+        _is_heatgenie_device(discovery_info)
+        or any(name.startswith(prefix) for prefix in HEATER_NAME_PREFIXES)
+        or (name.startswith("HEATER") and name[6:].isdigit())
     )
 
 
