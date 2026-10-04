@@ -92,12 +92,12 @@ class VevorHeaterClimate(
         # Coordinator stores temperatures in native unit (no conversions)
         if coordinator._heater_uses_fahrenheit:
             self._attr_temperature_unit = UnitOfTemperature.FAHRENHEIT
-            self._attr_min_temp = 32  # 32°F = 0°C
+            self._attr_min_temp = 50 if coordinator.protocol_mode == 8 else 32  # 32°F = 0°C
             self._attr_max_temp = 104  # 104°F = 40°C
             self._attr_target_temperature_step = 1.0  # 1°F step (72 possible values)
         else:
             self._attr_temperature_unit = UnitOfTemperature.CELSIUS
-            self._attr_min_temp = 0  # Hcalory supports 0-40°C, other protocols 8-36°C
+            self._attr_min_temp = 10 if coordinator.protocol_mode == 8 else 0  # Hcalory supports 0-40°C, other protocols 8-36°C
             self._attr_max_temp = 40  # Hcalory supports 0-40°C, other protocols up to 36°C
             self._attr_target_temperature_step = 1.0  # 1°C step (40 possible values)
 

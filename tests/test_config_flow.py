@@ -23,6 +23,7 @@ from custom_components.diesel_heater.const import (
     DEFAULT_PRESET_AWAY_TEMP,
     DEFAULT_PRESET_COMFORT_TEMP,
     HCALORY_MVP2_SERVICE_UUID,
+    HEATGENIE_SERVICE_UUID,
     SERVICE_UUID,
 )
 from tests.conftest import _AbortFlow
@@ -77,6 +78,30 @@ class TestBluetoothDiscovery:
 
         with pytest.raises(_AbortFlow, match="already_configured"):
             await flow.async_step_bluetooth(discovery)
+
+    async def test_heatgenie_discovery_requires_app_identity_and_service(self):
+        flow = VevorHeaterConfigFlow()
+        discovery = _make_ble_discovery(
+            name="C1:12:34:56:FE:78",
+            service_uuids=[HEATGENIE_SERVICE_UUID],
+        )
+
+        result = await flow.async_step_bluetooth(discovery)
+
+        assert result["type"] == "form"
+        assert result["step_id"] == "confirm"
+
+    async def test_heatgenie_like_name_without_service_is_ignored(self):
+        flow = VevorHeaterConfigFlow()
+        discovery = _make_ble_discovery(
+            name="C1:12:34:56:FE:78",
+            service_uuids=[SERVICE_UUID],
+        )
+
+        result = await flow.async_step_bluetooth(discovery)
+
+        assert result["type"] == "abort"
+        assert result["reason"] == "not_supported"
 
     async def test_discovery_ignores_unknown_device(self):
         flow = VevorHeaterConfigFlow()

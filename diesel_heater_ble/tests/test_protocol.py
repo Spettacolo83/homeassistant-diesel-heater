@@ -15,6 +15,7 @@ from diesel_heater_ble import (
     ProtocolAA66,
     ProtocolAA66Encrypted,
     ProtocolABBA,
+    ProtocolHeatGenie,
     ProtocolCBFF,
     VevorCommandMixin,
     _decrypt_data,
@@ -1754,3 +1755,61 @@ class TestProtocolCBFF:
     def test_is_not_vevor_command_mixin(self):
         """CBFF no longer inherits VevorCommandMixin - uses FEAA directly."""
         assert not isinstance(self.proto, VevorCommandMixin)
+# ProtocolHeatGenie (mode=8, Boygu/HeatGenie)
+# ---------------------------------------------------------------------------
+
+
+def _make_heatgenie_status(flags: int = 0x2F) -> bytearray:
+    protocol = ProtocolHeatGenie()
+    frame = bytearray(50)
+    frame[0] = 0xAA
+    frame[1] = 9
+    frame[7] = 0xF2
+    registers = memoryview(frame)[8:48]
+    registers[0] = 3
+    registers[1] = flags
+    registers[2:4] = (126).to_bytes(2, "little")
+    registers[6:8] = (215).to_bytes(2, "little", signed=True)
+    registers[8:10] = (315).to_bytes(2, "little", signed=True)
+    registers[16:18] = (123).to_bytes(2, "little", signed=True)
+    registers[18:20] = (456).to_bytes(2, "little", signed=True)
+    registers[32] = 5
+    registers[33] = 22
+    frame[-2:] = protocol.crc16(frame[:-2]).to_bytes(2, "big")
+    return frame
+
+
+class TestProtocolHeatGenie:
+    """Tests for frames and register fields verified from the HeatGenie app."""
+
+    def setup_method(self):
+        self.proto = ProtocolHeatGenie()
+
+    def test_app_command_frames(self):
+        assert self.proto.build_command(1, 0, 0)[:6] == bytearray((0xAA, 0, 0x65, 2, 20, 30))
+        assert self.proto.build_command(2, 1, 0)[:6] == bytearray((0xAA, 0, 0x66, 0, 0, 1))
+        assert self.proto.build_command(3, 1, 0)[:6] == bytearray((0xAA, 0, 0x61, 1, 0xFF, 0))
+        assert self.proto.build_command(4, 20, 0)[:6] == bytearray((0xAA, 0, 0x66, 1, 0, 20))
+        assert self.proto.build_command(5, 6, 0)[:6] == bytearray((0xAA, 0, 0x66, 2, 0, 6))
+        assert self.proto.build_command(15, 1, 0)[:6] == bytearray((0xAA, 0, 0x61, 10, 0xFF, 0))
+        assert self.proto.build_command(4, 68, 0)[:6] == bytearray((0xAA, 0, 0x66, 1, 1, 68))
+        assert self.proto.build_time_sync(0, 12, 34)[:6] == bytearray((0xAA, 0, 0x66, 3, 12, 34))
+
+    def test_parses_independent_temperature_and_component_fields(self):
+        parsed = self.proto.parse(_make_heatgenie_status())
+        assert parsed is not None
+        assert parsed["intake_temperature"] == 12.3
+        assert parsed["outlet_temperature"] == 45.6
+        assert parsed["pump_active"]
+        assert parsed["fan_active"]
+        assert parsed["glow_plug_active"]
+
+    def test_unsupported_temperatures_are_not_reported(self):
+        frame = _make_heatgenie_status()
+        frame[24:26] = (32760).to_bytes(2, "little", signed=True)
+        frame[26:28] = (32760).to_bytes(2, "little", signed=True)
+        frame[-2:] = self.proto.crc16(frame[:-2]).to_bytes(2, "big")
+        parsed = self.proto.parse(frame)
+        assert parsed is not None
+        assert "intake_temperature" not in parsed
+        assert "outlet_temperature" not in parsed

@@ -9,7 +9,7 @@
   "issue_tracker": "https://github.com/Spettacolo83/homeassistant-diesel-heater/issues",
   "iot_class": "local_polling",
   "loggers": ["diesel_heater_ble"],
-  "requirements": ["diesel-heater-ble>=0.3.4"],
+  "requirements": ["diesel-heater-ble>=0.3.5"],
   "icon": "mdi:radiator",
   "bluetooth": [
     {
@@ -35,6 +35,18 @@
     {
       "connectable": true,
       "local_name": "hcalory*"
+    },
+    {
+      "connectable": true,
+      "local_name": "C1:*:FE:*"
+    },
+    {
+      "connectable": true,
+      "local_name": "*boygu*"
+    },
+    {
+      "connectable": true,
+      "local_name": "*BOYGU*"
     }
   ],
   "version": "2.1.5-beta.5"
