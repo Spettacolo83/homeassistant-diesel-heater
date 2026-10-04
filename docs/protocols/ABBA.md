@@ -1,160 +1,66 @@
 # ABBA Protocol (HeaterCC)
 
-**Protocol Mode**: 5
-**App**: AirHeaterCC
-**Packet Length**: 21+ bytes
+**Integration mode:** 5
+**Controller app and hardware evidence:** AirHeaterCC command behavior and
+confirmed HeaterCC hardware captures
 
-## Overview
+## Transport
 
-The ABBA protocol is used by HeaterCC-compatible heaters. It has a completely different command structure using BAAB headers instead of AA55. This protocol supports ventilation mode and uses different status codes.
+| Item | Value |
+| --- | --- |
+| Service | `0000FFF0-0000-1000-8000-00805F9B34FB` |
+| Legacy notify | `0000FFF1-0000-1000-8000-00805F9B34FB` |
+| Legacy write | `0000FFF2-0000-1000-8000-00805F9B34FB` |
+| Notification header | `AB BA` |
+| Command header | `BA AB` |
 
-## BLE Configuration
+The coordinator verifies characteristic direction. A split FFF0 layout with
+FFF1 write and FFF2 notify is DZ06 Neo, not legacy ABBA.
 
-| Type | UUID |
-|------|------|
-| Service | `0000FFE0-0000-1000-8000-00805F9B34FB` |
-| Write Char | `0000FFE1-0000-1000-8000-00805F9B34FB` |
-| Notify Char | `0000FFE1-0000-1000-8000-00805F9B34FB` |
+## Status fields
 
-## Response Packet Structure
+ABBA status frames have at least 21 bytes. The fields used by the integration
+are:
 
-```
-Offset  Bytes  Field                Description
-------  -----  -----                -----------
-0-1     2      Header               AB BA (response) or BA AB (command)
-2-3     2      Length/Type
-4       1      Status               0=Off, 1=Heating, 2=Cooldown, 4=Vent, 6=Standby
-5       1      Mode                 0=Level, 1=Temp, 0xFF=Error
-6       1      Gear/Temp/Error      Depends on mode
-7       1      Reserved
-8       1      Auto Start/Stop      0=off, 1=on
-9       1      Voltage              Single byte volts
-10      1      Temp Unit            0=Celsius, 1=Fahrenheit
-11      1      Environment Temp     Raw value (see parsing)
-12-13   2      Case Temperature     Big-endian uint16
-14      1      Altitude Unit        0=meters, 1=feet
-15      1      High Altitude Mode   0=off, 1=on
-16-17   2      Altitude             Big-endian uint16
-18-20   3      Checksum/Padding
-```
+| Offset | Field | Interpretation |
+| --- | --- | --- |
+| 4 | Status | `0` off, `1` heating, `2` cooldown, `4` ventilation, `6` standby |
+| 5 | Mode | `0` level, `1` temperature, `FF` error |
+| 6 | Value | Level, target temperature, or error code when mode is `FF` |
+| 8 | Auto start/stop | `1` enabled |
+| 9 | Supply voltage | Whole volts |
+| 10 | Temperature unit | `0` Celsius, `1` Fahrenheit |
+| 11 | Cabin temperature | Raw value minus 30 in Celsius or 22 in Fahrenheit |
+| 12-13 | Case temperature | Big-endian unsigned value |
+| 14 | Altitude unit | Controller value |
+| 15 | High-altitude mode | Controller value |
+| 16-17 | Altitude | Big-endian unsigned value |
 
-## Status Codes
+Cooldown and ventilation are active states: they must not be presented as an
+immediate power-off merely because fuel heating has stopped.
 
-| Value | Status | Description |
-|-------|--------|-------------|
-| 0x00 | Off | Heater is off |
-| 0x01 | Heating | Actively heating |
-| 0x02 | Cooldown | Cooling down after heating |
-| 0x04 | Ventilation | Fan-only mode (no heating) |
-| 0x06 | Standby | Ready, waiting for command |
+## Commands
 
-## Mode Interpretation
+Commands consist of the command bytes below followed by their additive checksum.
 
-| Byte 5 | Byte 6 | Interpretation |
-|--------|--------|----------------|
-| 0x00 | gear | Level mode, gear 1-10 |
-| 0x01 | temp | Temperature mode, 8-36°C |
-| 0xFF | error | Error mode, byte 6 is error code |
+| Action | Bytes before checksum | Evidence-backed behavior |
+| --- | --- | --- |
+| Status request | `BA AB 04 CC 00 00 00` | Request current status |
+| Heat toggle | `BA AB 04 BB A1 00 00` | One toggle for start and controlled cooldown |
+| Set temperature | `BA AB 04 DB TT 00 00` | `TT` is target temperature |
+| Increase level | `BA AB 04 BB A2 00 00` | One relative level step up |
+| Decrease level | `BA AB 04 BB A3 00 00` | One relative level step down |
+| Level to temperature | `BA AB 04 BB AD 00 00` | Transition from level mode |
+| Temperature to level | `BA AB 04 BB AC 00 00` | Transition from temperature mode |
+| Ventilation | `BA AB 04 BB A4 00 00` | Works from standby/off on confirmed hardware |
 
-## Temperature Parsing
-
-Environment temperature (byte 11) requires offset subtraction:
-```python
-# Fahrenheit mode: subtract 22
-# Celsius mode: subtract 30
-offset = 22 if uses_fahrenheit else 30
-cab_temperature = raw_value - offset
-```
-
-## Parsing Logic
-
-```python
-def parse(data: bytearray) -> dict:
-    if len(data) < 21:
-        return None
-
-    parsed = {"connected": True}
-
-    # Status
-    status_byte = data[4]
-    parsed["running_state"] = 1 if status_byte == 0x01 else 0
-    parsed["running_step"] = STATUS_MAP.get(status_byte, status_byte)
-
-    # Mode
-    mode_byte = data[5]
-    if mode_byte == 0xFF:
-        parsed["error_code"] = data[6]
-    else:
-        parsed["error_code"] = 0
-        if mode_byte == 0x00:
-            parsed["running_mode"] = 1  # Level
-        elif mode_byte == 0x01:
-            parsed["running_mode"] = 2  # Temperature
-
-    # Gear/Temp (only if not in error state)
-    if "running_mode" in parsed:
-        gear_byte = data[6]
-        if parsed["running_mode"] == 1:
-            parsed["set_level"] = max(1, min(10, gear_byte))
-        else:
-            parsed["set_temp"] = max(8, min(36, gear_byte))
-
-    parsed["auto_start_stop"] = (data[8] == 1)
-    parsed["supply_voltage"] = float(data[9])
-    parsed["temp_unit"] = data[10]
-
-    # Cab temperature with offset
-    uses_f = (data[10] == 1)
-    parsed["cab_temperature"] = float(data[11] - (22 if uses_f else 30))
-    parsed["cab_temperature_raw"] = parsed["cab_temperature"]
-
-    # Case temperature (big-endian)
-    parsed["case_temperature"] = float((data[12] << 8) | data[13])
-
-    parsed["altitude_unit"] = data[14]
-    parsed["high_altitude"] = data[15]
-    parsed["altitude"] = (data[16] << 8) | data[17]
-
-    return parsed
-```
-
-## Command Format
-
-ABBA uses its own command format:
-```
-Byte 0-1: BA AB (command header)
-Byte 2-3: 04 XX (length/type)
-Byte 4-5: Command bytes
-Byte 6:   Argument (if applicable)
-Byte 7:   00 (padding)
-Last:     Checksum (sum of all bytes & 0xFF)
-```
-
-## Command Mapping
-
-| AA55 Cmd | ABBA Command | Description |
-|----------|--------------|-------------|
-| 1 | `baab04cc000000` | Status request |
-| 3 (on/off) | `baab04bba10000` | Toggle heat (same cmd for on/off) |
-| 4 (temp) | `baab04db[TT]0000` | Set temperature |
-| 2 (mode=2) | `baab04bbac0000` | Constant temp mode |
-| 2 (mode=3) | `baab04bba40000` | Ventilation mode |
-| 15 (F) | `baab04bba80000` | Set Fahrenheit |
-| 15 (C) | `baab04bba70000` | Set Celsius |
-| 19 (ft) | `baab04bbaa0000` | Set feet |
-| 19 (m) | `baab04bba90000` | Set meters |
-| 99 | `baab04bba50000` | Toggle high altitude |
-| 101 | `baab04bba40000` | Ventilation (direct) |
-
-## Special Behavior
-
-1. **Toggle Power**: ABBA uses a single toggle command (0xA1) for both on and off
-2. **Ventilation Mode**: Only works when heater is in standby/off state
-3. **No Calibration**: ABBA protocol sets `cab_temperature_raw` directly
-4. **Post-Status**: Requires sending status request after commands
+Level is not set with a single absolute packet. The integration compares the
+reported level with the requested level and sends the required number of A2 or
+A3 steps. Controller level counts can vary; documentation must not claim a
+universal six-level ABBA range.
 
 ## Detection
 
-Detected when:
-1. Header starts with `BAAB` or `ABBA`
-2. Packet length is at least 21 bytes
+ABBA is selected after the FFF0 service and legacy characteristic layout have
+been established, or when a notification begins `AB BA`. It is not identified
+by the AA-family FFE0/FFE1 transport.

@@ -63,7 +63,7 @@ This integration supports **multiple protocols** and has been tested with variou
 | AA66 Encrypted | 95% | AirHeaterBLE | XOR encrypted, Fahrenheit internal |
 | ABBA | 80% | AirHeaterCC | Different command structure |
 | CBFF/FEAA | 60% | Sunster | Double XOR encryption variant |
-| Hcalory MVP2 | 95% | Hcalory | New protocol for HBU1S and similar |
+| Hcalory MVP1/MVP2 | 95% | Hcalory | Hcalory controller variants, including HBU1S |
 
 ABBA, CBFF, and Hcalory protocols are used by various heater brands. If you own a heater that uses one of these protocols, please check the [Issues](https://github.com/Spettacolo83/homeassistant-diesel-heater/issues), beta test, and report any problems.
 
@@ -488,14 +488,14 @@ content: |
 
 ## Protocol Details
 
-This integration communicates via Bluetooth LE and supports 6 protocol variants across 3 families:
+This integration communicates via Bluetooth LE and supports seven protocol modes across the AirHeaterBLE, HeaterCC, Sunster, and Hcalory families. See the [protocol reference](docs/protocols/README.md) for the validated transport, frame, and command details.
 
 ### AA55/AA66 Protocol (AirHeaterBLE heaters)
 
 - **Service UUID**: `0000ffe0-0000-1000-8000-00805f9b34fb`
 - **Characteristic UUID**: `0000ffe1` (read/write/notify)
 - **Variants**: AA55 (18/20-byte), AA66 (20-byte), encrypted (48-byte) and unencrypted
-- **Encryption**: XOR with 8-byte key "password"
+- **Encryption**: XOR with the 8-byte key `12345678`
 - **Default Passkey**: `1234` (configurable)
 
 #### AA55/AA66 Commands
@@ -528,7 +528,7 @@ This integration communicates via Bluetooth LE and supports 6 protocol variants 
 | 0-3 | Header | `ABBA11CC` |
 | 4 | Status | 0=Off, 1=Heating, 2=Cooldown, 4=Ventilation, 6=Standby |
 | 5 | Mode | 0=Level, 1=Temperature, 0xFF=Error |
-| 6 | Gear/Temp | Level (1-6) or target temp (°C) |
+| 6 | Gear/Temp | Controller-reported level or target temperature (range is controller-specific) |
 | 8 | Auto Start/Stop | 0=Off, 1=On |
 | 9 | Voltage | Decimal value (V) |
 | 10 | Temp Unit | 0=Celsius, 1=Fahrenheit |
@@ -558,7 +558,7 @@ This integration communicates via Bluetooth LE and supports 6 protocol variants 
 
 - **Service UUID**: `0000fff0-0000-1000-8000-00805f9b34fb`
 - **Write UUID**: `0000fff2` / **Notify UUID**: `0000fff1`
-- **Header**: `0xCBFF` (notifications) / Commands use AA55 format, ACK with `0xAA77`
+- **Header**: `0xCBFF` (notifications) / `0xFEAA` (commands); `0xAA77` starts encrypted V2.1 handling
 - **Encryption**: Some heaters use double-XOR encryption (key1 = "passwordA2409PW", key2 = BLE MAC)
 - **Packet size**: 47 bytes
 
@@ -568,7 +568,7 @@ This integration communicates via Bluetooth LE and supports 6 protocol variants 
 |------|-------|--------|
 | 0-1 | Header | `CB FF` |
 | 2 | Protocol Version | Version byte |
-| 10 | Run State | 2/5/6 = OFF, others = ON |
+| 10 | Run State | 2/5/6 = active, other observed values = inactive |
 | 11 | Run Mode | 1/3/4=Level, 2=Temperature |
 | 12 | Run Param | Level (1-10) or temp target |
 | 13 | Now Gear | Current gear in temp mode |

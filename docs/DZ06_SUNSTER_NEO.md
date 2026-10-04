@@ -14,7 +14,7 @@ Observed running states are 1, 2, 4, and 5. Observed shutdown/off states are 7, 
 
 Fuel level, case temperature, fan level, altitude, pump settings, timers, and other undocumented fields are not implemented for this transport. Generic legacy commands fail closed, and legacy time synchronization is skipped.
 
-The authorization request currently uses the captured value `05 F5 E1 00`. It successfully re-authorized the tested heater, but has only been validated on one heater. It is not established as a universal credential, and no device-specific extraction or persistence scheme is assumed. Additional hardware testing is required before this can be considered portable upstream support.
+The current default connection password is `100000000` (`05 F5 E1 00`). The controller app exposes a device-password entry, so this value is configurable rather than a universal credential. The default successfully re-authorized the tested heater, but the implementation has only been validated on that one controller.
 
 ## Examples
 
@@ -26,7 +26,7 @@ data:
   temperature: 30
 ```
 
-Replace `climate.vevor_heater` with the climate entity for your heater. To turn it on:
+Replace `climate.diesel_heater` with the climate entity for your heater. To turn it on:
 
 ```yaml
 service: climate.turn_on
