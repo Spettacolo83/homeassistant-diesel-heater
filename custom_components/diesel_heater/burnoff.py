@@ -3,12 +3,13 @@
 The live cycle is an explicit phase machine. Soot load and "start on next
 RUNNING" live on the accumulator and are not cycle phases.
 """
+
 from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any
 
@@ -41,6 +42,7 @@ BURNOFF_HEAT_STEPS = frozenset(
         RUNNING_STEP_RUNNING,
     }
 )
+
 
 class BurnoffPhase(StrEnum):
     """Live burn-off cycle phase.
@@ -135,7 +137,7 @@ class BurnoffController:
             return None
         if self.cycle.ends_at is None:
             return None
-        remaining = (self.cycle.ends_at - datetime.now(timezone.utc)).total_seconds()
+        remaining = (self.cycle.ends_at - datetime.now(UTC)).total_seconds()
         return max(0, int(remaining))
 
     @property
@@ -186,9 +188,7 @@ class BurnoffController:
         self.accumulator.pending = bool(payload.get("pending", False))
         self.accumulator.just_completed = bool(payload.get("just_completed", False))
         try:
-            self.accumulator.in_run_aborts = max(
-                0, int(payload.get("in_run_aborts", 0))
-            )
+            self.accumulator.in_run_aborts = max(0, int(payload.get("in_run_aborts", 0)))
         except (TypeError, ValueError):
             self.accumulator.in_run_aborts = 0
         self.accumulator.skip_in_run = bool(payload.get("skip_in_run", False))
@@ -202,10 +202,7 @@ class BurnoffController:
         data["burnoff_cycles"] = self.accumulator.cycles
         data["burnoff_hours"] = self.hours_since
         data["burnoff_pending"] = self.accumulator.pending
-        if (
-            prev_pending != self.accumulator.pending
-            or prev_cycles != self.accumulator.cycles
-        ):
+        if prev_pending != self.accumulator.pending or prev_cycles != self.accumulator.cycles:
             self._host.async_set_updated_data(data)
 
     def reset_accumulator(self) -> None:
@@ -252,17 +249,11 @@ class BurnoffController:
         if hours_limit > 0 and self.accumulator.heating_seconds >= hours_limit * 3600:
             return True
         cycles_limit = self._host.burnoff_after_cycles
-        if cycles_limit > 0 and self.accumulator.cycles >= cycles_limit:
-            return True
-        return False
+        return cycles_limit > 0 and self.accumulator.cycles >= cycles_limit
 
     def hour_tick_cap(self) -> float:
         """Return max RUNNING seconds to credit per status update."""
-        interval = (
-            UPDATE_INTERVAL_HCALORY
-            if self._host._protocol_mode == 7
-            else UPDATE_INTERVAL
-        )
+        interval = UPDATE_INTERVAL_HCALORY if self._host._protocol_mode == 7 else UPDATE_INTERVAL
         # Elapsed is now minus last successful poll. Two intervals covers one
         # missed (or late) update; a long BLE disconnect must not dump hours.
         return float(interval * 2)
@@ -334,18 +325,12 @@ class BurnoffController:
             elif (
                 not acc.just_completed
                 and prev_mode != RUNNING_MODE_VENTILATION
-                and (
-                    prev_step in BURNOFF_HEAT_STEPS
-                    or prev_step == RUNNING_STEP_COOLDOWN
-                )
+                and (prev_step in BURNOFF_HEAT_STEPS or prev_step == RUNNING_STEP_COOLDOWN)
+                and not acc.pending
             ):
-                if not acc.pending:
-                    acc.pending = True
-                    accumulator_changed = True
-                    self._host._logger.info(
-                        "LCD/controller Off while dirty: "
-                        "burn-off pending for next RUNNING"
-                    )
+                acc.pending = True
+                accumulator_changed = True
+                self._host._logger.info("LCD/controller Off while dirty: burn-off pending for next RUNNING")
             self.ha_power_off = False
         elif prev_state == RUNNING_STATE_OFF and new_state == RUNNING_STATE_ON:
             self.skip_pending_on_off = False
@@ -405,15 +390,13 @@ class BurnoffController:
                 except (TypeError, ValueError):
                     parsed = None
         if parsed is not None and parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
+            parsed = parsed.replace(tzinfo=UTC)
         return parsed
 
     def _phase_from_storage(self, burnoff: dict[str, Any]) -> BurnoffPhase | None:
         """Resolve a stored payload into a live phase, including legacy flags."""
         phase_raw = burnoff.get("phase")
-        restoring = bool(
-            burnoff.get("awaiting_snapshot_write", burnoff.get("restore_pending", False))
-        )
+        restoring = bool(burnoff.get("awaiting_snapshot_write", burnoff.get("restore_pending", False)))
         if phase_raw == BurnoffPhase.RESTORING or restoring:
             return BurnoffPhase.RESTORING
         if phase_raw in (
@@ -438,14 +421,11 @@ class BurnoffController:
         self.cycle.saved_mode = burnoff.get("saved_mode")
         self.cycle.saved_level = burnoff.get("saved_level")
         self.cycle.saved_temp = burnoff.get("saved_temp")
-        self.cycle.ends_at = self._parse_ends_at(burnoff.get("ends_at")) or datetime.now(
-            timezone.utc
-        )
+        self.cycle.ends_at = self._parse_ends_at(burnoff.get("ends_at")) or datetime.now(UTC)
 
         remaining = self.remaining_seconds
         self._host._logger.info(
-            "Resuming in-progress burn-off (remaining=%ss, shutdown_after=%s, "
-            "phase=%s)",
+            "Resuming in-progress burn-off (remaining=%ss, shutdown_after=%s, phase=%s)",
             remaining,
             self.cycle.shutdown_after,
             self.cycle.phase.value,
@@ -531,16 +511,12 @@ class BurnoffController:
             return
         was_in_run = not self.cycle.shutdown_after
         nearly_done = self.nearly_complete()
-        self._host._logger.info(
-            "Burn-off aborted: heater stopped externally (controller or ECU)"
-        )
+        self._host._logger.info("Burn-off aborted: heater stopped externally (controller or ECU)")
         await self.cancel(restore=True)
         if not self._host.burnoff_enabled or self.skip_pending_on_off:
             return
         if nearly_done:
-            self._host._logger.info(
-                "Burn-off aborted near timer end; treating as successful"
-            )
+            self._host._logger.info("Burn-off aborted near timer end; treating as successful")
             self.reset_accumulator()
             await self._host.async_save_data()
             return
@@ -585,7 +561,7 @@ class BurnoffController:
                         timeout=min(remaining, 30),
                     )
                     return
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
             if self.cancel_event.is_set():
                 return
@@ -697,9 +673,7 @@ class BurnoffController:
             if not self.active:
                 return
             # Don't send Off if the ECU already stopped (ABBA toggle would restart).
-            shutdown_after = (
-                self.cycle.shutdown_after and not self.ecu_shutdown_observed()
-            )
+            shutdown_after = self.cycle.shutdown_after and not self.ecu_shutdown_observed()
             self._host._logger.info(
                 "Burn-off complete (shutdown_after=%s, can_restore=%s)",
                 shutdown_after,
@@ -721,9 +695,7 @@ class BurnoffController:
                 if shutdown_after and not self.cycle.shutdown_after:
                     self.cycle.shutdown_after = True
                     await self._host.async_save_data()
-                self._host._logger.debug(
-                    "Burn-off already in progress, ignoring duplicate start"
-                )
+                self._host._logger.debug("Burn-off already in progress, ignoring duplicate start")
                 return
 
             if self._host.data.get("running_state") != RUNNING_STATE_ON:
@@ -737,11 +709,10 @@ class BurnoffController:
             self.cycle.shutdown_after = shutdown_after
             self.cycle.phase = BurnoffPhase.RUNNING
             duration = self._host.burnoff_duration_minutes
-            self.cycle.ends_at = datetime.now(timezone.utc) + timedelta(minutes=duration)
+            self.cycle.ends_at = datetime.now(UTC) + timedelta(minutes=duration)
 
             self._host._logger.info(
-                "Starting max-power burn-off for %d min "
-                "(shutdown_after=%s, saved mode=%s level=%s temp=%s)",
+                "Starting max-power burn-off for %d min (shutdown_after=%s, saved mode=%s level=%s temp=%s)",
                 duration,
                 shutdown_after,
                 self.cycle.saved_mode,

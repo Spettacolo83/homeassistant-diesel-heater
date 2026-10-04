@@ -1,7 +1,8 @@
 """Unit tests for the extracted burn-off phase machine."""
+
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
@@ -35,7 +36,7 @@ def test_phases_are_mutually_exclusive():
     assert controller.remaining_seconds is None
 
     controller.cycle.phase = BurnoffPhase.RUNNING
-    controller.cycle.ends_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+    controller.cycle.ends_at = datetime.now(UTC) + timedelta(minutes=5)
     assert controller.active is True
     assert controller.remaining_seconds is not None
     assert controller.cycle.phase == BurnoffPhase.RUNNING
@@ -59,7 +60,7 @@ def test_storage_payload_writes_phase_and_legacy_flag():
     controller.cycle.shutdown_after = False
     controller.cycle.saved_mode = RUNNING_MODE_TEMPERATURE
     controller.cycle.saved_temp = 21
-    controller.cycle.ends_at = datetime.now(timezone.utc)
+    controller.cycle.ends_at = datetime.now(UTC)
 
     payload = controller.storage_payload()
     assert payload is not None
@@ -78,7 +79,7 @@ async def test_load_state_falls_back_from_legacy_awaiting_flags():
     restoring = {
         "active": True,
         "shutdown_after": False,
-        "ends_at": datetime.now(timezone.utc).isoformat(),
+        "ends_at": datetime.now(UTC).isoformat(),
         "saved_mode": RUNNING_MODE_LEVEL,
         "saved_level": 4,
         "saved_temp": None,
@@ -94,7 +95,7 @@ async def test_load_state_falls_back_from_legacy_awaiting_flags():
         {
             "active": True,
             "shutdown_after": True,
-            "ends_at": (datetime.now(timezone.utc) + timedelta(minutes=4)).isoformat(),
+            "ends_at": (datetime.now(UTC) + timedelta(minutes=4)).isoformat(),
             "saved_mode": RUNNING_MODE_TEMPERATURE,
             "saved_level": 3,
             "saved_temp": 20,
@@ -110,7 +111,7 @@ async def test_load_state_falls_back_from_legacy_awaiting_flags():
             "active": True,
             "phase": BurnoffPhase.RESTORING,
             "shutdown_after": False,
-            "ends_at": datetime.now(timezone.utc).isoformat(),
+            "ends_at": datetime.now(UTC).isoformat(),
             "saved_mode": RUNNING_MODE_LEVEL,
             "saved_level": 2,
             "saved_temp": None,

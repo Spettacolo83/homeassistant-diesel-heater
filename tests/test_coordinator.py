@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -4555,7 +4555,7 @@ class TestBurnoffOnShutdown:
         coordinator._burnoff.cycle.shutdown_after = True
         coordinator._burnoff.cycle.saved_mode = RUNNING_MODE_LEVEL
         coordinator._burnoff.cycle.saved_level = 2
-        coordinator._burnoff.cycle.ends_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        coordinator._burnoff.cycle.ends_at = datetime.now(UTC) - timedelta(seconds=1)
 
         await coordinator._burnoff.wait()
 
@@ -4878,7 +4878,7 @@ class TestBurnoffOnShutdown:
         payload = {
             "active": True,
             "shutdown_after": True,
-            "ends_at": (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat(),
+            "ends_at": (datetime.now(UTC) - timedelta(seconds=5)).isoformat(),
             "saved_mode": RUNNING_MODE_TEMPERATURE,
             "saved_level": 4,
             "saved_temp": 20,
@@ -4899,7 +4899,7 @@ class TestBurnoffOnShutdown:
         coordinator.data["running_mode"] = RUNNING_MODE_TEMPERATURE
         coordinator._send_command = AsyncMock(return_value=True)
         coordinator._burnoff.cycle.phase = BurnoffPhase.AWAITING_STATUS
-        coordinator._burnoff.cycle.ends_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+        coordinator._burnoff.cycle.ends_at = datetime.now(UTC) + timedelta(minutes=5)
         coordinator._burnoff.schedule_wait = MagicMock()
 
         tasks: list = []
@@ -4931,7 +4931,7 @@ class TestBurnoffOnShutdown:
         coordinator._burnoff.cycle.shutdown_after = True
         coordinator._burnoff.cycle.saved_mode = RUNNING_MODE_LEVEL
         coordinator._burnoff.cycle.saved_level = 3
-        coordinator._burnoff.cycle.ends_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        coordinator._burnoff.cycle.ends_at = datetime.now(UTC) - timedelta(seconds=1)
 
         tasks: list = []
 
@@ -4993,7 +4993,7 @@ class TestBurnoffOnShutdown:
         """Burn-off wait must be tracked as an HA background task."""
         coordinator = create_mock_coordinator()
         coordinator._burnoff.cycle.phase = BurnoffPhase.RUNNING
-        coordinator._burnoff.cycle.ends_at = datetime.now(timezone.utc) + timedelta(minutes=1)
+        coordinator._burnoff.cycle.ends_at = datetime.now(UTC) + timedelta(minutes=1)
 
         try:
             coordinator._burnoff.schedule_wait()
@@ -5433,7 +5433,7 @@ class TestUnifiedBurnoff:
         coordinator._burnoff.cycle.shutdown_after = False
         coordinator._burnoff.cycle.saved_mode = RUNNING_MODE_TEMPERATURE
         coordinator._burnoff.cycle.saved_temp = 21
-        coordinator._burnoff.cycle.ends_at = datetime.now(timezone.utc) + timedelta(
+        coordinator._burnoff.cycle.ends_at = datetime.now(UTC) + timedelta(
             seconds=remaining_seconds
         )
         coordinator._burnoff.task = None
