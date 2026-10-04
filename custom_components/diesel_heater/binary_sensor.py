@@ -43,6 +43,15 @@ async def async_setup_entry(
     if mode in (0, 4, 5, 6):
         entities.append(VevorAutoStartStopSensor(coordinator))
 
+    # HeatGenie reports individual component bits in its register status byte.
+    if mode == 8:
+        entities.extend(
+            [
+                VevorComponentActiveSensor(coordinator, "pump_active", "Fuel Pump"),
+                VevorComponentActiveSensor(coordinator, "fan_active", "Fan"),
+                VevorComponentActiveSensor(coordinator, "glow_plug_active", "Glow Plug"),
+            ]
+        )
     async_add_entities(entities)
 
 
@@ -135,6 +144,42 @@ class VevorHeaterConnectedSensor(
     def is_on(self) -> bool:
         """Return true if connected."""
         return self.coordinator.data.get("connected", False)
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+
+class VevorComponentActiveSensor(CoordinatorEntity[VevorHeaterCoordinator], BinarySensorEntity):
+    """An independently reported heater component state."""
+
+    _attr_has_entity_name = True
+    _attr_device_class = BinarySensorDeviceClass.RUNNING
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: VevorHeaterCoordinator, key: str, name: str) -> None:
+        """Initialize the binary sensor."""
+        super().__init__(coordinator)
+        self._key = key
+        self._attr_name = name
+        self._attr_unique_id = f"{coordinator.address}_{key}"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, coordinator.address)},
+            "name": "Vevor Diesel Heater",
+            "manufacturer": "Vevor",
+            "model": "Diesel Heater",
+        }
+
+    @property
+    def available(self) -> bool:
+        """Return whether this protocol has reported the component state."""
+        return self.coordinator.last_update_success and self.coordinator.data.get(self._key) is not None
+
+    @property
+    def is_on(self) -> bool:
+        """Return the independently reported component state."""
+        return bool(self.coordinator.data.get(self._key))
 
     @callback
     def _handle_coordinator_update(self) -> None:

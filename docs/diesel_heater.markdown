@@ -1,6 +1,6 @@
 ---
 title: Diesel Heater
-description: Instructions on how to integrate Vevor, BYD, HeaterCC, and Sunster diesel heaters via Bluetooth Low Energy.
+description: Instructions on how to integrate supported diesel-heater Bluetooth Low Energy protocols.
 ha_category:
   - Climate
   - Sensor
@@ -34,13 +34,15 @@ The **Diesel Heater** {% term integration %} allows you to control and monitor d
 
 ## Supported devices
 
-This integration supports diesel heaters from multiple brands that use compatible BLE protocols:
+This integration supports heaters whose BLE transport and status protocol match a supported controller family:
 
-- **Vevor** diesel heaters (all BLE-enabled models)
-- **BYD** diesel heaters
-- **HeaterCC** compatible heaters (AirHeaterCC app)
-- **Sunster** heaters (TB10Pro WiFi and similar)
-- Generic Chinese diesel heaters using AirHeaterBLE, AirHeaterCC, or Sunster apps
+- **AirHeaterBLE** AA55 and AA66 controllers, encrypted or unencrypted
+- **HeaterCC/AirHeaterCC** ABBA controllers
+- **Sunster** CBFF/FEAA V2.1 controllers
+- **Hcalory** MVP1 and MVP2 controllers
+
+Brand names and an app installation alone do not establish compatibility. The
+integration verifies the protocol after connecting.
 
 ### Supported protocols
 
@@ -51,14 +53,18 @@ This integration supports diesel heaters from multiple brands that use compatibl
 | AA66 | AirHeaterBLE | 20-byte variant |
 | AA66 Encrypted | AirHeaterBLE | Encrypted, Fahrenheit internal |
 | ABBA | AirHeaterCC | HeaterCC heaters |
-| CBFF | Sunster | Double XOR encryption |
+| CBFF/FEAA | Sunster | V2.1 protocol; encrypted variants use double XOR |
+| Hcalory MVP1/MVP2 | Hcalory | Separate Hcalory transport variants |
+
+See the [protocol reference](protocols/README.md) for the validated transport,
+status, and command behavior for each family.
 
 ## Prerequisites
 
 Before setting up this integration:
 
 1. Your diesel heater must be powered on and within Bluetooth range (typically 10-30 meters)
-2. **Unpair the heater from your phone** - BLE devices can only maintain one active connection. If the heater is paired with the heater app on your phone, Home Assistant cannot connect
+2. Close or disconnect the mobile controller app if it is actively connected to the heater. Connection behavior varies by controller
 3. The [Bluetooth](/integrations/bluetooth) integration must be set up and functional
 
 {% include integrations/config_flow.md %}
@@ -84,7 +90,7 @@ Entities are created based on the detected BLE protocol. Only entities supported
 
 The climate entity provides thermostat control:
 
-- Temperature range: 8-36°C
+- Temperature range: controller-specific
 - Presets: Away, Comfort
 - HVAC modes: Off, Heat
 
@@ -139,7 +145,7 @@ Additional sensors for specific protocols:
 | Auto Start/Stop | Enable automatic temperature control with full stop |
 | Fahrenheit Mode | Use Fahrenheit for temperature display |
 | Feet Mode | Use feet for altitude display |
-| High Altitude Mode | Enable high altitude compensation (ABBA only) |
+| High Altitude Mode | Available only when reported by the controller protocol |
 
 ### Selects
 
@@ -156,7 +162,7 @@ Additional sensors for specific protocols:
 | Number | Description |
 |--------|-------------|
 | Level | Set heater power level (1-10) |
-| Target Temperature | Set target temperature (8-36°C) |
+| Target Temperature | Set target temperature within the controller-supported range |
 | Temperature Offset | Manual temperature offset (-9 to +9) |
 | Tank Capacity | Tank capacity for fuel tracking |
 | Burn-off Duration | Minutes at max power for a burn-off cycle (1-30, default 10) |
@@ -213,7 +219,7 @@ title: Daily Fuel Consumption
 ### Device not discovered
 
 1. Ensure the heater is powered on
-2. **Unpair the heater from your phone's Bluetooth settings** - this is the most common issue
+2. Close or disconnect the mobile controller app if it is actively connected to the heater
 3. Close the heater app completely
 4. Check that the Bluetooth integration is active
 

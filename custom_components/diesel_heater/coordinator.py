@@ -61,6 +61,7 @@ from .const import (
     FORCE_TEMP_UNIT_FAHRENHEIT,
     DOMAIN,
     FUEL_CONSUMPTION_TABLE,
+    HEATGENIE_SERVICE_UUID,
     HCALORY_MVP2_NOTIFY_UUID,
     HCALORY_MVP2_SERVICE_UUID,
     HCALORY_MVP2_WRITE_UUID,
@@ -110,6 +111,7 @@ from diesel_heater_ble import (
     ProtocolAA66,
     ProtocolAA66Encrypted,
     ProtocolABBA,
+    ProtocolHeatGenie,
     ProtocolCBFF,
     ProtocolHcalory,
     _decrypt_data,
@@ -180,10 +182,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             4: aa66_encrypted,
             5: ProtocolABBA(),
             6: cbff,
+            8: ProtocolHeatGenie(),
             7: ProtocolHcalory(),
         }
         self._is_abba_device = False  # True if using ABBA/HeaterCC protocol
         self._abba_write_char = None  # ABBA devices use separate write characteristic
+        self._is_heatgenie_device = False
+        self._heatgenie_write_char = None
         self._v21_handshake_sent = False  # Track if Sunster V2.1 handshake was sent
         self._is_hcalory_device = False  # True if using Hcalory MVP1/MVP2 protocol
         self._hcalory_write_char = None  # Hcalory devices use separate write characteristic
@@ -305,6 +310,20 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 "write" in self._abba_write_char.properties
                 or "write-without-response" in self._abba_write_char.properties
             )
+        )
+
+    @property
+    def is_heatgenie_device(self) -> bool:
+        """Return whether the BLE name matches a HeatGenie app identity."""
+        name = (self._ble_device.name or "").upper()
+        if "BOYGU" in name:
+            return True
+        parts = name.split(":")
+        return (
+            len(parts) == 6
+            and parts[0] == "C1"
+            and parts[4] == "FE"
+            and all(len(part) == 2 and all(char in "0123456789ABCDEF" for char in part) for part in parts)
         )
 
     async def async_load_data(self) -> None:
@@ -1233,6 +1252,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._abba_write_char = None
             self._is_hcalory_device = False
             self._hcalory_write_char = None
+            self._is_heatgenie_device = False
+            self._heatgenie_write_char = None
 
             # First, check for Hcalory MVP2 device (service bd39)
             for service in self._client.services:
@@ -1317,8 +1338,38 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                             self._abba_write_char = self._characteristic
                         break
 
+            # HeatGenie uses the Environmental Sensing service only with
+            # app-recognized Boygu/C1...FE identities.
+            if not self._is_abba_device and not self._is_hcalory_device and self.is_heatgenie_device:
+                for service in self._client.services:
+                    if service.uuid.lower() != HEATGENIE_SERVICE_UUID.lower():
+                        continue
+                    notify_chars = [
+                        char
+                        for char in service.characteristics
+                        if "notify" in char.properties or "indicate" in char.properties
+                    ]
+                    write_chars = [
+                        char
+                        for char in service.characteristics
+                        if "write" in char.properties or "write-without-response" in char.properties
+                    ]
+                    if len(notify_chars) != 1 or len(write_chars) != 1:
+                        self._logger.warning(
+                            "HeatGenie service requires one notify/indicate and one write characteristic"
+                        )
+                        break
+                    self._is_heatgenie_device = True
+                    self._heatgenie_write_char = write_chars[0]
+                    self._characteristic = notify_chars[0]
+                    self._active_char_uuid = notify_chars[0].uuid
+                    self._protocol_mode = 8
+                    self._protocol = self._protocols[8]
+                    self._logger.info("Detected HeatGenie/Boygu heater")
+                    break
+
             # If not ABBA or Hcalory, try Vevor UUIDs
-            if not self._is_abba_device and not self._is_hcalory_device:
+            if not self._is_abba_device and not self._is_hcalory_device and not self._is_heatgenie_device:
                 # Define UUID pairs to try: (service_uuid, characteristic_uuid)
                 uuid_pairs = [
                     (SERVICE_UUID, CHARACTERISTIC_UUID),
@@ -1356,7 +1407,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 raise BleakError("Could not find heater characteristic")
 
             # Start notifications on the discovered characteristic
-            if "notify" in self._characteristic.properties:
+            if "notify" in self._characteristic.properties or "indicate" in self._characteristic.properties:
                 await self._client.start_notify(
                     self._active_char_uuid, self._notification_callback
                 )
@@ -1429,6 +1480,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         For encrypted protocols, data_to_parse is already decrypted.
         """
+        if getattr(self, "_is_heatgenie_device", False):
+            return self._protocols[8], data
+
         # Hcalory protocol (MVP1/MVP2) - detected by service UUID or header 0x0002
         if self._is_hcalory_device or header == 0x0002:
             return self._protocols[7], data
@@ -1610,7 +1664,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             else:
                 self._heater_uses_fahrenheit = (parsed["temp_unit"] == 1)
             # Sync Fahrenheit flag to Hcalory protocol handler for correct command building
-            if self._protocol_mode == 7 and self._protocol and hasattr(self._protocol, '_uses_fahrenheit'):
+            if self._protocol_mode in (7, 8) and self._protocol and hasattr(self._protocol, "_uses_fahrenheit"):
                 self._protocol._uses_fahrenheit = self._heater_uses_fahrenheit
 
         # Apply temperature calibration (ABBA handles it internally)
@@ -1690,7 +1744,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             try:
                 if self._client.is_connected:
                     # Stop notifications using the active UUID
-                    if self._characteristic and self._active_char_uuid and "notify" in self._characteristic.properties:
+                    if self._characteristic and self._active_char_uuid and (
+                        "notify" in self._characteristic.properties
+                        or "indicate" in self._characteristic.properties
+                    ):
                         try:
                             await self._client.stop_notify(self._active_char_uuid)
                             self._logger.debug("Stopped notifications on %s", self._active_char_uuid)
@@ -1846,7 +1903,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         Uses response=False to avoid authorization issues with BLE
         proxies (e.g., ESPHome BLE proxy). The heater sends a notification as response.
         """
-        if self._is_hcalory_device and self._hcalory_write_char:
+        if getattr(self, "_is_heatgenie_device", False) and getattr(self, "_heatgenie_write_char", None):
+            write_char = self._heatgenie_write_char
+            char_uuid = write_char.uuid
+            protocol_name = "HeatGenie"
+        elif self._is_hcalory_device and self._hcalory_write_char:
             write_char = self._hcalory_write_char
             char_uuid = write_char.uuid
             protocol_name = "Hcalory"
@@ -1868,7 +1929,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     async def _send_wake_up_ping(self) -> None:
         """Send a wake-up ping to the device to ensure it's responsive."""
         try:
-            if self._client and (self._characteristic or self._abba_write_char or self._hcalory_write_char):
+            if self._client and (self._characteristic or self._abba_write_char or self._hcalory_write_char or self._heatgenie_write_char):
                 packet = self._build_command_packet(1)
                 await self._write_gatt(packet)
                 await asyncio.sleep(0.5)
@@ -2424,7 +2485,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         # CBFF and Hcalory use SEPARATE commands: cmd 5 for level, cmd 4 for temperature
         # AAXX protocols use SAME command (cmd 4) for both level and temperature
-        if self._protocol_mode in (6, 7):  # CBFF or Hcalory
+        if self._protocol_mode in (6, 7, 8):  # CBFF or Hcalory
             command = 5
             self._logger.info(
                 "SET LEVEL REQUEST: level=%d, protocol=%d (cmd=5)",
@@ -2461,16 +2522,20 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         current_mode = self.data.get("running_mode", "unknown")
 
         # Per-protocol clamping
-        if self._heater_uses_fahrenheit:
-            # Hcalory Fahrenheit: 32-104°F
+        if self._protocol_mode == 8:
+            if self._heater_uses_fahrenheit:
+                temperature = max(50, min(104, temperature))
+                unit_str = "°F"
+            else:
+                temperature = max(10, min(40, temperature))
+                unit_str = "°C"
+        elif self._heater_uses_fahrenheit:
             temperature = max(32, min(104, temperature))
             unit_str = "°F"
         elif self._protocol_mode == 7:
-            # Hcalory Celsius: 0-40°C
             temperature = max(0, min(40, temperature))
             unit_str = "°C"
         else:
-            # AAXX / ABBA / CBFF: 8-36°C
             temperature = max(8, min(36, temperature))
             unit_str = "°C"
 
@@ -2590,6 +2655,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if self._protocol_mode == 7:
             # For Hcalory MVP2, set custom timestamp for next query command
             self._protocol.set_query_timestamp(now)
+        elif self._protocol_mode == 8:
+            time_value = (now.weekday() << 11) | (now.hour << 6) | now.minute
+            success = await self._send_command(10, time_value)
             self._logger.info(
                 "Syncing Hcalory time to %02d:%02d:%02d DOW=%d",
                 now.hour, now.minute, now.second, now.isoweekday()

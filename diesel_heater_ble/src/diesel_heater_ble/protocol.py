@@ -154,6 +154,11 @@ class HeaterState:
     case_temperature: float | None = None
     cab_temperature: float | None = None
     cab_temperature_raw: float | None = None
+    intake_temperature: float | None = None
+    outlet_temperature: float | None = None
+    pump_active: bool | None = None
+    fan_active: bool | None = None
+    glow_plug_active: bool | None = None
     altitude: float | None = None
 
     # Configuration
@@ -576,6 +581,154 @@ class ProtocolAA66Encrypted(VevorCommandMixin, HeaterProtocol):
             parsed["timer_duration_minutes"] = timer_duration
             parsed["timer_enabled"] = timer_enabled
             parsed["timer"] = _format_timer(timer_start, timer_duration, timer_enabled)
+
+        return parsed
+
+
+class ProtocolHeatGenie(HeaterProtocol):
+    """HeatGenie / Boygu controller protocol (mode=8)."""
+
+    protocol_mode = 8
+    name = "HeatGenie"
+
+    _FRAME_PREFIX = 0xAA
+    _STATUS_TYPE = 0xF2
+    _COMMAND_BUTTON = 0x61
+    _COMMAND_AUTO_UPDATE = 0x65
+    _COMMAND_SHORT_PARAMETER = 0x66
+    _BUTTON_ON = 1
+    _BUTTON_OFF = 2
+    _BUTTON_SWITCH_TEMP_TO_CELSIUS = 8
+    _BUTTON_SWITCH_TEMP_TO_FAHRENHEIT = 10
+    _REGISTER_AREA = 2
+    _SHORT_RUN_MODE = 0
+    _SHORT_TARGET_TEMP = 1
+    _SHORT_TARGET_GEAR = 2
+    _SHORT_TIMER_ADJUST = 3
+    _MODE_AUTO = 0
+    _MODE_MANUAL = 1
+    _MODE_START_STOP = 2
+    _UNSUPPORTED_TEMPERATURE = 32760
+
+    def __init__(self) -> None:
+        self._uses_fahrenheit = False
+
+    @staticmethod
+    def crc16(data: bytes | bytearray) -> int:
+        """Calculate the controller's nibble-wise CRC16."""
+        crc = 0
+        for value in data:
+            for nibble in (value >> 4, value & 0x0F):
+                crc ^= nibble << 12
+                for _ in range(4):
+                    crc = ((crc << 1) ^ 0x1021) & 0xFFFF if crc & 0x8000 else (crc << 1) & 0xFFFF
+        return crc
+
+    @classmethod
+    def is_status_frame(cls, data: bytearray) -> bool:
+        """Return True for a complete automatic register-area report."""
+        if len(data) < 50 or data[0] != cls._FRAME_PREFIX:
+            return False
+        frame_length = 8 + 4 * (data[1] + 1) + 2
+        return (
+            frame_length >= 50
+            and len(data) >= frame_length
+            and data[7] == cls._STATUS_TYPE
+            and cls.crc16(data[:frame_length]) == 0
+        )
+
+    @classmethod
+    def _frame(cls, command: int, first: int, second: int, third: int) -> bytearray:
+        packet = bytearray((cls._FRAME_PREFIX, 0, command, first, second, third, 0, 0))
+        packet[-2:] = cls.crc16(packet[:-2]).to_bytes(2, "big")
+        return packet
+
+    def build_command(self, command: int, argument: int, passkey: int) -> bytearray:
+        """Translate standard integration commands to verified app frames."""
+        del passkey
+        if command == 1:
+            return self._frame(self._COMMAND_AUTO_UPDATE, self._REGISTER_AREA, 20, 30)
+        if command == 2:
+            return self._frame(self._COMMAND_SHORT_PARAMETER, self._SHORT_RUN_MODE, 0, argument)
+        if command == 3:
+            button = self._BUTTON_ON if argument else self._BUTTON_OFF
+            return self._frame(self._COMMAND_BUTTON, button, 0xFF, 0)
+        if command == 4:
+            return self._frame(
+                self._COMMAND_SHORT_PARAMETER,
+                self._SHORT_TARGET_TEMP,
+                int(self._uses_fahrenheit),
+                argument,
+            )
+        if command == 5:
+            return self._frame(self._COMMAND_SHORT_PARAMETER, self._SHORT_TARGET_GEAR, 0, argument)
+        if command == 10:
+            return self._frame(
+                self._COMMAND_SHORT_PARAMETER,
+                self._SHORT_TIMER_ADJUST,
+                (argument >> 6) & 0xFF,
+                argument & 0x3F,
+            )
+        if command == 15:
+            self._uses_fahrenheit = bool(argument)
+            button = (
+                self._BUTTON_SWITCH_TEMP_TO_FAHRENHEIT if self._uses_fahrenheit else self._BUTTON_SWITCH_TEMP_TO_CELSIUS
+            )
+            return self._frame(self._COMMAND_BUTTON, button, 0xFF, 0)
+        raise ValueError(f"Unsupported HeatGenie command: {command}")
+
+    def build_time_sync(self, weekday: int, hour: int, minute: int) -> bytearray:
+        """Build the app's weekday and clock synchronization command."""
+        return self._frame(
+            self._COMMAND_SHORT_PARAMETER,
+            self._SHORT_TIMER_ADJUST,
+            (weekday << 5) | hour,
+            minute,
+        )
+
+    def parse(self, data: bytearray) -> dict[str, Any] | None:
+        """Parse the F2 automatic register-area report."""
+        if not self.is_status_frame(data):
+            return None
+
+        registers = data[8:48]
+        state = registers[0] & 0x0F
+        flags = registers[1]
+        raw_error = int.from_bytes(registers[20:22], "little")
+        temp_unit = 1 if flags & 0x10 else 0
+        self._uses_fahrenheit = bool(temp_unit)
+
+        running_mode = {
+            self._MODE_AUTO: RUNNING_MODE_TEMPERATURE,
+            self._MODE_MANUAL: RUNNING_MODE_LEVEL,
+            self._MODE_START_STOP: RUNNING_MODE_MANUAL,
+        }.get((flags >> 5) & 0x03, RUNNING_MODE_MANUAL)
+
+        parsed: dict[str, Any] = {
+            "connected": True,
+            "running_state": 0 if state in (0, 5) else 1,
+            "running_step": state,
+            "running_mode": running_mode,
+            "set_level": registers[32],
+            "set_temp": registers[33],
+            "supply_voltage": int.from_bytes(registers[2:4], "little") / 10,
+            "altitude": int.from_bytes(registers[4:6], "little"),
+            "cab_temperature": int.from_bytes(registers[6:8], "little", signed=True) / 10,
+            "case_temperature": int.from_bytes(registers[8:10], "little", signed=True) / 10,
+            "temp_unit": temp_unit,
+            "error_code": raw_error & -raw_error if raw_error else 0,
+            "pump_active": bool(flags & 0x03),
+            "fan_active": bool(flags & 0x04),
+            "glow_plug_active": bool(flags & 0x08),
+        }
+
+        intake_temperature = int.from_bytes(registers[16:18], "little", signed=True)
+        if intake_temperature != self._UNSUPPORTED_TEMPERATURE:
+            parsed["intake_temperature"] = intake_temperature / 10
+
+        outlet_temperature = int.from_bytes(registers[18:20], "little", signed=True)
+        if outlet_temperature != self._UNSUPPORTED_TEMPERATURE:
+            parsed["outlet_temperature"] = outlet_temperature / 10
 
         return parsed
 

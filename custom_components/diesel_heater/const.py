@@ -79,6 +79,8 @@ ABBA_WRITE_UUID: Final = "0000fff2-0000-1000-8000-00805f9b34fb"
 DZ06_NEO_SERVICE_UUID: Final = ABBA_SERVICE_UUID
 DZ06_NEO_WRITE_UUID: Final = ABBA_NOTIFY_UUID
 DZ06_NEO_NOTIFY_UUID: Final = ABBA_WRITE_UUID
+# HeatGenie / Boygu controller family
+HEATGENIE_SERVICE_UUID: Final = "0000181a-0000-1000-8000-00805f9b34fb"
 
 # Hcalory Protocol (MVP1 and MVP2 heaters)
 # MVP1 uses service fff0, MVP2 uses service bd39
@@ -321,4 +323,5 @@ PROTOCOL_MODE_NAMES: Final = {
     5: "ABBA (HeaterCC)",
     6: "CBFF (Sunster)",
     7: "Hcalory",
+    8: "HeatGenie",
 }

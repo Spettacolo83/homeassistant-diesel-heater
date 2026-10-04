@@ -65,7 +65,7 @@ def create_mock_coordinator() -> VevorHeaterCoordinator:
     """Create a mock coordinator for testing without calling __init__."""
     from diesel_heater_ble import (
         ProtocolAA55, ProtocolAA66, ProtocolAA55Encrypted,
-        ProtocolAA66Encrypted, ProtocolABBA, ProtocolCBFF,
+        ProtocolAA66Encrypted, ProtocolABBA, ProtocolCBFF, ProtocolHeatGenie,
     )
 
     hass = MagicMock()
@@ -105,6 +105,7 @@ def create_mock_coordinator() -> VevorHeaterCoordinator:
         4: ProtocolAA66Encrypted(),
         5: ProtocolABBA(),
         6: ProtocolCBFF(),
+        8: ProtocolHeatGenie(),
     }
 
     # Data dict
@@ -152,6 +153,8 @@ def create_mock_coordinator() -> VevorHeaterCoordinator:
     coordinator._max_stale_cycles = 3
     coordinator._is_abba_device = False
     coordinator._is_hcalory_device = False
+    coordinator._is_heatgenie_device = False
+    coordinator._heatgenie_write_char = None
     coordinator._v21_handshake_sent = False
     coordinator._hcalory_write_char = None
     coordinator._connection_attempts = 0
@@ -451,6 +454,17 @@ class TestProtocolDetection:
 
         assert protocol is not None
         assert protocol.protocol_mode == 5  # ABBA
+
+    def test_detect_protocol_heatgenie_uses_selected_transport(self):
+        """HeatGenie notifications bypass AAXX header detection."""
+        coordinator = create_mock_coordinator()
+        coordinator._is_heatgenie_device = True
+        data = bytearray((0xAA, 0x09, 0, 0, 0, 0, 0, 0xF2))
+
+        protocol, parsed_data = coordinator._detect_protocol(data, 0xAA09)
+
+        assert protocol is coordinator._protocols[8]
+        assert parsed_data is data
 
     def test_detect_protocol_cbff(self):
         """Test detection of CBFF/Sunster protocol."""
@@ -1348,6 +1362,22 @@ class TestAsyncCommands:
         assert call_args[0][1] == 25
 
     @pytest.mark.asyncio
+    @pytest.mark.asyncio
+    async def test_async_set_temperature_heatgenie_uses_native_limits(self):
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 8
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        await coordinator.async_set_temperature(1)
+
+        coordinator._send_command.assert_awaited_once_with(4, 10)
+        coordinator._send_command.reset_mock()
+        coordinator._heater_uses_fahrenheit = True
+
+        await coordinator.async_set_temperature(1)
+
+        coordinator._send_command.assert_awaited_once_with(4, 50)
+
     async def test_async_set_mode(self):
         """Test async_set_mode sends correct command."""
         coordinator = create_mock_coordinator()
@@ -3142,6 +3172,25 @@ class TestABBAToggleGuard:
 # ---------------------------------------------------------------------------
 # Fahrenheit conversion tests
 # ---------------------------------------------------------------------------
+
+class TestHeatGenieGATTWrite:
+    """Tests for HeatGenie's dynamically selected GATT characteristics."""
+
+    @pytest.mark.asyncio
+    async def test_write_gatt_uses_heatgenie_write_characteristic(self):
+        coordinator = create_mock_coordinator()
+        coordinator._is_heatgenie_device = True
+        coordinator._heatgenie_write_char = MagicMock(uuid="0000feed-0000-1000-8000-00805f9b34fb")
+        coordinator._client = MagicMock()
+        coordinator._client.write_gatt_char = AsyncMock()
+        packet = bytearray((0xAA, 0, 0x65, 2, 20, 30, 0, 0))
+
+        await coordinator._write_gatt(packet)
+
+        coordinator._client.write_gatt_char.assert_awaited_once_with(
+            coordinator._heatgenie_write_char, packet, response=False
+        )
+
 
 class TestFahrenheitConversion:
     """Tests for Fahrenheit temperature conversion."""

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "diesel-heater-ble"
-version = "0.3.4"
-description = "BLE protocol library for diesel heaters (Vevor, Hcalory, Sunster, HeaterCC)"
+version = "0.3.5"
+description = "BLE protocol library for diesel heaters (Vevor, Hcalory, Sunster, HeaterCC, HeatGenie)"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"

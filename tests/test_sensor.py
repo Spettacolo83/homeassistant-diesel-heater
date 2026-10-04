@@ -9,6 +9,7 @@ from . import conftest  # noqa: F401
 
 from custom_components.diesel_heater.sensor import (
     VevorCabTemperatureSensor,
+    VevorAuxTemperatureSensor,
     VevorCaseTemperatureSensor,
     VevorSupplyVoltageSensor,
     VevorRunningStepSensor,
@@ -466,6 +467,40 @@ class TestAsyncSetupEntry:
 # ---------------------------------------------------------------------------
 # Raw interior temperature sensor tests
 # ---------------------------------------------------------------------------
+
+class TestHeatGenieEntitySetup:
+    """Tests for HeatGenie capability-gated temperature sensors."""
+
+    @pytest.mark.asyncio
+    async def test_creates_only_reported_probe_sensors(self):
+        """Create entities only for probes present in the status frame."""
+        coordinator = create_mock_coordinator(protocol_mode=8)
+        coordinator.data["intake_temperature"] = 18.5
+
+        entry = MagicMock()
+        entry.runtime_data = coordinator
+        async_add_entities = MagicMock()
+
+        await async_setup_entry(MagicMock(), entry, async_add_entities)
+
+        aux_sensors = [
+            entity for entity in async_add_entities.call_args[0][0] if isinstance(entity, VevorAuxTemperatureSensor)
+        ]
+        assert [sensor._key for sensor in aux_sensors] == ["intake_temperature"]
+
+    @pytest.mark.asyncio
+    async def test_does_not_create_unsupported_probe_sensors(self):
+        """Do not create placeholders for unsupported temperature probes."""
+        coordinator = create_mock_coordinator(protocol_mode=8)
+
+        entry = MagicMock()
+        entry.runtime_data = coordinator
+        async_add_entities = MagicMock()
+
+        await async_setup_entry(MagicMock(), entry, async_add_entities)
+
+        assert not any(isinstance(entity, VevorAuxTemperatureSensor) for entity in async_add_entities.call_args[0][0])
+
 
 class TestVevorRawInteriorTemperatureSensor:
     """Tests for raw interior temperature sensor."""

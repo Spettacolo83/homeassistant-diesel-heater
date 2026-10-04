@@ -36,7 +36,7 @@ async def async_setup_entry(
     ]
 
     # Auto Temperature Offset (not available for Hcalory - @Xev, issue #34)
-    if mode != 7:
+    if mode not in (7, 8):
         entities.append(VevorAutoOffsetSwitch(coordinator))
 
     # Auto Start/Stop (AA66Encrypted, ABBA, CBFF, Hcalory)
@@ -44,7 +44,7 @@ async def async_setup_entry(
         entities.append(VevorAutoStartStopSwitch(coordinator))
 
     # Temperature unit (AA66Encrypted, ABBA, CBFF, Hcalory)
-    if mode in (0, 4, 5, 6, 7):
+    if mode in (0, 4, 5, 6, 7, 8):
         entities.append(VevorTempUnitSwitch(coordinator))
 
     # Altitude unit (AA66Encrypted, ABBA, CBFF only - NOT Hcalory)
