@@ -4473,6 +4473,22 @@ class TestCronusTransactionSafety:
         assert result["daily_runtime_hours"] == 1.0
 
     @pytest.mark.asyncio
+    async def test_cronus_air_level_is_ventilation_only_and_clamped(self):
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 9
+        coordinator.data.update(cronus_controller_type="air", cronus_mode="heating")
+        coordinator._async_write_cronus_record = AsyncMock(return_value=True)
+        coordinator.async_request_refresh = AsyncMock()
+
+        await coordinator.async_set_level(10)
+
+        coordinator._async_write_cronus_record.assert_not_awaited()
+        coordinator.data["cronus_mode"] = "ventilation"
+        await coordinator.async_set_level(10)
+        coordinator._async_write_cronus_record.assert_awaited_once_with("air_level", b"\x04")
+        coordinator.async_request_refresh.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_power_uses_the_serialized_record_write(self):
         coordinator = create_mock_coordinator()
         coordinator._protocol_mode = 9

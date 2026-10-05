@@ -43,10 +43,16 @@ async def async_setup_entry(
     coordinator = entry.runtime_data
     mode = coordinator.protocol_mode
 
-    # Core select entities (all protocols)
-    entities: list[SelectEntity] = [
-        CronusModeSelect(coordinator) if mode == 9 else VevorHeaterModeSelect(coordinator),
-    ]
+    if mode == 9:
+        # ThermoConnect makes the four-mode control editable only for air.
+        # Water mode is exposed as read-only telemetry instead.
+        entities: list[SelectEntity] = (
+            [CronusModeSelect(coordinator)]
+            if coordinator.data.get("cronus_controller_type") == "air"
+            else []
+        )
+    else:
+        entities = [VevorHeaterModeSelect(coordinator)]
 
     # Config selects (AA66Encrypted + CBFF: language, pump_type, tank_volume)
     if mode in (0, 4, 6):
@@ -92,7 +98,7 @@ class CronusModeSelect(SelectEntity):
         """Return whether ThermoConnect has identified this controller."""
         return (
             self.coordinator.data.get("connected", False)
-            and self.coordinator.data.get("cronus_controller_type") in ("air", "water")
+            and self.coordinator.data.get("cronus_controller_type") == "air"
         )
 
     @property

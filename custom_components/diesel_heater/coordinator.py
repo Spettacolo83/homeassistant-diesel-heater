@@ -2482,15 +2482,19 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         - Hcalory uses SEPARATE commands: cmd 5 for level, cmd 4 for temperature
         - AAXX protocols use SAME command (cmd 4) for both level and temperature
         """
-        level = max(1, min(10, level))
         if self._protocol_mode == 9:
             if self.data.get("cronus_controller_type") != "air":
                 self._logger.warning("Cronus water controllers do not expose an air level")
                 return
+            if self.data.get("cronus_mode") != "ventilation":
+                self._logger.warning("Cronus air level is available only in ventilation mode")
+                return
+            level = max(1, min(4, level))
             if await self._async_write_cronus_record("air_level", bytes((level,))):
                 await self.async_request_refresh()
             return
 
+        level = max(1, min(10, level))
         if self._protocol_mode == 5:  # ABBA/HeaterCC uses level up/down button commands
             current_level_raw = self.data.get("set_level")
             try:

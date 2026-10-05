@@ -1206,4 +1206,4 @@ class TestCronusModeSelect:
         coordinator = create_mock_coordinator(protocol_mode=9)
         coordinator.data["cronus_controller_type"] = "water"
 
-        assert CronusModeSelect(coordinator).available
+        assert not CronusModeSelect(coordinator).available
