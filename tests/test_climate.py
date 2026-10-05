@@ -890,6 +890,17 @@ class TestClimateAsyncSetTemperatureFull:
         coordinator.async_set_temperature.assert_called_once_with(22.7)
 
 
+    def test_cronus_device_info_is_webasto(self):
+        coordinator = create_mock_coordinator()
+        coordinator.protocol_mode = 9
+        coordinator._heater_uses_fahrenheit = False
+
+        climate = VevorHeaterClimate(coordinator, create_mock_config_entry())
+
+        assert climate._attr_device_info["manufacturer"] == "Webasto"
+        assert climate._attr_device_info["model"] == "Cronus Smart"
+
+
 # ---------------------------------------------------------------------------
 # Full async_set_hvac_mode tests
 # ---------------------------------------------------------------------------

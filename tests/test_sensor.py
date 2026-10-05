@@ -35,6 +35,7 @@ from custom_components.diesel_heater.sensor import (
     VevorRemainingRunTimeSensor,
     VevorStartupTempDiffSensor,
     VevorShutdownTempDiffSensor,
+    VevorCronusAirPressureSensor,
     async_setup_entry,
 )
 from custom_components.diesel_heater.const import (
@@ -1330,3 +1331,4 @@ class TestCronusSensorSetup:
         assert not any(isinstance(entity, VevorErrorCodeSensor) for entity in entities)
         assert not any(isinstance(entity, VevorHourlyFuelConsumptionSensor) for entity in entities)
         assert not any(isinstance(entity, VevorAltitudeSensor) for entity in entities)
+        assert not any(isinstance(entity, VevorCronusAirPressureSensor) for entity in entities)

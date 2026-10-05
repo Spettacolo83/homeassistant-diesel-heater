@@ -12,6 +12,7 @@ from custom_components.diesel_heater.number import (
     VevorHeaterTemperatureNumber,
     VevorHeaterOffsetNumber,
     VevorTankCapacityNumber,
+    VevorCurrentFuelLevelNumber,
     async_setup_entry,
 )
 
@@ -243,6 +244,35 @@ class TestAsyncSetupEntry:
         call_args = async_add_entities.call_args[0][0]
         # Mode 1 creates the four core entities
         assert len(call_args) == 4
+
+
+    @pytest.mark.asyncio
+    async def test_cronus_air_creates_only_record_backed_controls(self):
+        coordinator = create_mock_coordinator(protocol_mode=9)
+        coordinator.data["cronus_controller_type"] = "air"
+        entry = MagicMock(runtime_data=coordinator)
+        async_add_entities = MagicMock()
+
+        await async_setup_entry(MagicMock(), entry, async_add_entities)
+
+        entities = async_add_entities.call_args[0][0]
+        assert {type(entity) for entity in entities} == {
+            VevorHeaterLevelNumber,
+            VevorHeaterTemperatureNumber,
+        }
+        assert not any(isinstance(entity, VevorTankCapacityNumber) for entity in entities)
+        assert not any(isinstance(entity, VevorCurrentFuelLevelNumber) for entity in entities)
+
+    @pytest.mark.asyncio
+    async def test_cronus_water_omits_air_and_calculated_controls(self):
+        coordinator = create_mock_coordinator(protocol_mode=9)
+        coordinator.data["cronus_controller_type"] = "water"
+        entry = MagicMock(runtime_data=coordinator)
+        async_add_entities = MagicMock()
+
+        await async_setup_entry(MagicMock(), entry, async_add_entities)
+
+        assert async_add_entities.call_args[0][0] == []
 
 
 # ---------------------------------------------------------------------------

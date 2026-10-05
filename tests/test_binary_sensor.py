@@ -514,6 +514,12 @@ class TestCronusBinarySensors:
         assert any(isinstance(entity, VevorCronusInterlockSensor) for entity in entities)
         assert not any(isinstance(entity, VevorHeaterProblemSensor) for entity in entities)
 
+    def test_shared_binary_entities_identify_cronus_as_webasto(self):
+        coordinator = create_mock_coordinator(protocol_mode=9)
+
+        assert VevorHeaterActiveSensor(coordinator)._attr_device_info["manufacturer"] == "Webasto"
+        assert VevorHeaterConnectedSensor(coordinator)._attr_device_info["model"] == "Cronus Smart"
+
     def test_interlock_uses_the_documented_record(self):
         coordinator = create_mock_coordinator(protocol_mode=9)
         coordinator.data["cronus_interlock"] = True

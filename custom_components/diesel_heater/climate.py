@@ -80,12 +80,21 @@ class VevorHeaterClimate(
         self._current_preset: str | None = None
         self._restored_abba_target: float | None = None
         self._user_cleared_preset: bool = False  # Track if user explicitly selected "None"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, coordinator.address)},
-            "name": "Vevor Heater",
-            "manufacturer": "Vevor",
-            "model": "Diesel Heater",
-        }
+        self._attr_device_info = (
+            {
+                "identifiers": {(DOMAIN, coordinator.address)},
+                "name": "Webasto Cronus",
+                "manufacturer": "Webasto",
+                "model": "Cronus Smart",
+            }
+            if coordinator.protocol_mode == 9
+            else {
+                "identifiers": {(DOMAIN, coordinator.address)},
+                "name": "Vevor Heater",
+                "manufacturer": "Vevor",
+                "model": "Diesel Heater",
+            }
+        )
         self._attr_unique_id = f"{coordinator.address}_climate"
 
         # Set temperature unit and range statically based on heater's native unit

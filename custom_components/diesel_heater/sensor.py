@@ -82,10 +82,11 @@ async def async_setup_entry(
         entities.extend([
             VevorAuxTemperatureSensor(coordinator, "cronus_external_temperature", "External Temperature"),
             VevorAuxTemperatureSensor(coordinator, "cronus_coolant_temperature", "Coolant Temperature"),
-            VevorCronusAirPressureSensor(coordinator),
             VevorCronusDurationSensor(coordinator, "cronus_duration", "Configured Run Duration"),
             VevorCronusDurationSensor(coordinator, "cronus_max_duration", "Maximum Run Duration"),
         ])
+        if coordinator.data.get("cronus_controller_type") == "air":
+            entities.append(VevorCronusAirPressureSensor(coordinator))
 
     # Altitude sensor (not available for Hcalory - @Xev, issue #34)
     if mode not in (7, 9):
