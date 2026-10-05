@@ -90,6 +90,19 @@ After setup, you can configure these options:
 
 Entities are created based on the detected BLE protocol. Only entities supported by your heater's protocol are created.
 
+### Availability by controller family
+
+| Controller family | Additional controls and telemetry | Important limits |
+|---|---|---|
+| AA55 / AA66 | Established air-heater entities and local auto-offset | No encrypted-controller settings, timer, component bits, or intake/outlet probes |
+| AA55 Encrypted | Temperature Offset, Backlight, and Timer | No Language, Pump Type, Tank Volume, or unit switches |
+| AA66 Encrypted | Temperature Offset, Backlight, Timer, Language, Pump Type, Tank Volume, Auto Start/Stop, Temperature Unit, and Altitude Unit | Extended telemetry only where reported |
+| ABBA / HeaterCC | Auto Start/Stop, Temperature Unit, Altitude Unit, High Altitude, and supported ventilation | No timer, component bits, or intake/outlet probes |
+| CBFF / Sunster | Extended telemetry, controller configuration, unit settings, Auto Start/Stop, and CBFF diagnostics | No component bits or intake/outlet probes |
+| Hcalory MVP1/MVP2 | Auto Start/Stop, Temperature Unit, and three-position High Altitude Mode | No altitude sensor, auto-offset, timer, component bits, or intake/outlet probes |
+| HeatGenie / Boygu | Temperature Unit, optional Intake/Outlet Temperature, and Fuel Pump/Fan/Glow Plug state bits | No auto-offset, timer, or controller configuration selects |
+| Webasto Cronus | ThermoConnect Mode, controller-specific temperatures and durations, Continuous Run, and Interlock | Air and water capabilities differ; see the sections below |
+
 ### Climate
 
 The climate entity provides thermostat control:

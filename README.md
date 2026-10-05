@@ -235,6 +235,21 @@ After setup, go to the integration's **Configure** button to access these option
 
 Entities are created **conditionally based on the detected BLE protocol**. Only entities that the protocol supports are created, preventing unsupported entities from showing as "Unavailable".
 
+#### Capability Matrix
+
+The common and extended entity tables below are scoped by this matrix. A controller does not receive an entity merely because another family has one.
+
+| Controller family | Additional controls and entities | Important limits |
+|---|---|---|
+| AA55 / AA66 | Established air-heater baseline and local auto-offset | No encrypted-controller configuration, timer, component bits, or intake/outlet probes |
+| AA55 Encrypted | Baseline, Temperature Offset, Backlight, and Timer | No Language, Pump Type, Tank Volume, or unit switches |
+| AA66 Encrypted | Baseline, Temperature Offset, Backlight, Timer, Language, Pump Type, Tank Volume, Auto Start/Stop, Temperature Unit, and Altitude Unit | Extended telemetry is limited to the reported controller fields |
+| ABBA / HeaterCC | Baseline, Auto Start/Stop, Temperature Unit, Altitude Unit, High Altitude, and ventilation when the controller supports it | Level changes are relative controller steps; no timer, component bits, or intake/outlet probes |
+| CBFF / Sunster | Baseline, extended telemetry, Language, Pump Type, Tank Volume, Auto Start/Stop, Temperature Unit, Altitude Unit, and CBFF diagnostics | No component bits or intake/outlet probes |
+| Hcalory MVP1/MVP2 | Baseline except Altitude, plus Auto Start/Stop, Temperature Unit, and the three-position High Altitude Mode select | No auto-offset, timer, component bits, or intake/outlet probes |
+| HeatGenie / Boygu | Baseline, Temperature Unit, optional Intake/Outlet Temperature, and Fuel Pump/Fan/Glow Plug binary sensors | No auto-offset, timer, or controller configuration selects |
+| Webasto Cronus | ThermoConnect Mode, controller-specific temperatures and durations, Continuous Run, and Interlock | Air and water capabilities differ; see the Cronus section below |
+
 #### Shared Entities
 
 | Platform | Entity | Description |
