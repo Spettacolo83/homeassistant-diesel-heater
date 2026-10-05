@@ -361,6 +361,31 @@ async def test_ha_neo_power_off_does_not_create_pending_burnoff() -> None:
 
 
 @pytest.mark.asyncio
+async def test_neo_temperature_write_accepts_stored_none_limits() -> None:
+    coordinator = coordinator_for_layout(True)
+    coordinator.data.update(
+        {
+            "neo_min_target": None,
+            "neo_max_target": None,
+            "neo_raw_state": 2,
+            "neo_run_type": 2,
+            "set_temp": 22,
+            "altitude": 1500,
+        }
+    )
+    response = bytearray(39)
+    response[:2], response[15], response[34] = b"Z%", 30, 2
+    coordinator._write_gatt = AsyncMock(
+        side_effect=lambda packet: coordinator._notification_callback(FFF2, response)
+    )
+
+    assert await coordinator.async_set_temperature(30) is True
+    assert coordinator._write_gatt.await_args.args[0] == bytearray.fromhex(
+        "a5090151021e05dc0165e6"
+    )
+
+
+@pytest.mark.asyncio
 async def test_neo_power_off_failure_clears_ha_shutdown_intent() -> None:
     coordinator = coordinator_for_layout(True)
     coordinator._send_dz06_neo_power = AsyncMock(return_value=False)
