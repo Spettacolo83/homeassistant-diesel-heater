@@ -91,6 +91,42 @@ class TestBluetoothDiscovery:
         assert result["type"] == "form"
         assert result["step_id"] == "confirm"
 
+    async def test_heatgenie_boygu_identity_requires_service(self):
+        flow = VevorHeaterConfigFlow()
+        discovery = _make_ble_discovery(
+            name='cab-boygu-controller',
+            service_uuids=[HEATGENIE_SERVICE_UUID],
+        )
+
+        result = await flow.async_step_bluetooth(discovery)
+
+        assert result['type'] == 'form'
+        assert result['step_id'] == 'confirm'
+
+    async def test_heatgenie_boygu_identity_without_service_is_ignored(self):
+        flow = VevorHeaterConfigFlow()
+        discovery = _make_ble_discovery(
+            name='cab-boygu-controller',
+            service_uuids=[SERVICE_UUID],
+        )
+
+        result = await flow.async_step_bluetooth(discovery)
+
+        assert result['type'] == 'abort'
+        assert result['reason'] == 'not_supported'
+
+    async def test_generic_environmental_sensing_device_is_ignored(self):
+        flow = VevorHeaterConfigFlow()
+        discovery = _make_ble_discovery(
+            name='WeatherSensor',
+            service_uuids=[HEATGENIE_SERVICE_UUID],
+        )
+
+        result = await flow.async_step_bluetooth(discovery)
+
+        assert result['type'] == 'abort'
+        assert result['reason'] == 'not_supported'
+
     async def test_heatgenie_like_name_without_service_is_ignored(self):
         flow = VevorHeaterConfigFlow()
         discovery = _make_ble_discovery(
