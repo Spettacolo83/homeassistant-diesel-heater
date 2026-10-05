@@ -148,6 +148,44 @@ FORCE_TEMP_UNIT_OPTIONS: Final = (
 )
 DEFAULT_FORCE_TEMP_UNIT: Final = FORCE_TEMP_UNIT_AUTO
 
+# Webasto Cronus does not report the attached heater model. Fuel estimates are
+# therefore available only after the user selects the installed diesel model.
+CONF_CRONUS_HEATER_MODEL: Final = "cronus_heater_model"
+CRONUS_HEATER_MODEL_UNCONFIGURED: Final = "unconfigured"
+DEFAULT_CRONUS_HEATER_MODEL: Final = CRONUS_HEATER_MODEL_UNCONFIGURED
+CRONUS_HEATER_MODEL_OPTIONS: Final = (
+    CRONUS_HEATER_MODEL_UNCONFIGURED,
+    "air_top_evo_40_diesel",
+    "air_top_evo_55_diesel",
+    "thermo_top_evo_4_diesel",
+    "thermo_top_evo_5_diesel",
+)
+# Published diesel consumption rates in L/h. Heating uses the midpoint of the
+# documented modulation range; Eco is an approximate 70% of maximum output;
+# Boost uses Webasto's published boost consumption where available.
+CRONUS_FUEL_PROFILES: Final = {
+    "air_top_evo_40_diesel": {
+        "controller_type": "air",
+        "heating": 0.305,
+        "eco": 0.301,
+        "boost": 0.49,
+    },
+    "air_top_evo_55_diesel": {
+        "controller_type": "air",
+        "heating": 0.395,
+        "eco": 0.427,
+        "boost": 0.67,
+    },
+    "thermo_top_evo_4_diesel": {
+        "controller_type": "water",
+        "heating": 0.4025,
+    },
+    "thermo_top_evo_5_diesel": {
+        "controller_type": "water",
+        "heating": 0.465,
+    },
+}
+
 # Heater temperature offset (sent to heater via cmd 20)
 # Both positive and negative offsets now work via BLE
 # Encoding: arg1 = value % 256, arg2 = (value // 256) % 256

@@ -15,6 +15,7 @@ from custom_components.diesel_heater.config_flow import (
 )
 from custom_components.diesel_heater.const import (
     CONF_AUTO_OFFSET_MAX,
+    CONF_CRONUS_HEATER_MODEL,
     CONF_EXTERNAL_TEMP_SENSOR,
     CONF_PIN,
     CONF_PRESET_AWAY_TEMP,
@@ -620,6 +621,17 @@ class TestOptionsFlow:
 
         assert result["type"] == "form"
         assert result["step_id"] == "init"
+
+    async def test_schema_has_cronus_heater_model_field(self):
+        flow = self._create_flow()
+
+        result = await flow.async_step_init()
+
+        schema_keys = {
+            key.schema for key in result["data_schema"].schema.keys()
+            if hasattr(key, "schema")
+        }
+        assert CONF_CRONUS_HEATER_MODEL in schema_keys
 
     async def test_schema_has_pin_field(self):
         flow = self._create_flow()

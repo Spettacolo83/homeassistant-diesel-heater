@@ -6,6 +6,7 @@ Focuses on data processing, fuel/runtime tracking, and protocol handling.
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
@@ -17,7 +18,9 @@ from . import conftest  # noqa: F401
 # Now we can import the coordinator
 from custom_components.diesel_heater.coordinator import UpdateFailed, VevorHeaterCoordinator
 from custom_components.diesel_heater.const import (
+    CONF_CRONUS_HEATER_MODEL,
     CONF_FORCE_TEMP_UNIT,
+    CRONUS_FUEL_PROFILES,
     FORCE_TEMP_UNIT_CELSIUS,
     FUEL_CONSUMPTION_TABLE,
     RUNNING_STEP_RUNNING,
@@ -124,7 +127,8 @@ def create_mock_coordinator() -> VevorHeaterCoordinator:
     coordinator._last_runtime_reset_date = datetime.now().strftime("%Y-%m-%d")
 
     # Connection state
-    coordinator._last_update_time = None
+    coordinator._last_update_time = 0.0
+    coordinator._last_save_time = 0.0
     coordinator._last_valid_data = {}
     coordinator._consecutive_failures = 0
     coordinator._max_stale_cycles = 3
@@ -256,6 +260,68 @@ class TestFuelConsumption:
 
         consumption = coordinator._calculate_fuel_consumption(3600)
         assert consumption == 0.0
+
+
+class TestCronusFuelProfiles:
+    """Tests for documented Webasto Cronus fuel-estimate profiles."""
+
+    @staticmethod
+    def _cronus_coordinator(profile: str, controller_type: str, mode: str):
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 9
+        coordinator.config_entry.data[CONF_CRONUS_HEATER_MODEL] = profile
+        coordinator.data.update(
+            cronus_controller_type=controller_type,
+            cronus_mode=mode,
+            running_state=1,
+            running_step=0,
+        )
+        return coordinator
+
+    def test_air_boost_uses_selected_model_rate(self):
+        coordinator = self._cronus_coordinator(
+            "air_top_evo_55_diesel", "air", "boost"
+        )
+
+        assert coordinator._calculate_fuel_consumption(3600) == CRONUS_FUEL_PROFILES[
+            "air_top_evo_55_diesel"
+        ]["boost"]
+
+    def test_air_ventilation_uses_no_fuel(self):
+        coordinator = self._cronus_coordinator(
+            "air_top_evo_40_diesel", "air", "ventilation"
+        )
+
+        assert coordinator._calculate_fuel_consumption(3600) == 0.0
+        coordinator._update_fuel_tracking(3600)
+        assert coordinator.data["hourly_fuel_consumption"] == 0.0
+
+    def test_water_heating_uses_water_model_rate(self):
+        coordinator = self._cronus_coordinator(
+            "thermo_top_evo_5_diesel", "water", "heating"
+        )
+
+        assert coordinator._calculate_fuel_consumption(3600) == CRONUS_FUEL_PROFILES[
+            "thermo_top_evo_5_diesel"
+        ]["heating"]
+
+    def test_mismatched_profile_disables_estimate(self):
+        coordinator = self._cronus_coordinator(
+            "air_top_evo_40_diesel", "water", "heating"
+        )
+
+        assert coordinator.has_cronus_fuel_estimate is False
+        assert coordinator._calculate_fuel_consumption(3600) == 0.0
+
+    def test_cronus_active_state_counts_runtime(self):
+        coordinator = self._cronus_coordinator(
+            "thermo_top_evo_4_diesel", "water", "heating"
+        )
+
+        coordinator._update_runtime_tracking(3600)
+
+        assert coordinator.data["daily_runtime_hours"] == 1.0
+        assert coordinator.data["total_runtime_hours"] == 1.0
 
 
 class TestFuelTracking:
@@ -4375,6 +4441,36 @@ class TestCronusTransactionSafety:
 
         assert result["cronus_state"] == 1
         assert "cronus_external_temperature" not in result
+
+    @pytest.mark.asyncio
+    async def test_selected_water_profile_tracks_a_fresh_snapshot(self):
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 9
+        coordinator.config_entry.data[CONF_CRONUS_HEATER_MODEL] = "thermo_top_evo_5_diesel"
+        coordinator._last_update_time = time.time() - 3600
+        coordinator._last_save_time = time.time()
+        coordinator.async_save_data = AsyncMock()
+        current = {
+            "h1_available": b"\x01",
+            "water_state": b"\x01",
+            "water_state_real": b"\x03",
+            "water_mode": b"\x00",
+        }
+
+        async def read_record(name):
+            value = current.get(name)
+            if value is None:
+                return False
+            coordinator._cronus_records[name] = value
+            return True
+
+        coordinator._async_read_cronus_record = AsyncMock(side_effect=read_record)
+
+        result = await coordinator._async_update_cronus_data()
+
+        assert result["cronus_controller_type"] == "water"
+        assert result["hourly_fuel_consumption"] == 0.47
+        assert result["daily_runtime_hours"] == 1.0
 
     @pytest.mark.asyncio
     async def test_power_uses_the_serialized_record_write(self):

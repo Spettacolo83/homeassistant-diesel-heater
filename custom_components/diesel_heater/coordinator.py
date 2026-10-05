@@ -40,6 +40,8 @@ from .const import (
     CONF_AUTO_OFFSET_MAX,
     CONF_EXTERNAL_TEMP_SENSOR,
     CONF_FORCE_TEMP_UNIT,
+    CONF_CRONUS_HEATER_MODEL,
+    CRONUS_FUEL_PROFILES,
     CONF_NEO_PASSWORD,
     CONF_PIN,
     CONF_TEMPERATURE_OFFSET,
@@ -66,6 +68,7 @@ from .const import (
     PROTOCOL_HEADER_ABBA,
     PROTOCOL_HEADER_CBFF,
     PROTOCOL_HEADER_AA77,
+    RUNNING_STATE_ON,
     RUNNING_STEP_COOLDOWN,
     RUNNING_STEP_RUNNING,
     SENSOR_TEMP_MAX,
@@ -268,6 +271,25 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     def protocol_mode(self) -> int:
         """Return the detected BLE protocol mode (0=unknown, 1-7=detected)."""
         return self._protocol_mode
+
+    @property
+    def cronus_fuel_profile(self) -> dict[str, object] | None:
+        """Return the selected profile when it matches the connected Cronus type."""
+        if self._protocol_mode != 9:
+            return None
+        profile = CRONUS_FUEL_PROFILES.get(
+            self.config_entry.data.get(CONF_CRONUS_HEATER_MODEL)
+        )
+        if profile is None:
+            return None
+        if profile["controller_type"] != self.data.get("cronus_controller_type"):
+            return None
+        return profile
+
+    @property
+    def has_cronus_fuel_estimate(self) -> bool:
+        """Return whether a matching Cronus fuel-estimate profile is configured."""
+        return self.cronus_fuel_profile is not None
 
     @property
     def protocol_name(self) -> str:
@@ -573,6 +595,15 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             if parsed is None:
                 raise UpdateFailed("Cronus record cache was incomplete")
             self.data.update(parsed)
+            if self.has_cronus_fuel_estimate:
+                current_time = time.time()
+                elapsed_seconds = current_time - self._last_update_time
+                self._last_update_time = current_time
+                self._update_fuel_tracking(elapsed_seconds)
+                self._update_runtime_tracking(elapsed_seconds)
+                if current_time - self._last_save_time >= 300:
+                    await self.async_save_data()
+                    self._last_save_time = current_time
             self._last_valid_data = self.data.copy()
             self._consecutive_failures = 0
             return self.data
@@ -919,14 +950,33 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         )
         return estimated_level
 
+    def _is_running_for_tracking(self) -> bool:
+        """Return whether the current protocol reports an active heater."""
+        if self._protocol_mode == 9:
+            return self.data.get("running_state") == RUNNING_STATE_ON
+        return self.data.get("running_step") == RUNNING_STEP_RUNNING
+
+    def _cronus_fuel_rate(self) -> float:
+        """Return the selected Cronus model's estimated current rate in L/h."""
+        profile = self.cronus_fuel_profile
+        if profile is None or not self._is_running_for_tracking():
+            return 0.0
+        mode = self.data.get("cronus_mode")
+        if mode == "ventilation":
+            return 0.0
+        return float(profile.get(mode, profile["heating"]))
+
     def _calculate_fuel_consumption(self, elapsed_seconds: float) -> float:
         """Calculate fuel consumed based on power level and elapsed time.
 
         Returns fuel consumed in liters.
         """
-        # Only consume fuel when actually running
-        if self.data.get("running_step") != RUNNING_STEP_RUNNING:
+        # Only consume fuel when actually running.
+        if not self._is_running_for_tracking():
             return 0.0
+
+        if self._protocol_mode == 9:
+            return self._cronus_fuel_rate() * elapsed_seconds / 3600.0
 
         power_level = self.data.get("set_level")
 
@@ -962,23 +1012,27 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._daily_fuel_consumed += fuel_consumed
             self._fuel_consumed_since_reset += fuel_consumed
 
-        # Calculate instantaneous consumption rate
-        power_level = self.data.get("set_level")
-
-        # Issue #47: Estimate power level for Hcalory in Temperature mode
-        if power_level is None or power_level == 1:
-            if self._protocol_mode == 7:  # Hcalory
-                running_mode = self.data.get("running_mode")
-                if running_mode == 2:  # Temperature mode
-                    power_level = self._estimate_hcalory_power_level()
-
-        if power_level is None:
-            power_level = 1  # Fallback
-
-        if self.data.get("running_step") == RUNNING_STEP_RUNNING:
-            hourly_consumption = FUEL_CONSUMPTION_TABLE.get(power_level, 0.16)
+        # Calculate instantaneous consumption rate.
+        if self._protocol_mode == 9:
+            hourly_consumption = self._cronus_fuel_rate()
         else:
-            hourly_consumption = 0.0
+            power_level = self.data.get("set_level")
+
+            # Issue #47: Estimate power level for Hcalory in Temperature mode
+            if power_level is None or power_level == 1:
+                if self._protocol_mode == 7:  # Hcalory
+                    running_mode = self.data.get("running_mode")
+                    if running_mode == 2:  # Temperature mode
+                        power_level = self._estimate_hcalory_power_level()
+
+            if power_level is None:
+                power_level = 1  # Fallback
+
+            hourly_consumption = (
+                FUEL_CONSUMPTION_TABLE.get(power_level, 0.16)
+                if self._is_running_for_tracking()
+                else 0.0
+            )
 
         # Update data dictionary
         self.data["hourly_fuel_consumption"] = round(hourly_consumption, 2)
@@ -1056,8 +1110,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
     def _update_runtime_tracking(self, elapsed_seconds: float) -> None:
         """Update runtime tracking."""
-        # Only count runtime when heater is actually running
-        if self.data.get("running_step") == RUNNING_STEP_RUNNING:
+        # Only count runtime when the heater is actually running.
+        if self._is_running_for_tracking():
             self._total_runtime_seconds += elapsed_seconds
             self._daily_runtime_seconds += elapsed_seconds
 

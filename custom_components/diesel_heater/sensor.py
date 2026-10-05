@@ -60,25 +60,27 @@ async def async_setup_entry(
         entities.extend([
             VevorCaseTemperatureSensor(coordinator),
             VevorErrorCodeSensor(coordinator),
-            # Fuel consumption sensors (computed locally, not protocol-dependent)
+            VevorRunningStepSensor(coordinator),
+            VevorRunningModeSensor(coordinator),
+        ])
+
+    # These are integration-local estimates. Cronus exposes them only after a
+    # matching, user-selected model profile supplies the documented fuel curve.
+    if mode != 9 or coordinator.has_cronus_fuel_estimate:
+        entities.extend([
             VevorHourlyFuelConsumptionSensor(coordinator),
             VevorDailyFuelConsumedSensor(coordinator),
             VevorTotalFuelConsumedSensor(coordinator),
             VevorDailyFuelHistorySensor(coordinator),
-            # Runtime tracking sensors (computed locally)
             VevorDailyRuntimeSensor(coordinator),
             VevorTotalRuntimeSensor(coordinator),
             VevorDailyRuntimeHistorySensor(coordinator),
-            # Fuel level tracking (computed locally)
             VevorFuelRemainingSensor(coordinator),
             VevorLastRefueledSensor(coordinator),
             VevorFuelConsumedSinceResetSensor(coordinator),
         ])
-        entities.extend([
-            VevorRunningStepSensor(coordinator),
-            VevorRunningModeSensor(coordinator),
-        ])
-    else:
+
+    if mode == 9:
         entities.extend([
             VevorAuxTemperatureSensor(coordinator, "cronus_external_temperature", "External Temperature"),
             VevorAuxTemperatureSensor(coordinator, "cronus_coolant_temperature", "Coolant Temperature"),

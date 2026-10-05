@@ -69,7 +69,8 @@
           "preset_comfort_temp": "Comfort Preset Temperature (°C)",
           "external_temp_sensor": "External Temperature Sensor",
           "auto_offset_max": "Max Auto Offset (°C)",
-          "force_temp_unit": "Force Temperature Unit"
+          "force_temp_unit": "Force Temperature Unit",
+          "cronus_heater_model": "Webasto Cronus Heater Model"
         },
         "data_description": {
           "temperature_offset": "Manual temperature calibration offset. Changes take effect within 30 seconds. Range: -20 to +20°C.",
@@ -79,8 +80,20 @@
           "preset_comfort_temp": "Temperature for Comfort preset (normal heating). Default: 21°C.",
           "external_temp_sensor": "Select an external temperature sensor to automatically calibrate the heater's internal sensor. Leave empty to disable auto calibration.",
           "auto_offset_max": "Maximum automatic offset in °C. Limits how much the temperature can be adjusted based on external sensor. Default: 5°C.",
-          "force_temp_unit": "Override the heater firmware temperature-unit flag. Use Celsius or Fahrenheit only if the firmware mis-reports the unit (see issue #64). Auto preserves the current behavior."
+          "force_temp_unit": "Override the heater firmware temperature-unit flag. Use Celsius or Fahrenheit only if the firmware mis-reports the unit (see issue #64). Auto preserves the current behavior.",
+          "cronus_heater_model": "Select the installed diesel heater model to enable its local fuel estimate. Not configured leaves the estimate disabled because Cronus does not report the connected heater model."
         }
+      }
+    }
+  },
+  "selector": {
+    "cronus_heater_model": {
+      "options": {
+        "unconfigured": "Not configured (fuel estimate off)",
+        "air_top_evo_40_diesel": "Air Top Evo 40 Diesel",
+        "air_top_evo_55_diesel": "Air Top Evo 55 Diesel",
+        "thermo_top_evo_4_diesel": "Thermo Top Evo 4 kW Diesel",
+        "thermo_top_evo_5_diesel": "Thermo Top Evo 5 kW Diesel"
       }
     }
   },

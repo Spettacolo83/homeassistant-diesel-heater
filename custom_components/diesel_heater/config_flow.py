@@ -17,6 +17,9 @@ from .const import (
     CONF_AUTO_OFFSET_MAX,
     CONF_EXTERNAL_TEMP_SENSOR,
     CONF_FORCE_TEMP_UNIT,
+    CONF_CRONUS_HEATER_MODEL,
+    CRONUS_HEATER_MODEL_OPTIONS,
+    DEFAULT_CRONUS_HEATER_MODEL,
     CONF_NEO_PASSWORD,
     CONF_PIN,
     CONF_PRESET_AWAY_TEMP,
@@ -369,6 +372,18 @@ class VevorHeaterOptionsFlowHandler(config_entries.OptionsFlow):
                 selector.SelectSelectorConfig(
                     options=list(FORCE_TEMP_UNIT_OPTIONS),
                     translation_key=CONF_FORCE_TEMP_UNIT,
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Optional(
+                CONF_CRONUS_HEATER_MODEL,
+                default=self.config_entry.data.get(
+                    CONF_CRONUS_HEATER_MODEL, DEFAULT_CRONUS_HEATER_MODEL
+                ),
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=list(CRONUS_HEATER_MODEL_OPTIONS),
+                    translation_key=CONF_CRONUS_HEATER_MODEL,
                     mode=selector.SelectSelectorMode.DROPDOWN,
                 )
             ),

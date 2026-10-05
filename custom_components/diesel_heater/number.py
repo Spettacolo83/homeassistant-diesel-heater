@@ -44,6 +44,11 @@ async def async_setup_entry(
                 VevorHeaterLevelNumber(coordinator),
                 VevorHeaterTemperatureNumber(coordinator),
             ])
+        if coordinator.has_cronus_fuel_estimate:
+            entities.extend([
+                VevorTankCapacityNumber(coordinator),
+                VevorCurrentFuelLevelNumber(coordinator),
+            ])
     else:
         entities = [
             VevorHeaterLevelNumber(coordinator),
@@ -324,12 +329,21 @@ class VevorTankCapacityNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberE
         """Initialize the number entity."""
         super().__init__(coordinator)
         self._attr_unique_id = f"{coordinator.address}_tank_capacity"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, coordinator.address)},
-            "name": "Vevor Diesel Heater",
-            "manufacturer": "Vevor",
-            "model": "Diesel Heater",
-        }
+        self._attr_device_info = (
+            {
+                "identifiers": {(DOMAIN, coordinator.address)},
+                "name": "Webasto Cronus",
+                "manufacturer": "Webasto",
+                "model": "Cronus Smart",
+            }
+            if coordinator.protocol_mode == 9
+            else {
+                "identifiers": {(DOMAIN, coordinator.address)},
+                "name": "Vevor Diesel Heater",
+                "manufacturer": "Vevor",
+                "model": "Diesel Heater",
+            }
+        )
 
     @property
     def native_value(self) -> float | None:
@@ -369,12 +383,21 @@ class VevorCurrentFuelLevelNumber(CoordinatorEntity[VevorHeaterCoordinator], Num
         """Initialize the number entity."""
         super().__init__(coordinator)
         self._attr_unique_id = f"{coordinator.address}_current_fuel_level"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, coordinator.address)},
-            "name": "Vevor Diesel Heater",
-            "manufacturer": "Vevor",
-            "model": "Diesel Heater",
-        }
+        self._attr_device_info = (
+            {
+                "identifiers": {(DOMAIN, coordinator.address)},
+                "name": "Webasto Cronus",
+                "manufacturer": "Webasto",
+                "model": "Cronus Smart",
+            }
+            if coordinator.protocol_mode == 9
+            else {
+                "identifiers": {(DOMAIN, coordinator.address)},
+                "name": "Vevor Diesel Heater",
+                "manufacturer": "Vevor",
+                "model": "Diesel Heater",
+            }
+        )
 
     @property
     def native_max_value(self) -> float:
