@@ -694,6 +694,10 @@ class BurnoffController:
                 self._host._logger.warning("Cannot start burn-off: heater is not running")
                 return
 
+            if self._host.data.get("running_mode") == RUNNING_MODE_VENTILATION:
+                self._host._logger.warning("Cannot start burn-off while ventilating")
+                return
+
             self.accumulator.pending = False
             self.cycle.saved_mode = self._host.data.get("running_mode")
             self.cycle.saved_level = self._host.data.get("set_level")
