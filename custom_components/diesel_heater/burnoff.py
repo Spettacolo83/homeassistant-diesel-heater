@@ -18,9 +18,6 @@ from homeassistant.util import dt as dt_util
 from .const import (
     BURNOFF_NEAR_COMPLETE_REMAINING_RATIO,
     MAX_BURNOFF_IN_RUN_ABORTS,
-    MAX_LEVEL,
-    RUNNING_MODE_LEVEL,
-    RUNNING_MODE_TEMPERATURE,
     RUNNING_MODE_VENTILATION,
     RUNNING_STATE_OFF,
     RUNNING_STATE_ON,
@@ -66,6 +63,7 @@ class BurnoffCycle:
     saved_mode: int | None = None
     saved_level: int | None = None
     saved_temp: float | None = None
+    saved_protocol_state: dict[str, Any] | None = None
     applying: bool = False
 
 
@@ -158,6 +156,7 @@ class BurnoffController:
             "saved_mode": self.cycle.saved_mode,
             "saved_level": self.cycle.saved_level,
             "saved_temp": self.cycle.saved_temp,
+            "saved_protocol_state": self.cycle.saved_protocol_state,
             "awaiting_snapshot_write": self.cycle.phase == BurnoffPhase.RESTORING,
         }
 
@@ -323,7 +322,8 @@ class BurnoffController:
             if self.skip_pending_on_off:
                 self.skip_pending_on_off = False
             elif (
-                not acc.just_completed
+                not self.ha_power_off
+                and not acc.just_completed
                 and prev_mode != RUNNING_MODE_VENTILATION
                 and (prev_step in BURNOFF_HEAT_STEPS or prev_step == RUNNING_STEP_COOLDOWN)
                 and not acc.pending
@@ -421,6 +421,10 @@ class BurnoffController:
         self.cycle.saved_mode = burnoff.get("saved_mode")
         self.cycle.saved_level = burnoff.get("saved_level")
         self.cycle.saved_temp = burnoff.get("saved_temp")
+        saved_protocol_state = burnoff.get("saved_protocol_state")
+        self.cycle.saved_protocol_state = (
+            saved_protocol_state if isinstance(saved_protocol_state, dict) else None
+        )
         self.cycle.ends_at = self._parse_ends_at(burnoff.get("ends_at")) or datetime.now(UTC)
 
         remaining = self.remaining_seconds
@@ -576,31 +580,19 @@ class BurnoffController:
         """Switch to Level mode and set maximum heater level."""
         self.cycle.applying = True
         try:
-            ok = True
-            if self._host.data.get("running_mode") != RUNNING_MODE_LEVEL:
-                ok = bool(await self._host.async_set_mode(RUNNING_MODE_LEVEL))
-            ok = bool(await self._host.async_set_level(MAX_LEVEL)) and ok
-            return ok
+            return bool(await self._host.async_apply_burnoff_max_power(self.cycle))
         finally:
             self.cycle.applying = False
 
     async def restore_saved_mode(self) -> bool:
         """Restore the heating mode and setpoint captured before burn-off."""
-        mode = self.cycle.saved_mode
-        level = self.cycle.saved_level
-        temp = self.cycle.saved_temp
-        if mode is None:
+        if self.cycle.saved_mode is None:
             return True
         if not self.ecu_can_restore():
             return False
         self.cycle.applying = True
         try:
-            ok = bool(await self._host.async_set_mode(int(mode)))
-            if mode == RUNNING_MODE_LEVEL and level is not None:
-                ok = bool(await self._host.async_set_level(int(level))) and ok
-            elif mode == RUNNING_MODE_TEMPERATURE and temp is not None:
-                ok = bool(await self._host.async_set_temperature(float(temp))) and ok
-            return ok
+            return bool(await self._host.async_restore_burnoff_snapshot(self.cycle))
         finally:
             self.cycle.applying = False
 
@@ -706,6 +698,7 @@ class BurnoffController:
             self.cycle.saved_mode = self._host.data.get("running_mode")
             self.cycle.saved_level = self._host.data.get("set_level")
             self.cycle.saved_temp = self._host.data.get("set_temp")
+            self.cycle.saved_protocol_state = self._host.burnoff_protocol_snapshot()
             self.cycle.shutdown_after = shutdown_after
             self.cycle.phase = BurnoffPhase.RUNNING
             duration = self._host.burnoff_duration_minutes

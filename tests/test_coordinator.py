@@ -5577,3 +5577,63 @@ class TestUnifiedBurnoff:
         assert coordinator._burnoff.accumulator.pending is True
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+
+
+class TestBurnoffProtocolNativePaths:
+    @pytest.mark.asyncio
+    async def test_heatgenie_max_power_uses_manual_raw_mode(self):
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 8
+        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator.async_set_level = AsyncMock(return_value=True)
+
+        assert await coordinator.async_apply_burnoff_max_power(
+            coordinator._burnoff.cycle
+        ) is True
+        coordinator._send_command.assert_awaited_once_with(2, 1)
+        coordinator.async_set_level.assert_awaited_once_with(MAX_LEVEL)
+
+    @pytest.mark.asyncio
+    async def test_heatgenie_restore_uses_saved_raw_mode_and_level(self):
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 8
+        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator.async_set_level = AsyncMock(return_value=True)
+        cycle = coordinator._burnoff.cycle
+        cycle.saved_mode = RUNNING_MODE_LEVEL
+        cycle.saved_level = 4
+        cycle.saved_protocol_state = {"heatgenie_run_mode": 1}
+
+        assert await coordinator.async_restore_burnoff_snapshot(cycle) is True
+        coordinator._send_command.assert_awaited_once_with(2, 1)
+        coordinator.async_set_level.assert_awaited_once_with(4)
+
+    @pytest.mark.asyncio
+    async def test_heatgenie_restore_auto_mode_restores_its_target(self):
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 8
+        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator.async_set_temperature = AsyncMock(return_value=True)
+        cycle = coordinator._burnoff.cycle
+        cycle.saved_mode = RUNNING_MODE_TEMPERATURE
+        cycle.saved_temp = 21
+        cycle.saved_protocol_state = {"heatgenie_run_mode": 0}
+
+        assert await coordinator.async_restore_burnoff_snapshot(cycle) is True
+        coordinator._send_command.assert_awaited_once_with(2, 0)
+        coordinator.async_set_temperature.assert_awaited_once_with(21.0)
+
+    @pytest.mark.asyncio
+    async def test_heatgenie_restore_start_stop_does_not_write_auto_target(self):
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 8
+        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator.async_set_temperature = AsyncMock(return_value=True)
+        cycle = coordinator._burnoff.cycle
+        cycle.saved_mode = RUNNING_MODE_TEMPERATURE
+        cycle.saved_temp = 21
+        cycle.saved_protocol_state = {"heatgenie_run_mode": 2}
+
+        assert await coordinator.async_restore_burnoff_snapshot(cycle) is True
+        coordinator._send_command.assert_awaited_once_with(2, 2)
+        coordinator.async_set_temperature.assert_not_awaited()

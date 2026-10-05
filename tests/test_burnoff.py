@@ -60,6 +60,7 @@ def test_storage_payload_writes_phase_and_legacy_flag():
     controller.cycle.shutdown_after = False
     controller.cycle.saved_mode = RUNNING_MODE_TEMPERATURE
     controller.cycle.saved_temp = 21
+    controller.cycle.saved_protocol_state = {"heatgenie_run_mode": 1}
     controller.cycle.ends_at = datetime.now(UTC)
 
     payload = controller.storage_payload()
@@ -68,6 +69,7 @@ def test_storage_payload_writes_phase_and_legacy_flag():
     assert payload["phase"] == BurnoffPhase.RESTORING
     assert payload["awaiting_snapshot_write"] is True
     assert payload["saved_mode"] == RUNNING_MODE_TEMPERATURE
+    assert payload["saved_protocol_state"] == {"heatgenie_run_mode": 1}
 
 
 @pytest.mark.asyncio
@@ -208,3 +210,12 @@ def test_heat_steps_exclude_standby_and_cooldown():
     assert RUNNING_STEP_RUNNING in BURNOFF_HEAT_STEPS
     assert RUNNING_STEP_STANDBY not in BURNOFF_HEAT_STEPS
     assert RUNNING_STEP_COOLDOWN not in BURNOFF_HEAT_STEPS
+
+
+@pytest.mark.asyncio
+async def test_restore_without_snapshot_succeeds_during_cooldown():
+    coordinator = create_mock_coordinator()
+    coordinator.data["running_step"] = RUNNING_STEP_COOLDOWN
+    coordinator._burnoff.cycle.saved_mode = None
+
+    assert await coordinator._burnoff.restore_saved_mode() is True
