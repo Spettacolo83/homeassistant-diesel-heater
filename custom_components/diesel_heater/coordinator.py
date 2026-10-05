@@ -247,7 +247,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             "fuel_remaining": None,
             "fuel_consumed_since_reset": 0.0,
             "last_refueled": None,  # ISO timestamp of last refuel reset
-            "neo_raw_state": None,  # Set only after an authenticated DZ06 status frame
+            "neo_raw_state": None,  # Set only after a confirmed DZ06 Bluetooth status frame
             "neo_run_type": None,
             "neo_min_target": None,
             "neo_max_target": None,
@@ -1471,10 +1471,17 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 })
                 raw_state = data[3]
                 self.data["neo_raw_state"] = raw_state
-                if raw_state in (1, 2, 4, 5):
+                if raw_state == 1:
+                    # The Neo app labels state 1 as self-check, before heating.
+                    self.data["running_state"] = RUNNING_STATE_ON
+                    self.data["running_step"] = None
+                elif raw_state in (2, 3, 4, 5):
                     self.data["running_state"] = RUNNING_STATE_ON
                     self.data["running_step"] = RUNNING_STEP_RUNNING
-                elif raw_state in (0, 7, 8):
+                elif raw_state in (6, 7, 8):
+                    self.data["running_state"] = RUNNING_STATE_OFF
+                    self.data["running_step"] = RUNNING_STEP_COOLDOWN
+                elif raw_state == 0:
                     self.data["running_state"] = RUNNING_STATE_OFF
                     self.data["running_step"] = RUNNING_STEP_STANDBY
                 if run_type == 1:
@@ -1999,7 +2006,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """Return controller settings required for a Neo packet."""
         if use_startup_defaults:
             run_type = self.data.get("neo_run_type", 1)
-            target = self.data.get("set_temp", self.data.get("neo_min_target", 8))
+            target = self.data.get("set_temp", 8)
             altitude = self.data.get("altitude", 1)
         else:
             run_type = self.data.get("neo_run_type")
@@ -2034,10 +2041,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self, run_type: int, target: int, altitude: int
     ) -> bool:
         # Send Neo's app-backed control packet and await its matching status.
-        minimum = self.data.get("neo_min_target", 8)
-        maximum = self.data.get("neo_max_target", 36)
+        minimum = self.data.get("neo_min_target")
+        maximum = self.data.get("neo_max_target")
         try:
-            minimum, maximum = int(minimum), int(maximum)
+            minimum = int(minimum) if minimum is not None else 8
+            maximum = int(maximum) if maximum is not None else 36
         except (TypeError, ValueError):
             return False
         if (
@@ -2378,7 +2386,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
     def burnoff_protocol_snapshot(self) -> dict[str, int]:
         """Return protocol state needed to restore a burn-off snapshot."""
-        snapshot = {"protocol_mode": self._protocol_mode}
+        snapshot: dict[str, int] = {}
         if self._protocol_mode == 8:
             raw_mode = self.data.get("heatgenie_run_mode")
             if raw_mode in (0, 1, 2):
@@ -2387,8 +2395,16 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             settings = self._neo_control_settings()
             if settings is not None:
                 run_type, target, altitude = settings
+                maximum = self.data.get("neo_max_target")
+                if maximum is None:
+                    return snapshot
+                try:
+                    maximum = int(maximum)
+                except (TypeError, ValueError):
+                    return snapshot
                 snapshot.update(
                     {
+                        "neo_max_target": maximum,
                         "neo_run_type": run_type,
                         "neo_target": target,
                         "neo_altitude": altitude,
@@ -2404,16 +2420,16 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             return bool(await self.async_set_level(MAX_LEVEL)) and mode_ok
 
         if self.is_dz06_neo:
-            maximum = self.data.get("neo_max_target")
-            altitude = self.data.get("altitude")
+            snapshot = cycle.saved_protocol_state or {}
             try:
-                maximum, altitude = int(maximum), int(altitude)
-            except (TypeError, ValueError):
-                self._logger.warning(
-                    "DZ06 Neo burn-off requires authenticated target limits"
-                )
+                int(snapshot["neo_run_type"])
+                int(snapshot["neo_target"])
+                altitude = int(snapshot["neo_altitude"])
+                maximum = int(snapshot["neo_max_target"])
+            except (KeyError, TypeError, ValueError):
+                self._logger.warning("DZ06 Neo burn-off requires a restorable status snapshot")
                 return False
-            # Neo manual heating is opcode 0x51, run type 1, at the app's upper target.
+            # The app uses opcode 0x51, run type 1, at its configured upper target.
             return await self._async_set_dz06_neo_control(1, maximum, altitude)
 
         mode_ok = True
@@ -2447,7 +2463,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             mode_ok = bool(await self._send_command(2, raw_mode))
             if raw_mode == 1 and cycle.saved_level is not None:
                 return bool(await self.async_set_level(int(cycle.saved_level))) and mode_ok
-            if raw_mode in (0, 2) and cycle.saved_temp is not None:
+            if raw_mode == 0 and cycle.saved_temp is not None:
                 return bool(await self.async_set_temperature(float(cycle.saved_temp))) and mode_ok
             return mode_ok
 
@@ -2460,12 +2476,6 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
     async def _power_off(self) -> None:
         """Send the real power-off command."""
-        # Do not treat the resulting status transition as an external shutdown.
-        self._burnoff.ha_power_off = True
-        if self.is_dz06_neo:
-            if await self._send_dz06_neo_power(False):
-                await self.async_request_refresh()
-            return
         # ABBA uses a toggle command (0xA1) for both ON and OFF.
         # Skip if already off, and never toggle during cooldown (would restart).
         if self._protocol_mode == 5 and (
@@ -2476,9 +2486,21 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 "ABBA: Heater already off or in cooldown, skipping toggle"
             )
             return
+
+        # Do not treat the resulting status transition as an external shutdown.
+        self._burnoff.ha_power_off = True
+        if self.is_dz06_neo:
+            success = await self._send_dz06_neo_power(False)
+            if success:
+                await self.async_request_refresh()
+            else:
+                self._burnoff.ha_power_off = False
+            return
         success = await self._send_command(3, 0)
         if success:
             await self.async_request_refresh()
+        else:
+            self._burnoff.ha_power_off = False
 
     async def async_start_burnoff(self, *, shutdown_after: bool = True) -> None:
         """Run at max power, optionally shutting down when the timer expires.
@@ -2682,6 +2704,16 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             else:
                 temperature = max(10, min(40, temperature))
                 unit_str = "°C"
+        elif self.is_dz06_neo:
+            minimum = self.data.get("neo_min_target")
+            maximum = self.data.get("neo_max_target")
+            try:
+                minimum = int(minimum) if minimum is not None else 8
+                maximum = int(maximum) if maximum is not None else 36
+            except (TypeError, ValueError):
+                return False
+            temperature = max(minimum, min(maximum, temperature))
+            unit_str = "°C"
         elif self._heater_uses_fahrenheit:
             temperature = max(32, min(104, temperature))
             unit_str = "°F"

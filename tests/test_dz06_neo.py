@@ -11,7 +11,9 @@ from custom_components.diesel_heater.const import (
     CONF_BURNOFF_ENABLED,
     RUNNING_MODE_TEMPERATURE,
     RUNNING_STATE_ON,
+    RUNNING_STEP_COOLDOWN,
     RUNNING_STEP_RUNNING,
+    RUNNING_STEP_STANDBY,
 )
 from custom_components.diesel_heater.coordinator import VevorHeaterCoordinator
 
@@ -69,6 +71,28 @@ def test_5a25_maps_only_observed_states(raw_state: int, expected: int) -> None:
     assert coordinator.data["neo_run_type"] == 2
     assert coordinator.data["neo_raw_state"] == raw_state
     assert coordinator.data["running_state"] == expected
+
+
+@pytest.mark.parametrize(
+    ("raw_state", "expected_step"),
+    [
+        (1, None),
+        (2, RUNNING_STEP_RUNNING),
+        (3, RUNNING_STEP_RUNNING),
+        (4, RUNNING_STEP_RUNNING),
+        (5, RUNNING_STEP_RUNNING),
+        (0, RUNNING_STEP_STANDBY),
+        (6, RUNNING_STEP_COOLDOWN),
+        (7, RUNNING_STEP_COOLDOWN),
+        (8, RUNNING_STEP_COOLDOWN),
+    ],
+)
+def test_5a25_only_maps_evidenced_cooldown_steps(raw_state: int, expected_step: int | None) -> None:
+    coordinator = coordinator_for_layout(True)
+    frame = bytearray(39)
+    frame[:2], frame[3] = b"Z%", raw_state
+    coordinator._notification_callback(FFF2, frame)
+    assert coordinator.data["running_step"] == expected_step
 
 
 def test_5a25_unknown_state_preserves_previous_running_state() -> None:
@@ -256,7 +280,7 @@ async def test_temperature_write_failure_is_logged() -> None:
     coordinator.async_request_refresh.assert_not_awaited()
 
 
-def test_authenticated_config_sets_neo_target_range() -> None:
+def test_bluetooth_config_response_sets_neo_target_range() -> None:
     coordinator = coordinator_for_layout(True)
     coordinator._notification_callback(FFF2, bytearray((0x5C, 0x16, 0, 0, 8, 36)))
     assert coordinator.data["neo_min_target"] == 8
@@ -334,3 +358,40 @@ async def test_ha_neo_power_off_does_not_create_pending_burnoff() -> None:
 
     assert coordinator.burnoff_pending is False
     assert coordinator._burnoff.ha_power_off is False
+
+
+@pytest.mark.asyncio
+async def test_neo_power_off_failure_clears_ha_shutdown_intent() -> None:
+    coordinator = coordinator_for_layout(True)
+    coordinator._send_dz06_neo_power = AsyncMock(return_value=False)
+
+    await coordinator._power_off()
+
+    assert coordinator._burnoff.ha_power_off is False
+    coordinator.async_request_refresh.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_neo_burnoff_requires_a_complete_restorable_snapshot() -> None:
+    coordinator = coordinator_for_layout(True)
+    coordinator._burnoff.cycle.saved_protocol_state = {"neo_altitude": 1500}
+    coordinator._write_gatt = AsyncMock()
+
+    assert await coordinator.async_apply_burnoff_max_power(coordinator._burnoff.cycle) is False
+    coordinator._write_gatt.assert_not_awaited()
+
+
+def test_neo_burnoff_snapshot_captures_the_configured_upper_limit() -> None:
+    coordinator = coordinator_for_layout(True)
+    coordinator.data.update(
+        {
+            "neo_raw_state": 2,
+            "neo_run_type": 2,
+            "set_temp": 22,
+            "altitude": 1500,
+            "neo_min_target": 8,
+            "neo_max_target": 35,
+        }
+    )
+
+    assert coordinator.burnoff_protocol_snapshot()["neo_max_target"] == 35

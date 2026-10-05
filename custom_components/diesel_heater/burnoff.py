@@ -586,6 +586,8 @@ class BurnoffController:
 
     async def restore_saved_mode(self) -> bool:
         """Restore the heating mode and setpoint captured before burn-off."""
+        if self.cycle.saved_mode is None:
+            return True
         if not self.ecu_can_restore():
             return False
         self.cycle.applying = True

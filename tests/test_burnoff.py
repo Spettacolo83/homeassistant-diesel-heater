@@ -210,3 +210,12 @@ def test_heat_steps_exclude_standby_and_cooldown():
     assert RUNNING_STEP_RUNNING in BURNOFF_HEAT_STEPS
     assert RUNNING_STEP_STANDBY not in BURNOFF_HEAT_STEPS
     assert RUNNING_STEP_COOLDOWN not in BURNOFF_HEAT_STEPS
+
+
+@pytest.mark.asyncio
+async def test_restore_without_snapshot_succeeds_during_cooldown():
+    coordinator = create_mock_coordinator()
+    coordinator.data["running_step"] = RUNNING_STEP_COOLDOWN
+    coordinator._burnoff.cycle.saved_mode = None
+
+    assert await coordinator._burnoff.restore_saved_mode() is True
