@@ -75,12 +75,21 @@ class VevorHeaterActiveSensor(
         """Initialize the binary sensor."""
         super().__init__(coordinator)
         self._attr_unique_id = f"{coordinator.address}_active"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, coordinator.address)},
-            "name": "Vevor Diesel Heater",
-            "manufacturer": "Vevor",
-            "model": "Diesel Heater",
-        }
+        self._attr_device_info = (
+            {
+                "identifiers": {(DOMAIN, coordinator.address)},
+                "name": "Webasto Cronus",
+                "manufacturer": "Webasto",
+                "model": "Cronus Smart",
+            }
+            if coordinator.protocol_mode == 9
+            else {
+                "identifiers": {(DOMAIN, coordinator.address)},
+                "name": "Vevor Diesel Heater",
+                "manufacturer": "Vevor",
+                "model": "Diesel Heater",
+            }
+        )
 
     @property
     def is_on(self) -> bool:
@@ -139,12 +148,21 @@ class VevorHeaterConnectedSensor(
         """Initialize the binary sensor."""
         super().__init__(coordinator)
         self._attr_unique_id = f"{coordinator.address}_connected"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, coordinator.address)},
-            "name": "Vevor Diesel Heater",
-            "manufacturer": "Vevor",
-            "model": "Diesel Heater",
-        }
+        self._attr_device_info = (
+            {
+                "identifiers": {(DOMAIN, coordinator.address)},
+                "name": "Webasto Cronus",
+                "manufacturer": "Webasto",
+                "model": "Cronus Smart",
+            }
+            if coordinator.protocol_mode == 9
+            else {
+                "identifiers": {(DOMAIN, coordinator.address)},
+                "name": "Vevor Diesel Heater",
+                "manufacturer": "Vevor",
+                "model": "Diesel Heater",
+            }
+        )
 
     @property
     def is_on(self) -> bool:

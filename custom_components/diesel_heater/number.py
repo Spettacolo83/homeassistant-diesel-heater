@@ -36,17 +36,25 @@ async def async_setup_entry(
     coordinator = entry.runtime_data
     mode = coordinator.protocol_mode
 
-    # Core number entities (all protocols)
-    entities: list[NumberEntity] = [
-        VevorHeaterLevelNumber(coordinator),
-        VevorHeaterTemperatureNumber(coordinator),
-        VevorTankCapacityNumber(coordinator),
-        VevorCurrentFuelLevelNumber(coordinator),
-    ]
+    if mode == 9:
+        # ThermoConnect exposes level and setpoint only for air controllers.
+        entities: list[NumberEntity] = []
+        if coordinator.data.get("cronus_controller_type") == "air":
+            entities.extend([
+                VevorHeaterLevelNumber(coordinator),
+                VevorHeaterTemperatureNumber(coordinator),
+            ])
+    else:
+        entities = [
+            VevorHeaterLevelNumber(coordinator),
+            VevorHeaterTemperatureNumber(coordinator),
+            VevorTankCapacityNumber(coordinator),
+            VevorCurrentFuelLevelNumber(coordinator),
+        ]
 
-    # Offset number (encrypted + CBFF protocols only)
-    if mode in (0, 2, 4, 6):
-        entities.append(VevorHeaterOffsetNumber(coordinator))
+        # Offset number (encrypted + CBFF protocols only)
+        if mode in (0, 2, 4, 6):
+            entities.append(VevorHeaterOffsetNumber(coordinator))
 
     async_add_entities(entities)
 
@@ -74,12 +82,21 @@ class VevorHeaterLevelNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberEn
         """Initialize the number entity."""
         super().__init__(coordinator)
         self._attr_unique_id = f"{coordinator.address}_level"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, coordinator.address)},
-            "name": "Vevor Diesel Heater",
-            "manufacturer": "Vevor",
-            "model": "Diesel Heater",
-        }
+        self._attr_device_info = (
+            {
+                "identifiers": {(DOMAIN, coordinator.address)},
+                "name": "Webasto Cronus",
+                "manufacturer": "Webasto",
+                "model": "Cronus Smart",
+            }
+            if coordinator.protocol_mode == 9
+            else {
+                "identifiers": {(DOMAIN, coordinator.address)},
+                "name": "Vevor Diesel Heater",
+                "manufacturer": "Vevor",
+                "model": "Diesel Heater",
+            }
+        )
 
     @property
     def available(self) -> bool:
@@ -244,12 +261,21 @@ class VevorHeaterOffsetNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberE
         """Initialize the number entity."""
         super().__init__(coordinator)
         self._attr_unique_id = f"{coordinator.address}_heater_offset"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, coordinator.address)},
-            "name": "Vevor Diesel Heater",
-            "manufacturer": "Vevor",
-            "model": "Diesel Heater",
-        }
+        self._attr_device_info = (
+            {
+                "identifiers": {(DOMAIN, coordinator.address)},
+                "name": "Webasto Cronus",
+                "manufacturer": "Webasto",
+                "model": "Cronus Smart",
+            }
+            if coordinator.protocol_mode == 9
+            else {
+                "identifiers": {(DOMAIN, coordinator.address)},
+                "name": "Vevor Diesel Heater",
+                "manufacturer": "Vevor",
+                "model": "Diesel Heater",
+            }
+        )
 
     @property
     def available(self) -> bool:
