@@ -45,7 +45,7 @@ async def async_setup_entry(
 
     # Core select entities (all protocols)
     entities: list[SelectEntity] = [
-        VevorHeaterModeSelect(coordinator),
+        CronusModeSelect(coordinator) if mode == 9 else VevorHeaterModeSelect(coordinator),
     ]
 
     # Config selects (AA66Encrypted + CBFF: language, pump_type, tank_volume)
@@ -67,6 +67,53 @@ async def async_setup_entry(
 
     async_add_entities(entities)
 
+
+class CronusModeSelect(SelectEntity):
+    """ThermoConnect controller mode selector."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Mode"
+    _attr_icon = "mdi:hvac"
+    _attr_options = ["Heating", "Ventilation", "Boost", "Eco"]
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the ThermoConnect mode selector."""
+        self.coordinator = coordinator
+        self._attr_unique_id = f"{coordinator.address}_cronus_mode"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, coordinator.address)},
+            "name": "Webasto Cronus",
+            "manufacturer": "Webasto",
+            "model": "Cronus Smart",
+        }
+
+    @property
+    def available(self) -> bool:
+        """Return whether ThermoConnect has identified this controller."""
+        return (
+            self.coordinator.data.get("connected", False)
+            and self.coordinator.data.get("cronus_controller_type") in ("air", "water")
+        )
+
+    @property
+    def current_option(self) -> str | None:
+        """Return the mode name supplied by ThermoConnect."""
+        mode = self.coordinator.data.get("cronus_mode")
+        return mode.capitalize() if mode else None
+
+    async def async_select_option(self, option: str) -> None:
+        """Write the app's corresponding controller-mode record."""
+        await self.coordinator.async_set_cronus_mode(option.lower())
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to coordinator state changes."""
+        self.async_on_remove(
+            self.coordinator.async_add_listener(self._handle_coordinator_update)
+        )
+
+    def _handle_coordinator_update(self) -> None:
+        """Refresh the entity after the record cache changes."""
+        self.async_write_ha_state()
 
 class VevorHeaterModeSelect(SelectEntity):
     """Select entity for Vevor Heater running mode.

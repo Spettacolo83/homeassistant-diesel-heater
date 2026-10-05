@@ -92,6 +92,12 @@ class VevorHeaterLevelNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberEn
         if not super().available:
             return False
 
+        if self.coordinator.protocol_mode == 9:
+            return (
+                self.coordinator.data.get("cronus_controller_type") == "air"
+                and self.coordinator.data.get("cronus_mode") == "ventilation"
+            )
+
         # Check if in Temperature mode (RUNNING_MODE_TEMPERATURE = 1)
         from .const import RUNNING_MODE_TEMPERATURE
         running_mode = self.coordinator.data.get("running_mode")
@@ -158,6 +164,10 @@ class VevorHeaterTemperatureNumber(
             self._attr_native_unit_of_measurement = UnitOfTemperature.FAHRENHEIT
             self._attr_native_min_value = 32   # 32°F = 0°C (Hcalory F)
             self._attr_native_max_value = 104  # 104°F = 40°C (Hcalory F)
+        elif coordinator.protocol_mode == 9:
+            self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+            self._attr_native_min_value = 5
+            self._attr_native_max_value = 35
         elif is_hcalory:
             self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
             self._attr_native_min_value = 0   # Hcalory Celsius: 0-40°C
@@ -177,6 +187,12 @@ class VevorHeaterTemperatureNumber(
         # First check coordinator availability
         if not super().available:
             return False
+
+        if self.coordinator.protocol_mode == 9:
+            return (
+                self.coordinator.data.get("cronus_controller_type") == "air"
+                and self.coordinator.data.get("cronus_mode") != "ventilation"
+            )
 
         # Check if in Level mode (RUNNING_MODE_LEVEL = 2)
         from .const import RUNNING_MODE_LEVEL

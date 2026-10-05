@@ -33,9 +33,17 @@ async def async_setup_entry(
     # Core binary sensors (all protocols)
     entities: list[BinarySensorEntity] = [
         VevorHeaterActiveSensor(coordinator),
-        VevorHeaterProblemSensor(coordinator),
         VevorHeaterConnectedSensor(coordinator),
     ]
+
+    if mode != 9:
+        entities.append(VevorHeaterProblemSensor(coordinator))
+
+    if mode == 9:
+        entities.extend([
+            VevorCronusContinuousRunSensor(coordinator),
+            VevorCronusInterlockSensor(coordinator),
+        ])
 
     # Auto Start/Stop binary sensor (AA66Encrypted, ABBA, CBFF)
     if mode in (0, 4, 5, 6):
@@ -182,6 +190,70 @@ class VevorComponentActiveSensor(CoordinatorEntity[VevorHeaterCoordinator], Bina
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+
+class VevorCronusContinuousRunSensor(
+    CoordinatorEntity[VevorHeaterCoordinator], BinarySensorEntity
+):
+    """Continuous-run status reported by ThermoConnect."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Continuous Run"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the controller-specific status entity."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_cronus_continuous_run"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, coordinator.address)},
+            "name": "Webasto Cronus",
+            "manufacturer": "Webasto",
+            "model": "Cronus Smart",
+        }
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return the app-reported continuous-run flag."""
+        value = self.coordinator.data.get("cronus_nonstop")
+        return bool(value) if value is not None else None
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Refresh the entity after the record cache changes."""
+        self.async_write_ha_state()
+
+class VevorCronusInterlockSensor(
+    CoordinatorEntity[VevorHeaterCoordinator], BinarySensorEntity
+):
+    """Interlock status reported by ThermoConnect."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Interlock"
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the controller-specific diagnostic entity."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_cronus_interlock"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, coordinator.address)},
+            "name": "Webasto Cronus",
+            "manufacturer": "Webasto",
+            "model": "Cronus Smart",
+        }
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return the app-reported interlock flag."""
+        value = self.coordinator.data.get("cronus_interlock")
+        return bool(value) if value is not None else None
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Refresh the entity after the record cache changes."""
         self.async_write_ha_state()
 
 

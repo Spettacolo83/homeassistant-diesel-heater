@@ -46,34 +46,49 @@ async def async_setup_entry(
     coordinator = entry.runtime_data
     mode = coordinator.protocol_mode
 
-    # Core sensors (all protocols)
+    # Telemetry shared by the established protocols and ThermoConnect.
     entities: list[VevorSensorBase] = [
-        VevorCaseTemperatureSensor(coordinator),
         VevorCabTemperatureSensor(coordinator),
         VevorSupplyVoltageSensor(coordinator),
-        VevorRunningStepSensor(coordinator),
-        VevorRunningModeSensor(coordinator),
-        VevorSetLevelSensor(coordinator),
-        VevorErrorCodeSensor(coordinator),
-        # Diagnostic sensors
         VevorProtocolSensor(coordinator),
-        # Fuel consumption sensors (computed locally, not protocol-dependent)
-        VevorHourlyFuelConsumptionSensor(coordinator),
-        VevorDailyFuelConsumedSensor(coordinator),
-        VevorTotalFuelConsumedSensor(coordinator),
-        VevorDailyFuelHistorySensor(coordinator),
-        # Runtime tracking sensors (computed locally)
-        VevorDailyRuntimeSensor(coordinator),
-        VevorTotalRuntimeSensor(coordinator),
-        VevorDailyRuntimeHistorySensor(coordinator),
-        # Fuel level tracking (computed locally)
-        VevorFuelRemainingSensor(coordinator),
-        VevorLastRefueledSensor(coordinator),
-        VevorFuelConsumedSinceResetSensor(coordinator),
     ]
 
+    if mode != 9 or coordinator.data.get("cronus_controller_type") == "air":
+        entities.append(VevorSetLevelSensor(coordinator))
+
+    if mode != 9:
+        entities.extend([
+            VevorCaseTemperatureSensor(coordinator),
+            VevorErrorCodeSensor(coordinator),
+            # Fuel consumption sensors (computed locally, not protocol-dependent)
+            VevorHourlyFuelConsumptionSensor(coordinator),
+            VevorDailyFuelConsumedSensor(coordinator),
+            VevorTotalFuelConsumedSensor(coordinator),
+            VevorDailyFuelHistorySensor(coordinator),
+            # Runtime tracking sensors (computed locally)
+            VevorDailyRuntimeSensor(coordinator),
+            VevorTotalRuntimeSensor(coordinator),
+            VevorDailyRuntimeHistorySensor(coordinator),
+            # Fuel level tracking (computed locally)
+            VevorFuelRemainingSensor(coordinator),
+            VevorLastRefueledSensor(coordinator),
+            VevorFuelConsumedSinceResetSensor(coordinator),
+        ])
+        entities.extend([
+            VevorRunningStepSensor(coordinator),
+            VevorRunningModeSensor(coordinator),
+        ])
+    else:
+        entities.extend([
+            VevorAuxTemperatureSensor(coordinator, "cronus_external_temperature", "External Temperature"),
+            VevorAuxTemperatureSensor(coordinator, "cronus_coolant_temperature", "Coolant Temperature"),
+            VevorCronusAirPressureSensor(coordinator),
+            VevorCronusDurationSensor(coordinator, "cronus_duration", "Configured Run Duration"),
+            VevorCronusDurationSensor(coordinator, "cronus_max_duration", "Maximum Run Duration"),
+        ])
+
     # Altitude sensor (not available for Hcalory - @Xev, issue #34)
-    if mode != 7:
+    if mode not in (7, 9):
         entities.append(VevorAltitudeSensor(coordinator))
 
     # Extended sensors (encrypted protocols + CBFF: heater_offset, CO, raw temp)
@@ -118,12 +133,21 @@ class VevorSensorBase(CoordinatorEntity[VevorHeaterCoordinator], SensorEntity):
         self._key = key
         self._attr_unique_id = f"{coordinator.address}_{key}"
         self._attr_name = name
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, coordinator.address)},
-            "name": "Vevor Diesel Heater",
-            "manufacturer": "Vevor",
-            "model": "Diesel Heater",
-        }
+        self._attr_device_info = (
+            {
+                "identifiers": {(DOMAIN, coordinator.address)},
+                "name": "Webasto Cronus",
+                "manufacturer": "Webasto",
+                "model": "Cronus Smart",
+            }
+            if coordinator.protocol_mode == 9
+            else {
+                "identifiers": {(DOMAIN, coordinator.address)},
+                "name": "Vevor Diesel Heater",
+                "manufacturer": "Vevor",
+                "model": "Diesel Heater",
+            }
+        )
 
     @property
     def available(self) -> bool:
@@ -205,6 +229,39 @@ class VevorAuxTemperatureSensor(VevorSensorBase):
     def native_value(self) -> float | None:
         """Return the state."""
         return self.coordinator.data.get(self._key)
+
+
+class VevorCronusDurationSensor(VevorSensorBase):
+    """ThermoConnect configured duration, reported in minutes."""
+
+    _attr_native_unit_of_measurement = UnitOfTime.MINUTES
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: VevorHeaterCoordinator, key: str, name: str) -> None:
+        """Initialize a documented controller duration record."""
+        super().__init__(coordinator, key, name)
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the record value in minutes."""
+        return self.coordinator.data.get(self._key)
+
+
+class VevorCronusAirPressureSensor(VevorSensorBase):
+    """Raw air-pressure telemetry reported by ThermoConnect."""
+
+    _attr_icon = "mdi:gauge"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the app-reported value without inventing a unit."""
+        super().__init__(coordinator, "cronus_air_pressure", "Air Pressure")
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the raw value used by ThermoConnect."""
+        return self.coordinator.data.get("cronus_air_pressure")
 
 
 class VevorRawInteriorTemperatureSensor(VevorSensorBase):
