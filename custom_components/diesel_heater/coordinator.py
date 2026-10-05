@@ -1454,7 +1454,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """Handle notification from heater."""
         if self.is_dz06_neo:
             self._notification_data = bytearray(data)
-            if len(data) >= 6 and data[:2] == bytearray((0x5C, 0x16)):
+            if len(data) == 24 and data[:2] == bytearray((0x5C, 0x16)):
                 minimum, maximum = data[4], data[5]
                 if minimum <= maximum:
                     self.data["neo_min_target"] = minimum
@@ -2103,7 +2103,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         while time.monotonic() < deadline:
             await asyncio.sleep(0.1)
             response = self._notification_data
-            if response and len(response) >= 2 and response[:2] == bytearray((0x5C, 0x16)):
+            if response and len(response) == 24 and response[:2] == bytearray((0x5C, 0x16)):
                 return True
         return False
 

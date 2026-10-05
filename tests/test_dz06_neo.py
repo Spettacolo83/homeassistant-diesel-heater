@@ -23,6 +23,14 @@ FFF1 = "0000fff1-0000-1000-8000-00805f9b34fb"
 FFF2 = "0000fff2-0000-1000-8000-00805f9b34fb"
 
 
+def neo_config_response(minimum: int = 8, maximum: int = 36) -> bytearray:
+    """Build the full 0x5C/0x16 configuration frame parsed by the Neo app."""
+    frame = bytearray(24)
+    frame[:2] = bytearray((0x5C, 0x16))
+    frame[4], frame[5] = minimum, maximum
+    return frame
+
+
 def coordinator_for_layout(neo: bool) -> VevorHeaterCoordinator:
     coordinator = VevorHeaterCoordinator.__new__(VevorHeaterCoordinator)
     coordinator._protocol_mode = 0
@@ -137,7 +145,7 @@ async def test_auth_succeeds_only_after_5c16() -> None:
     coordinator = coordinator_for_layout(True)
     coordinator._write_gatt = AsyncMock(
         side_effect=lambda packet: coordinator._notification_callback(
-            FFF2, bytearray.fromhex("5c16")
+            FFF2, neo_config_response()
         )
     )
     assert await coordinator._send_dz06_neo_auth() is True
@@ -150,7 +158,7 @@ async def test_auth_uses_configured_neo_connection_password() -> None:
     coordinator._neo_password = 12345678
     coordinator._write_gatt = AsyncMock(
         side_effect=lambda packet: coordinator._notification_callback(
-            FFF2, bytearray.fromhex("5c16")
+            FFF2, neo_config_response()
         )
     )
     assert await coordinator._send_dz06_neo_auth() is True
@@ -160,7 +168,11 @@ async def test_auth_uses_configured_neo_connection_password() -> None:
 @pytest.mark.asyncio
 async def test_auth_without_5c16_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     coordinator = coordinator_for_layout(True)
-    coordinator._write_gatt = AsyncMock()
+    coordinator._write_gatt = AsyncMock(
+        side_effect=lambda packet: coordinator._notification_callback(
+            FFF2, bytearray.fromhex("5c16")
+        )
+    )
     clock = iter((0, 11))
     fake_time = SimpleNamespace(monotonic=lambda: next(clock, 11.0))
     monkeypatch.setattr(coordinator_module, "time", fake_time)
@@ -282,7 +294,7 @@ async def test_temperature_write_failure_is_logged() -> None:
 
 def test_bluetooth_config_response_sets_neo_target_range() -> None:
     coordinator = coordinator_for_layout(True)
-    coordinator._notification_callback(FFF2, bytearray((0x5C, 0x16, 0, 0, 8, 36)))
+    coordinator._notification_callback(FFF2, neo_config_response())
     assert coordinator.data["neo_min_target"] == 8
     assert coordinator.data["neo_max_target"] == 36
 
