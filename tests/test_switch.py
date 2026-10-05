@@ -768,8 +768,8 @@ class TestAsyncSetupEntry:
 
         async_add_entities.assert_called_once()
         entities = async_add_entities.call_args[0][0]
-        # Mode 2: only power + auto_offset = 2
-        assert len(entities) == 2
+        # Mode 2: power, auto offset, and encrypted-protocol timer = 3
+        assert len(entities) == 3
 
     @pytest.mark.asyncio
     async def test_setup_entry_protocol_mode_4_creates_unit_switches(self):
@@ -786,8 +786,8 @@ class TestAsyncSetupEntry:
 
         async_add_entities.assert_called_once()
         entities = async_add_entities.call_args[0][0]
-        # Mode 4: power + auto_offset + auto_start_stop + temp_unit + altitude_unit = 5
-        assert len(entities) == 5
+        # Mode 4 additionally exposes the encrypted-protocol timer = 6
+        assert len(entities) == 6
 
     @pytest.mark.asyncio
     async def test_setup_entry_protocol_mode_5_creates_abba_switches(self):
