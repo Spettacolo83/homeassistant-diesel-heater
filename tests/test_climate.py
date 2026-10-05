@@ -17,6 +17,8 @@ def create_mock_coordinator() -> MagicMock:
     coordinator.address = "AA:BB:CC:DD:EE:FF"
     coordinator._heater_id = "EE:FF"
     coordinator.last_update_success = True
+    coordinator._heater_uses_fahrenheit = False
+    coordinator.protocol_mode = 0
     coordinator.send_command = AsyncMock(return_value=True)
     coordinator.async_set_temperature = AsyncMock()
     coordinator.async_turn_on = AsyncMock()
@@ -380,7 +382,7 @@ class TestClimateAttributes:
         config_entry = create_mock_config_entry()
         climate = VevorHeaterClimate(coordinator, config_entry)
 
-        assert climate._attr_min_temp == 8
+        assert climate._attr_min_temp == 0
 
     def test_max_temp(self):
         """Test max_temp attribute."""
@@ -388,7 +390,7 @@ class TestClimateAttributes:
         config_entry = create_mock_config_entry()
         climate = VevorHeaterClimate(coordinator, config_entry)
 
-        assert climate._attr_max_temp == 36
+        assert climate._attr_max_temp == 40
 
     def test_target_temperature_step(self):
         """Test target_temperature_step attribute."""
@@ -878,16 +880,15 @@ class TestClimateAsyncSetTemperatureFull:
         assert climate._current_preset is None
 
     @pytest.mark.asyncio
-    async def test_async_set_temperature_converts_to_int(self):
-        """Test async_set_temperature converts float to int."""
+    async def test_async_set_temperature_preserves_float_native_unit(self):
+        """Test async_set_temperature preserves a native-unit float value."""
         coordinator = create_mock_coordinator()
         config_entry = create_mock_config_entry()
         climate = VevorHeaterClimate(coordinator, config_entry)
 
         await climate.async_set_temperature(temperature=22.7)
 
-        # Should be converted to int (22)
-        coordinator.async_set_temperature.assert_called_once_with(22)
+        coordinator.async_set_temperature.assert_called_once_with(22.7)
 
 
 # ---------------------------------------------------------------------------

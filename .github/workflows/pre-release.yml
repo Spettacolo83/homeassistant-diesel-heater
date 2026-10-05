@@ -1,0 +1,53 @@
+name: Pre-release safeguards
+
+# Runs the exhaustive safeguards that prevent the three emergency classes
+# documented in scripts/pre-release-check.sh:
+#   1. PyPI pin drift (beta.3/beta.4)
+#   2. Invalid BT matcher (beta.6/beta.7)
+#   3. Integration setup regression
+#
+# Fires on EVERY tag push (so a bad `v2.1.5-beta.N` is caught before anyone
+# installs it from HACS) and on PRs that touch the surface area these bugs
+# have historically affected: manifest, bundled library source, bluetooth
+# matchers, bundled requirements pin.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  pull_request:
+    paths:
+      - 'custom_components/diesel_heater/manifest.json'
+      - 'custom_components/diesel_heater/**/*.py'
+      - 'diesel_heater_ble/src/**'
+      - 'diesel_heater_ble/pyproject.toml'
+      - 'scripts/pre-release-check.sh'
+      - '.github/workflows/pre-release.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pre-release-check:
+    name: Pre-release safeguards
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install test deps + HA (conftest requirement)
+        run: |
+          python -m pip install --upgrade pip
+          pip install "pytest>=8.0" "pytest-asyncio>=0.21" packaging
+          pip install homeassistant bleak bleak-retry-connector pyserial voluptuous
+          pip install -e ./diesel_heater_ble
+
+      - name: Run pre-release safeguards
+        run: bash scripts/pre-release-check.sh

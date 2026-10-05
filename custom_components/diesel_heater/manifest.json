@@ -42,12 +42,12 @@
     },
     {
       "connectable": true,
-      "local_name": "*boygu*"
+      "local_name": "boygu*"
     },
     {
       "connectable": true,
-      "local_name": "*BOYGU*"
+      "local_name": "BOYGU*"
     }
   ],
-  "version": "2.1.5-beta.6"
+  "version": "2.1.5-beta.8"
 }
