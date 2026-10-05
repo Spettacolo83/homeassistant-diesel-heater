@@ -915,3 +915,20 @@ class TestHandleCoordinatorUpdate:
         switch._handle_coordinator_update()
 
         switch.async_write_ha_state.assert_called_once()
+
+
+class TestCronusSwitchSetup:
+    """ThermoConnect exposes only the APK-backed power switch here."""
+
+    @pytest.mark.asyncio
+    async def test_creates_only_power_switch(self):
+        coordinator = create_mock_coordinator()
+        coordinator.protocol_mode = 9
+        entry = MagicMock(runtime_data=coordinator)
+        async_add_entities = MagicMock()
+
+        await async_setup_entry(MagicMock(), entry, async_add_entities)
+
+        entities = async_add_entities.call_args[0][0]
+        assert len(entities) == 1
+        assert isinstance(entities[0], VevorHeaterPowerSwitch)

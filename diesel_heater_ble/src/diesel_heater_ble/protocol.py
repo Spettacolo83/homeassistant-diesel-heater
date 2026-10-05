@@ -585,6 +585,163 @@ class ProtocolAA66Encrypted(VevorCommandMixin, HeaterProtocol):
         return parsed
 
 
+class ProtocolCronus(HeaterProtocol):
+    """Webasto Cronus Smart record protocol (mode=9)."""
+
+    protocol_mode = 9
+    name = "Webasto Cronus"
+    needs_calibration = False
+
+    _READ = 0x55
+    _WRITE = 0x50
+    _WRITE_CONTINUATION = 0x51
+    _RESPONSE = 0x56
+    _RESPONSE_CONTINUATION = 0x57
+    RECORD_IDS = {
+        "h1_available": 17, "water_state": 25, "water_mode": 16,
+        "water_interlock": 39, "water_state_real": 37, "water_duration": 18,
+        "water_nonstop": 20, "water_max_duration": 22, "air_state": 26,
+        "air_mode": 48, "air_interlock": 40, "air_state_real": 36,
+        "air_duration": 53, "air_nonstop": 19, "air_max_duration": 21,
+        "air_level": 49, "air_setpoint": 50, "air_setpoint_boost": 27,
+        "air_setpoint_eco": 28, "temp_int": 32, "temp_ext": 33,
+        "temp_coolant": 34, "voltage": 24, "air_pressure": 23,
+        "timer_available": 73, "timer_disposable_day": 74,
+        "timer_assignment": 71, "activated_timers": 72, "timer_mo": 75,
+        "timer_tu": 76, "timer_we": 77, "timer_th": 78, "timer_fr": 79,
+        "timer_sa": 80, "timer_su": 81, "time": 97,
+    }
+    POWER_RECORD_ID = 0x81
+    _AIR_MODE_NAMES = {0: "heating", 1: "ventilation", 2: "boost", 3: "eco"}
+    _ACTIVE_STATES = {1, 2, 3, 4, 5}
+
+    @classmethod
+    def build_read_record(cls, record_id: int) -> bytearray:
+        """Build the app's one-record read request."""
+        return bytearray((0, 0, 0, 0, cls._READ, 0, 1, record_id))
+
+    @classmethod
+    def build_write_record(cls, record_id: int, payload: bytes | bytearray) -> bytearray:
+        """Build the app's record write, including its 6/7-byte fragmentation."""
+        payload = bytes(payload)
+        first_size = min(6, len(payload))
+        packet = bytearray((0, 0, 0, 0, cls._WRITE, 0, first_size + 2, record_id, len(payload)))
+        packet.extend(payload[:first_size])
+        offset = first_size
+        while offset < len(payload):
+            chunk = payload[offset : offset + 7]
+            packet.extend((0, 0, 0, 0, cls._WRITE_CONTINUATION, 0, len(chunk) + 1, record_id))
+            packet.extend(chunk)
+            offset += len(chunk)
+        return packet
+
+    @classmethod
+    def build_power_command(cls, enabled: bool) -> bytearray:
+        """Build the app's Cronus auxiliary-heater on/off record write."""
+        return cls.build_write_record(cls.POWER_RECORD_ID, bytes((1, int(enabled))))
+
+    @classmethod
+    def parse_frame(cls, data: bytearray) -> tuple[int, bytes, int, bool] | None:
+        """Parse one response fragment into id, payload, total length, completion."""
+        if len(data) < 8:
+            return None
+        frame_type = data[4]
+        record_id = data[7]
+        if frame_type == cls._RESPONSE:
+            if len(data) < 10 or data[8] != 0:
+                return None
+            total_length = data[9]
+            payload = bytes(data[10 : 10 + min(total_length, 5)])
+            return record_id, payload, total_length, len(payload) >= total_length
+        if frame_type == cls._RESPONSE_CONTINUATION:
+            payload_length = max(0, data[6] - 1)
+            return record_id, bytes(data[8 : 8 + payload_length]), -1, False
+        return None
+
+    @staticmethod
+    def _int(records: dict[str, bytes], key: str, default: int | None = None) -> int | None:
+        value = records.get(key)
+        return int.from_bytes(value, "big") if value else default
+
+    def parse_records(self, records: dict[str, bytes]) -> dict[str, Any] | None:
+        """Normalize a complete Cronus record cache into integration state."""
+        controller_type = self._int(records, "h1_available")
+        if controller_type is None:
+            return None
+        prefix = "water" if controller_type == 1 else "air"
+        state = self._int(records, f"{prefix}_state")
+        state_real = self._int(records, f"{prefix}_state_real")
+        mode = self._int(records, f"{prefix}_mode")
+        interlock = self._int(records, f"{prefix}_interlock", 0)
+        parsed: dict[str, Any] = {
+            "connected": True, "cronus_controller_type": prefix,
+            "cronus_mode": self._AIR_MODE_NAMES.get(mode),
+            "cronus_state": state, "cronus_state_real": state_real,
+            "cronus_interlock": bool(interlock),
+            "running_state": int(state in self._ACTIVE_STATES) if state is not None else None,
+            "running_step": state_real,
+        }
+        for record_name, state_name in (
+            (f"{prefix}_duration", "cronus_duration"),
+            (f"{prefix}_max_duration", "cronus_max_duration"),
+            (f"{prefix}_nonstop", "cronus_nonstop"),
+        ):
+            value = self._int(records, record_name)
+            if value is not None:
+                parsed[state_name] = value
+
+        voltage = self._int(records, "voltage")
+        if voltage is not None:
+            parsed["supply_voltage"] = voltage / 1000
+        for record_name, state_name in (
+            ("temp_int", "cab_temperature"),
+            ("temp_ext", "cronus_external_temperature"),
+            ("temp_coolant", "cronus_coolant_temperature"),
+        ):
+            value = self._int(records, record_name)
+            if value is not None:
+                parsed[state_name] = value - 50
+        pressure = self._int(records, "air_pressure")
+        if pressure is not None:
+            parsed["cronus_air_pressure"] = pressure
+        if prefix == "air":
+            mode_name = parsed["cronus_mode"]
+            setpoint_key = {
+                "heating": "air_setpoint",
+                "boost": "air_setpoint_boost",
+                "eco": "air_setpoint_eco",
+            }.get(mode_name)
+            if setpoint_key:
+                setpoint = self._int(records, setpoint_key)
+                if setpoint is not None:
+                    parsed["set_temp"] = setpoint - 50
+            level = self._int(records, "air_level")
+            if level is not None:
+                parsed["set_level"] = level
+            parsed["running_mode"] = 2 if mode_name == "ventilation" else 1
+        return {key: value for key, value in parsed.items() if value is not None}
+
+    def parse(self, data: bytearray) -> dict[str, Any] | None:
+        """Cronus has no standalone status frame; parse one complete record."""
+        frame = self.parse_frame(data)
+        if frame is None:
+            return None
+        record_id, payload, total_length, complete = frame
+        if not complete or total_length < 0:
+            return None
+        for name, known_id in self.RECORD_IDS.items():
+            if known_id == record_id:
+                return self.parse_records({name: payload})
+        return None
+
+    def build_command(self, command: int, argument: int, passkey: int) -> bytearray:
+        """Build common commands backed by direct app evidence."""
+        del passkey
+        if command == 3:
+            return self.build_power_command(bool(argument))
+        raise ValueError(f"Cronus commands are record-based: {command}")
+
+
 class ProtocolHeatGenie(HeaterProtocol):
     """HeatGenie / Boygu controller protocol (mode=8)."""
 

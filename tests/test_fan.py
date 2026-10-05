@@ -391,3 +391,18 @@ class TestAsyncSetupEntry:
         call_args = async_add_entities.call_args[0][0]
         assert len(call_args) == 1
         assert isinstance(call_args[0], VevorHeaterFan)
+
+
+class TestCronusFanSetup:
+    """ThermoConnect has a record-backed level number, not the generic fan."""
+
+    @pytest.mark.asyncio
+    async def test_does_not_create_generic_fan(self):
+        coordinator = create_mock_coordinator()
+        coordinator.protocol_mode = 9
+        entry = MagicMock(runtime_data=coordinator)
+        async_add_entities = MagicMock()
+
+        await async_setup_entry(MagicMock(), entry, async_add_entities)
+
+        async_add_entities.assert_not_called()

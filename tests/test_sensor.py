@@ -1303,3 +1303,30 @@ class TestHandleCoordinatorUpdate:
         sensor._handle_coordinator_update()
 
         sensor.async_write_ha_state.assert_called_once()
+
+
+class TestCronusSensorSetup:
+    """ThermoConnect creates only record-backed telemetry."""
+
+    @pytest.mark.asyncio
+    async def test_water_omits_air_and_calculated_sensors(self):
+        coordinator = create_mock_coordinator(protocol_mode=9)
+        coordinator.data.update(
+            cronus_controller_type="water",
+            cronus_duration=60,
+            cronus_max_duration=120,
+            cronus_external_temperature=5,
+            cronus_coolant_temperature=70,
+            cronus_air_pressure=4,
+        )
+        entry = MagicMock(runtime_data=coordinator)
+        async_add_entities = MagicMock()
+
+        await async_setup_entry(MagicMock(), entry, async_add_entities)
+
+        entities = async_add_entities.call_args[0][0]
+        assert not any(isinstance(entity, VevorSetLevelSensor) for entity in entities)
+        assert not any(isinstance(entity, VevorCaseTemperatureSensor) for entity in entities)
+        assert not any(isinstance(entity, VevorErrorCodeSensor) for entity in entities)
+        assert not any(isinstance(entity, VevorHourlyFuelConsumptionSensor) for entity in entities)
+        assert not any(isinstance(entity, VevorAltitudeSensor) for entity in entities)

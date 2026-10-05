@@ -82,6 +82,12 @@ DZ06_NEO_NOTIFY_UUID: Final = ABBA_WRITE_UUID
 # HeatGenie / Boygu controller family
 HEATGENIE_SERVICE_UUID: Final = "0000181a-0000-1000-8000-00805f9b34fb"
 
+# Webasto ThermoConnect Cronus Smart controller family. The APK identifies
+# these characteristics directly; it does not require a service UUID match.
+CRONUS_WRITE_UUID: Final = "2ed964d9-1371-45ee-a84b-1d134d5ce7b7"
+CRONUS_NOTIFY_UUID: Final = "4229d528-33d0-4aa7-9af1-00b03fc128f9"
+
+
 # Hcalory Protocol (MVP1 and MVP2 heaters)
 # MVP1 uses service fff0, MVP2 uses service bd39
 HCALORY_MVP1_SERVICE_UUID: Final = "0000fff0-0000-1000-8000-00805f9b34fb"
@@ -300,4 +306,5 @@ PROTOCOL_MODE_NAMES: Final = {
     6: "CBFF (Sunster)",
     7: "Hcalory",
     8: "HeatGenie",
+    9: "Webasto Cronus",
 }

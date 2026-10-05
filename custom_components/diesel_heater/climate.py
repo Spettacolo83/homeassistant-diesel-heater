@@ -95,6 +95,10 @@ class VevorHeaterClimate(
             self._attr_min_temp = 50 if coordinator.protocol_mode == 8 else 32  # 32°F = 0°C
             self._attr_max_temp = 104  # 104°F = 40°C
             self._attr_target_temperature_step = 1.0  # 1°F step (72 possible values)
+        elif coordinator.protocol_mode == 9:
+            self._attr_temperature_unit = UnitOfTemperature.CELSIUS
+            self._attr_min_temp = 5
+            self._attr_max_temp = 35
         else:
             self._attr_temperature_unit = UnitOfTemperature.CELSIUS
             self._attr_min_temp = 10 if coordinator.protocol_mode == 8 else 0  # Hcalory supports 0-40°C, other protocols 8-36°C
@@ -114,6 +118,31 @@ class VevorHeaterClimate(
         target = last_state.attributes.get(ATTR_TEMPERATURE)
         if isinstance(target, (int, float)) and 8 <= target <= 36:
             self._restored_abba_target = float(target)
+
+
+
+    @property
+    def supported_features(self) -> ClimateEntityFeature:
+        """Return only controls documented for the active controller."""
+        if self.coordinator.protocol_mode != 9:
+            return self._attr_supported_features
+        power_features = ClimateEntityFeature.TURN_OFF | ClimateEntityFeature.TURN_ON
+        if self.coordinator.data.get("cronus_controller_type") != "air":
+            return power_features
+        if self.coordinator.data.get("cronus_mode") == "ventilation":
+            return power_features
+        return power_features | ClimateEntityFeature.TARGET_TEMPERATURE
+
+
+
+    @property
+    def preset_modes(self) -> list[str] | None:
+        """Cronus does not expose the integration-specific temperature presets."""
+        if self.coordinator.protocol_mode == 9:
+            return None
+        return self._attr_preset_modes
+
+
 
     @property
     def current_temperature(self) -> float | None:
@@ -149,6 +178,15 @@ class VevorHeaterClimate(
         """
         running_step = self.coordinator.data.get("running_step")
         running_state = self.coordinator.data.get("running_state", 0)
+
+        if self.coordinator.protocol_mode == 9:
+            if running_state != 1:
+                return HVACAction.OFF
+            return (
+                HVACAction.FAN
+                if self.coordinator.data.get("cronus_mode") == "ventilation"
+                else HVACAction.HEATING
+            )
 
         if running_step is None:
             return None

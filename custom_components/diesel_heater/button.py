@@ -21,6 +21,8 @@ async def async_setup_entry(
 ) -> None:
     """Set up Vevor Heater buttons."""
     coordinator = entry.runtime_data
+    if coordinator.protocol_mode == 9:
+        return
 
     async_add_entities([
         VevorTimeSyncButton(coordinator),

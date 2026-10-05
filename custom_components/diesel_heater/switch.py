@@ -35,7 +35,7 @@ async def async_setup_entry(
     ]
 
     # Auto Temperature Offset (not available for Hcalory - @Xev, issue #34)
-    if mode not in (7, 8):
+    if mode not in (7, 8, 9):
         entities.append(VevorAutoOffsetSwitch(coordinator))
 
     # Auto Start/Stop (AA66Encrypted, ABBA, CBFF, Hcalory)
@@ -73,12 +73,21 @@ class VevorHeaterPowerSwitch(CoordinatorEntity[VevorHeaterCoordinator], SwitchEn
         """Initialize the switch."""
         super().__init__(coordinator)
         self._attr_unique_id = f"{coordinator.address}_power"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, coordinator.address)},
-            "name": "Vevor Diesel Heater",
-            "manufacturer": "Vevor",
-            "model": "Diesel Heater",
-        }
+        self._attr_device_info = (
+            {
+                "identifiers": {(DOMAIN, coordinator.address)},
+                "name": "Webasto Cronus",
+                "manufacturer": "Webasto",
+                "model": "Cronus Smart",
+            }
+            if coordinator.protocol_mode == 9
+            else {
+                "identifiers": {(DOMAIN, coordinator.address)},
+                "name": "Vevor Diesel Heater",
+                "manufacturer": "Vevor",
+                "model": "Diesel Heater",
+            }
+        )
 
     @property
     def is_on(self) -> bool:

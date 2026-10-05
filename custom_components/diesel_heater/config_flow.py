@@ -65,6 +65,7 @@ def _is_likely_heater(discovery_info: BluetoothServiceInfoBleak) -> bool:
     return (
         _is_heatgenie_device(discovery_info)
         or any(name.startswith(prefix) for prefix in HEATER_NAME_PREFIXES)
+        or "CRONUS" in name
         or (name.startswith("HEATER") and name[6:].isdigit())
     )
 

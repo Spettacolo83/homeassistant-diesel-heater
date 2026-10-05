@@ -43,6 +43,8 @@ from .const import (
     CONF_NEO_PASSWORD,
     CONF_PIN,
     CONF_TEMPERATURE_OFFSET,
+    CRONUS_NOTIFY_UUID,
+    CRONUS_WRITE_UUID,
     DEFAULT_AUTO_OFFSET_MAX,
     DEFAULT_FORCE_TEMP_UNIT,
     DEFAULT_NEO_PASSWORD,
@@ -94,6 +96,7 @@ from diesel_heater_ble import (
     ProtocolAA66,
     ProtocolAA66Encrypted,
     ProtocolABBA,
+    ProtocolCronus,
     ProtocolHeatGenie,
     ProtocolCBFF,
     ProtocolHcalory,
@@ -167,11 +170,20 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             6: cbff,
             8: ProtocolHeatGenie(),
             7: ProtocolHcalory(),
+            9: ProtocolCronus(),
         }
         self._is_abba_device = False  # True if using ABBA/HeaterCC protocol
         self._abba_write_char = None  # ABBA devices use separate write characteristic
         self._is_heatgenie_device = False
         self._heatgenie_write_char = None
+        self._is_cronus_device = False
+        self._cronus_write_char = None
+        self._cronus_records: dict[str, bytes] = {}
+        self._cronus_pending_id: int | None = None
+        self._cronus_pending_data = bytearray()
+        self._cronus_expected_length = 0
+        self._cronus_response_event = asyncio.Event()
+        self._cronus_write_event = asyncio.Event()
         self._v21_handshake_sent = False  # Track if Sunster V2.1 handshake was sent
         self._is_hcalory_device = False  # True if using Hcalory MVP1/MVP2 protocol
         self._hcalory_write_char = None  # Hcalory devices use separate write characteristic
@@ -187,7 +199,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._last_valid_data: dict[str, Any] = {}  # Cache of last valid sensor readings
         self._heater_uses_fahrenheit: bool = False  # Detected from heater response
         self._force_temp_unit: str = force_temp_unit
-        
+
         # Current state
         self.data: dict[str, Any] = {
             "running_state": None,
@@ -273,6 +285,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 return "CBFF V2.1 (Encrypted)"
 
         return base_name
+
+    @property
+    def is_cronus_device(self) -> bool:
+        """Return whether the advertised name matches ThermoConnect Cronus."""
+        return "CRONUS" in (self._ble_device.name or "").upper()
 
     @property
     def is_dz06_neo(self) -> bool:
@@ -438,6 +455,102 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         # Calculate initial offset
         await self._async_calculate_auto_offset()
+
+    def _handle_cronus_notification(self, data: bytearray) -> None:
+        """Collect one ThermoConnect record reply or write acknowledgement."""
+        self._notification_data = data
+        if len(data) >= 9 and data[4] == 0x52:
+            self._cronus_write_event.set()
+            return
+
+        frame = self._protocols[9].parse_frame(data)
+        if frame is None:
+            return
+        record_id, fragment, total_length, complete = frame
+        if record_id != self._cronus_pending_id:
+            return
+        if total_length >= 0:
+            self._cronus_pending_data = bytearray(fragment)
+            self._cronus_expected_length = total_length
+        else:
+            self._cronus_pending_data.extend(fragment)
+        if complete or (
+            self._cronus_expected_length
+            and len(self._cronus_pending_data) >= self._cronus_expected_length
+        ):
+            self._cronus_response_event.set()
+
+    async def _async_read_cronus_record(self, name: str) -> bool:
+        """Read one documented ThermoConnect record into the local cache."""
+        protocol = self._protocols[9]
+        assert isinstance(protocol, ProtocolCronus)
+        record_id = protocol.RECORD_IDS[name]
+        self._cronus_pending_id = record_id
+        self._cronus_pending_data = bytearray()
+        self._cronus_expected_length = 0
+        self._cronus_response_event.clear()
+        await self._write_gatt(protocol.build_read_record(record_id))
+        try:
+            await asyncio.wait_for(self._cronus_response_event.wait(), timeout=3)
+        except TimeoutError:
+            self._logger.debug("Cronus record %s (0x%02X) did not reply", name, record_id)
+            return False
+        self._cronus_records[name] = bytes(self._cronus_pending_data)
+        return True
+
+    async def _async_write_cronus_record(self, name: str, payload: bytes) -> bool:
+        """Write one documented ThermoConnect record and wait for its ack."""
+        protocol = self._protocols[9]
+        assert isinstance(protocol, ProtocolCronus)
+        self._cronus_write_event.clear()
+        await self._write_gatt(protocol.build_write_record(protocol.RECORD_IDS[name], payload))
+        try:
+            await asyncio.wait_for(self._cronus_write_event.wait(), timeout=3)
+        except TimeoutError:
+            self._logger.debug("Cronus write %s did not acknowledge", name)
+            return False
+        return True
+
+    async def _async_update_cronus_data(self) -> dict[str, Any]:
+        """Poll the controller-specific record set used by ThermoConnect."""
+        if not await self._async_read_cronus_record("h1_available"):
+            raise UpdateFailed("Cronus controller type did not reply")
+
+        is_water = self._cronus_records["h1_available"] == bytes((1,))
+        prefix = "water" if is_water else "air"
+        record_names = [
+            f"{prefix}_state",
+            f"{prefix}_state_real",
+            f"{prefix}_mode",
+            f"{prefix}_interlock",
+            f"{prefix}_duration",
+            f"{prefix}_nonstop",
+            f"{prefix}_max_duration",
+            "temp_int",
+            "temp_ext",
+            "temp_coolant",
+            "voltage",
+        ]
+        if not is_water:
+            record_names.extend((
+                "air_level",
+                "air_setpoint",
+                "air_setpoint_boost",
+                "air_setpoint_eco",
+                "air_pressure",
+            ))
+        for name in record_names:
+            await self._async_read_cronus_record(name)
+
+        protocol = self._protocols[9]
+        assert isinstance(protocol, ProtocolCronus)
+        parsed = protocol.parse_records(self._cronus_records)
+        if parsed is None:
+            raise UpdateFailed("Cronus record cache was incomplete")
+        self.data.update(parsed)
+        self._last_valid_data = self.data.copy()
+        self._consecutive_failures = 0
+        return self.data
 
     @callback
     def _async_external_temp_changed(self, event) -> None:
@@ -1059,7 +1172,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 await self._ensure_connected()
                 # Beta.34: Auto-sync time on successful connection (@Wheemer, issue #38)
                 # This was previously only done for Hcalory MVP2, now extended to all protocols
-                if not self._time_synced_this_session:
+                if not self._time_synced_this_session and not getattr(self, "_is_cronus_device", False):
                     try:
                         self._logger.debug("Auto-syncing time after connection...")
                         await asyncio.sleep(0.5)  # Give heater time to initialize
@@ -1073,6 +1186,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 raise UpdateFailed(f"Failed to connect: {err}")
 
         try:
+            if getattr(self, "_is_cronus_device", False):
+                return await self._async_update_cronus_data()
+
             # Request status with retries (up to 3 attempts)
             max_retries = 3
             status = False
@@ -1221,6 +1337,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._hcalory_write_char = None
             self._is_heatgenie_device = False
             self._heatgenie_write_char = None
+            self._is_cronus_device = False
+            self._cronus_write_char = None
+            self._cronus_records = {}
+            self._cronus_pending_id = None
+            self._cronus_pending_data = bytearray()
+            self._cronus_expected_length = 0
 
             # First, check for Hcalory MVP2 device (service bd39)
             for service in self._client.services:
@@ -1335,8 +1457,45 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     self._logger.info("Detected HeatGenie/Boygu heater")
                     break
 
-            # If not ABBA or Hcalory, try Vevor UUIDs
-            if not self._is_abba_device and not self._is_hcalory_device and not self._is_heatgenie_device:
+            # ThermoConnect scans only CRONUS names, then locates this exact
+            # proprietary notify/write UUID pair across the discovered GATT tree.
+            if (
+                not self._is_abba_device
+                and not self._is_hcalory_device
+                and not self._is_heatgenie_device
+                and self.is_cronus_device
+            ):
+                all_chars = [
+                    char
+                    for service in self._client.services
+                    for char in service.characteristics
+                ]
+                notify_char = next(
+                    (char for char in all_chars if char.uuid.lower() == CRONUS_NOTIFY_UUID),
+                    None,
+                )
+                write_char = next(
+                    (char for char in all_chars if char.uuid.lower() == CRONUS_WRITE_UUID),
+                    None,
+                )
+                if notify_char and write_char and (
+                    "notify" in notify_char.properties or "indicate" in notify_char.properties
+                ) and ("write" in write_char.properties or "write-without-response" in write_char.properties):
+                    self._is_cronus_device = True
+                    self._cronus_write_char = write_char
+                    self._characteristic = notify_char
+                    self._active_char_uuid = notify_char.uuid
+                    self._protocol_mode = 9
+                    self._protocol = self._protocols[9]
+                    self._logger.info("Detected Webasto ThermoConnect Cronus controller")
+
+            # If not ABBA, Hcalory, HeatGenie, or Cronus, try Vevor UUIDs
+            if (
+                not self._is_abba_device
+                and not self._is_hcalory_device
+                and not self._is_heatgenie_device
+                and not self._is_cronus_device
+            ):
                 # Define UUID pairs to try: (service_uuid, characteristic_uuid)
                 uuid_pairs = [
                     (SERVICE_UUID, CHARACTERISTIC_UUID),
@@ -1397,6 +1556,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 if not await self._send_dz06_neo_auth():
                     await self._cleanup_connection()
                     raise BleakError("DZ06 Neo authorization failed")
+            elif self._is_cronus_device:
+                self._logger.debug("Cronus ready; polling record cache")
             else:
                 await self._send_wake_up_ping()
 
@@ -1429,6 +1590,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 elif raw_state in (0, 7, 8):
                     self.data["running_state"] = 0
             return
+        if getattr(self, "_is_cronus_device", False):
+            self._handle_cronus_notification(bytearray(data))
+            return
+
         # Log ALL received data for debugging
         self._logger.info(
             "📩 Received BLE data (%d bytes): %s",
@@ -1866,7 +2031,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         Uses response=False to avoid authorization issues with BLE
         proxies (e.g., ESPHome BLE proxy). The heater sends a notification as response.
         """
-        if getattr(self, "_is_heatgenie_device", False) and getattr(self, "_heatgenie_write_char", None):
+        if getattr(self, "_is_cronus_device", False) and getattr(self, "_cronus_write_char", None):
+            write_char = self._cronus_write_char
+            char_uuid = write_char.uuid
+            protocol_name = "Webasto Cronus"
+        elif getattr(self, "_is_heatgenie_device", False) and getattr(self, "_heatgenie_write_char", None):
             write_char = self._heatgenie_write_char
             char_uuid = write_char.uuid
             protocol_name = "HeatGenie"
@@ -2227,6 +2396,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         - AAXX protocols use SAME command (cmd 4) for both level and temperature
         """
         level = max(1, min(10, level))
+        if self._protocol_mode == 9:
+            if self.data.get("cronus_controller_type") != "air":
+                self._logger.warning("Cronus water controllers do not expose an air level")
+                return
+            if await self._async_write_cronus_record("air_level", bytes((level,))):
+                await self.async_request_refresh()
+            return
 
         if self._protocol_mode == 5:  # ABBA/HeaterCC uses level up/down button commands
             current_level_raw = self.data.get("set_level")
@@ -2295,6 +2471,24 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """
         current_temp = self.data.get("set_temp", "unknown")
         current_mode = self.data.get("running_mode", "unknown")
+        if self._protocol_mode == 9:
+            if self.data.get("cronus_controller_type") != "air":
+                self._logger.warning("Cronus water controllers do not expose an air setpoint")
+                return
+            temperature = max(5, min(35, temperature))
+            record_name = {
+                "heating": "air_setpoint",
+                "boost": "air_setpoint_boost",
+                "eco": "air_setpoint_eco",
+            }.get(self.data.get("cronus_mode"))
+            if record_name is None:
+                self._logger.warning("Cronus ventilation mode has no temperature setpoint")
+                return
+            if await self._async_write_cronus_record(
+                record_name, bytes((round(temperature) + 50,))
+            ):
+                await self.async_request_refresh()
+            return
 
         # Per-protocol clamping
         if self._protocol_mode == 8:
@@ -2360,6 +2554,23 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             )
         else:
             self._logger.warning("🌡️ SET TEMPERATURE FAILED: command not sent successfully")
+
+    async def async_set_cronus_mode(self, mode_name: str) -> None:
+        """Set a controller mode exposed by ThermoConnect."""
+        controller_type = self.data.get("cronus_controller_type")
+        if self._protocol_mode != 9 or controller_type not in ("air", "water"):
+            self._logger.warning("Cronus mode is unavailable until the controller type is known")
+            return
+        mode_value = {
+            "heating": 0,
+            "ventilation": 1,
+            "boost": 2,
+            "eco": 3,
+        }.get(mode_name)
+        if mode_value is None:
+            raise ValueError(f"Unknown Cronus mode: {mode_name}")
+        if await self._async_write_cronus_record(f"{controller_type}_mode", bytes((mode_value,))):
+            await self.async_request_refresh()
 
     async def async_set_mode(self, mode: int) -> None:
         """Set running mode (0=Manual, 1=Level, 2=Temperature, 3=Ventilation).

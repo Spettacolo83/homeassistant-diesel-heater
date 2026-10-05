@@ -230,3 +230,18 @@ class TestButtonAttributes:
 
         assert button._attr_device_info is not None
         assert "identifiers" in button._attr_device_info
+
+
+class TestCronusButtonSetup:
+    """ThermoConnect does not inherit unimplemented generic buttons."""
+
+    @pytest.mark.asyncio
+    async def test_does_not_create_generic_buttons(self):
+        coordinator = create_mock_coordinator()
+        coordinator.protocol_mode = 9
+        entry = MagicMock(runtime_data=coordinator)
+        async_add_entities = MagicMock()
+
+        await async_setup_entry(MagicMock(), entry, async_add_entities)
+
+        async_add_entities.assert_not_called()

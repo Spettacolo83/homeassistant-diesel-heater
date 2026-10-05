@@ -154,6 +154,15 @@ class TestBluetoothDiscovery:
 
 
 # ---------------------------------------------------------------------------
+
+    async def test_cronus_discovery_accepts_the_app_name_pattern(self):
+        flow = VevorHeaterConfigFlow()
+        discovery = _make_ble_discovery(name="Webasto CRONUS Smart")
+
+        result = await flow.async_step_bluetooth(discovery)
+
+        assert result["type"] == "form"
+        assert result["step_id"] == "confirm"
 # Confirm step (after bluetooth discovery)
 # ---------------------------------------------------------------------------
 
