@@ -102,6 +102,8 @@ class VevorHeaterLevelNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberEn
                 "model": "Diesel Heater",
             }
         )
+        if coordinator.protocol_mode == 9:
+            self._attr_native_max_value = 4
 
     @property
     def available(self) -> bool:
@@ -172,12 +174,21 @@ class VevorHeaterTemperatureNumber(
         """
         super().__init__(coordinator)
         self._attr_unique_id = f"{coordinator.address}_target_temp"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, coordinator.address)},
-            "name": "Vevor Diesel Heater",
-            "manufacturer": "Vevor",
-            "model": "Diesel Heater",
-        }
+        self._attr_device_info = (
+            {
+                "identifiers": {(DOMAIN, coordinator.address)},
+                "name": "Webasto Cronus",
+                "manufacturer": "Webasto",
+                "model": "Cronus Smart",
+            }
+            if coordinator.protocol_mode == 9
+            else {
+                "identifiers": {(DOMAIN, coordinator.address)},
+                "name": "Vevor Diesel Heater",
+                "manufacturer": "Vevor",
+                "model": "Diesel Heater",
+            }
+        )
 
         # Set unit and range based on heater's native unit and protocol
         # Beta.41 fix: Per-protocol limits (Hcalory: 0-40°C, AAXX: 8-36°C)

@@ -87,6 +87,8 @@ async def async_setup_entry(
             VevorCronusDurationSensor(coordinator, "cronus_duration", "Configured Run Duration"),
             VevorCronusDurationSensor(coordinator, "cronus_max_duration", "Maximum Run Duration"),
         ])
+        if coordinator.data.get("cronus_controller_type") == "water":
+            entities.append(VevorCronusModeSensor(coordinator))
         if coordinator.data.get("cronus_controller_type") == "air":
             entities.append(VevorCronusAirPressureSensor(coordinator))
 
@@ -248,6 +250,21 @@ class VevorCronusDurationSensor(VevorSensorBase):
     @property
     def native_value(self) -> int | None:
         """Return the record value in minutes."""
+        return self.coordinator.data.get(self._key)
+
+
+class VevorCronusModeSensor(VevorSensorBase):
+    """Read-only mode reported by a ThermoConnect water controller."""
+
+    _attr_icon = "mdi:hvac"
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the app-reported water-controller mode."""
+        super().__init__(coordinator, "cronus_mode", "Mode")
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the current mode without exposing an unsupported control."""
         return self.coordinator.data.get(self._key)
 
 

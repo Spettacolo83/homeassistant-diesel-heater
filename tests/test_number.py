@@ -71,6 +71,13 @@ class TestVevorHeaterLevelNumber:
 
         assert number._attr_native_max_value == 10
 
+    def test_cronus_air_level_maximum_is_four(self):
+        """ThermoConnect exposes air level 1-4 only in ventilation mode."""
+        coordinator = create_mock_coordinator(protocol_mode=9)
+        number = VevorHeaterLevelNumber(coordinator)
+
+        assert number._attr_native_max_value == 4
+
     def test_step_attr(self):
         """Test _attr_native_step is 1."""
         coordinator = create_mock_coordinator()

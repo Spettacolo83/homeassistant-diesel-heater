@@ -36,6 +36,7 @@ from custom_components.diesel_heater.sensor import (
     VevorStartupTempDiffSensor,
     VevorShutdownTempDiffSensor,
     VevorCronusAirPressureSensor,
+    VevorCronusModeSensor,
     async_setup_entry,
 )
 from custom_components.diesel_heater.const import (
@@ -1333,6 +1334,7 @@ class TestCronusSensorSetup:
         assert not any(isinstance(entity, VevorHourlyFuelConsumptionSensor) for entity in entities)
         assert not any(isinstance(entity, VevorAltitudeSensor) for entity in entities)
         assert not any(isinstance(entity, VevorCronusAirPressureSensor) for entity in entities)
+        assert any(isinstance(entity, VevorCronusModeSensor) for entity in entities)
 
     @pytest.mark.asyncio
     async def test_water_creates_calculated_sensors_with_matching_profile(self):
