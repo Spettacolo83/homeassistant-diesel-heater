@@ -322,7 +322,8 @@ class BurnoffController:
             if self.skip_pending_on_off:
                 self.skip_pending_on_off = False
             elif (
-                not acc.just_completed
+                not self.ha_power_off
+                and not acc.just_completed
                 and prev_mode != RUNNING_MODE_VENTILATION
                 and (prev_step in BURNOFF_HEAT_STEPS or prev_step == RUNNING_STEP_COOLDOWN)
                 and not acc.pending

@@ -7,6 +7,12 @@ import pytest
 
 from custom_components.diesel_heater import coordinator as coordinator_module
 from custom_components.diesel_heater.burnoff import BurnoffController
+from custom_components.diesel_heater.const import (
+    CONF_BURNOFF_ENABLED,
+    RUNNING_MODE_TEMPERATURE,
+    RUNNING_STATE_ON,
+    RUNNING_STEP_RUNNING,
+)
 from custom_components.diesel_heater.coordinator import VevorHeaterCoordinator
 
 from . import conftest  # noqa: F401
@@ -304,3 +310,27 @@ async def test_burnoff_shutdown_uses_neo_app_power_off_packet() -> None:
     assert coordinator._write_gatt.await_args.args[0] == bytearray.fromhex(
         "a509015c011e00010129ea"
     )
+
+
+@pytest.mark.asyncio
+async def test_ha_neo_power_off_does_not_create_pending_burnoff() -> None:
+    coordinator = coordinator_for_layout(True)
+    coordinator.config_entry = SimpleNamespace(data={CONF_BURNOFF_ENABLED: True})
+    coordinator.data.update(
+        {
+            "running_state": RUNNING_STATE_ON,
+            "running_step": RUNNING_STEP_RUNNING,
+            "running_mode": RUNNING_MODE_TEMPERATURE,
+        }
+    )
+    coordinator._burnoff.observe_status()
+    coordinator._send_dz06_neo_power = AsyncMock(return_value=True)
+
+    await coordinator._power_off()
+
+    response = bytearray(39)
+    response[:2], response[3], response[34] = b"Z%", 0, 2
+    coordinator._notification_callback(FFF2, response)
+
+    assert coordinator.burnoff_pending is False
+    assert coordinator._burnoff.ha_power_off is False

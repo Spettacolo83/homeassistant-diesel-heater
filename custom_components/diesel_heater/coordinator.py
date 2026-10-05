@@ -2460,12 +2460,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
     async def _power_off(self) -> None:
         """Send the real power-off command."""
+        # Do not treat the resulting status transition as an external shutdown.
+        self._burnoff.ha_power_off = True
         if self.is_dz06_neo:
             if await self._send_dz06_neo_power(False):
                 await self.async_request_refresh()
             return
-        # So the observer does not count this shutdown as a controller heat cycle.
-        self._burnoff.ha_power_off = True
         # ABBA uses a toggle command (0xA1) for both ON and OFF.
         # Skip if already off, and never toggle during cooldown (would restart).
         if self._protocol_mode == 5 and (
