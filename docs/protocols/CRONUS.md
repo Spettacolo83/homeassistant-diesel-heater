@@ -25,8 +25,8 @@ from the app available-controller record:
 
 - **Air** controllers expose air level, Heating/Ventilation/Boost/Eco modes,
   and temperature setpoints for Heating, Boost, and Eco.
-- **Water** controllers expose the same controller modes but do not expose an
-  air level or air temperature setpoint.
+- **Water** controllers report the same controller modes as read-only telemetry
+  but do not expose an air level or air temperature setpoint.
 
 The shared records provide interior, external, and coolant temperature, supply
 voltage, current and maximum run duration, continuous-run state, and interlock
@@ -40,6 +40,6 @@ pump, fan, glow-plug, inlet-temperature, or outlet-temperature entities.
 ## Commands
 
 Cronus writes controller records rather than accepting the generic AA command
-table. The integration uses app-backed record writes for power, mode, air
-level, and the applicable air setpoint. Unsupported generic commands fail
-rather than being translated to guessed record writes.
+table. The integration uses app-backed record writes for power, air-controller
+mode, air level, and the applicable air setpoint. Unsupported generic commands
+fail rather than being translated to guessed record writes.

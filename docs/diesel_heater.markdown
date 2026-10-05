@@ -127,11 +127,11 @@ Fan entity for heater level control (1-10) when in Level mode. It is not created
 | Set Level | Current power level setting |
 | Altitude | Current altitude reading (not Hcalory or Cronus) |
 | Error | Error code if any fault detected (not Cronus) |
-| Estimated Hourly Fuel Consumption | Locally estimated rate for established air-heater protocols |
-| Estimated Daily Fuel Consumed | Locally estimated daily consumption for established air-heater protocols |
-| Estimated Total Fuel Consumed | Locally estimated lifetime consumption for established air-heater protocols |
-| Daily Runtime | Locally tracked daily runtime for established air-heater protocols |
-| Total Runtime | Locally tracked cumulative runtime for established air-heater protocols |
+| Estimated Hourly Fuel Consumption | Locally estimated rate for established air-heater protocols and selected Cronus model profiles |
+| Estimated Daily Fuel Consumed | Locally estimated daily consumption for established air-heater protocols and selected Cronus model profiles |
+| Estimated Total Fuel Consumed | Locally estimated lifetime consumption for established air-heater protocols and selected Cronus model profiles |
+| Daily Runtime | Locally tracked daily runtime for established air-heater protocols and selected Cronus model profiles |
+| Total Runtime | Locally tracked cumulative runtime for established air-heater protocols and selected Cronus model profiles |
 
 Additional sensors for specific protocols:
 - **Carbon Monoxide** (CBFF): CO level in ppm
@@ -140,6 +140,7 @@ Additional sensors for specific protocols:
 - **Intake/Outlet Temperature** (HeatGenie): created only when that controller reports the probe
 - **External/Coolant Temperature and Run Duration** (Cronus): ThermoConnect record telemetry
 - **Air Pressure** (Cronus air controllers): controller-reported pressure
+- **Mode** (Cronus water controllers): read-only controller telemetry
 
 ### Binary sensors
 
@@ -168,7 +169,7 @@ Additional sensors for specific protocols:
 | Select | Description |
 |--------|-------------|
 | Running Mode | Switch between Level and Temperature modes; ABBA can additionally offer Ventilation |
-| Cronus Mode | Heating, Ventilation, Boost, and Eco |
+| Cronus Mode | Air controllers only: Heating, Ventilation, Boost, and Eco |
 | Language | Display language (EN, CN, DE, Silent, RU) |
 | Pump Type | Fuel pump type (16/22/28/32 µl) |
 | Tank Volume | Tank size for fuel estimation |

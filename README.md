@@ -283,12 +283,13 @@ The common and extended entity tables below are scoped by this matrix. A control
 
 | Platform | Entity | Description |
 |----------|--------|-------------|
-| Select | Mode | Heating, Ventilation, Boost, and Eco |
+| Select | Mode | Air controllers: Heating, Ventilation, Boost, and Eco |
+| Sensor | Mode | Water-controller telemetry (read-only) |
 | Sensor | External Temperature, Coolant Temperature, Configured/Maximum Run Duration | ThermoConnect record values |
 | Sensor | Air Pressure | Air-controller telemetry |
 | Binary Sensor | Continuous Run, Interlock | ThermoConnect controller status |
 
-Cronus air controllers additionally expose a level in Ventilation mode and a target temperature in Heating, Boost, and Eco modes. Cronus water controllers do not expose an air level or air setpoint. Cronus does not create the air-heater fuel/runtime estimates, generic running-step/mode, case-temperature, error, altitude, fan-level, preset, sync-time, or fuel-reset entities.
+Cronus air controllers additionally expose a level in Ventilation mode and a target temperature in Heating, Boost, and Eco modes. Cronus water controllers report their mode as read-only telemetry and do not expose an air level or air setpoint. Both controller types create local fuel and runtime estimates only after a matching installed-model profile is selected in integration options; these are estimates, not controller telemetry. Cronus does not create generic running-step/mode, case-temperature, error, altitude, fan-level, preset, sync-time, or fuel-reset entities.
 
 #### Extended Entities (AA55 Encrypted, AA66 Encrypted, CBFF)
 
