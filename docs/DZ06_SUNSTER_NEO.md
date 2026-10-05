@@ -31,7 +31,7 @@ Replace `climate.diesel_heater` with the climate entity for your heater. To turn
 ```yaml
 service: climate.turn_on
 target:
-  entity_id: climate.vevor_heater
+  entity_id: climate.diesel_heater
 ```
 
 To request controlled shutdown:
@@ -39,7 +39,7 @@ To request controlled shutdown:
 ```yaml
 service: climate.turn_off
 target:
-  entity_id: climate.vevor_heater
+  entity_id: climate.diesel_heater
 ```
 
 Allow the heater to complete its cooldown sequence.

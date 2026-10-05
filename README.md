@@ -12,27 +12,23 @@
 
 > This is a maintained fork of the original [homeassistant-vevor-heater](https://github.com/MSDATDE/homeassistant-vevor-heater) by [@MSDATDE](https://github.com/MSDATDE), enhanced with HACS 2.0+ compatibility, multi-brand support, and additional improvements.
 
-Control your Vevor/BYD/HeaterCC/Sunster/Hcalory diesel heater from Home Assistant via Bluetooth. Supports AirHeaterBLE (AA55/AA66), AirHeaterCC (ABBA), Sunster (CBFF), and Hcalory (MVP1/MVP2) protocol heaters.
+Control supported diesel air and water heaters from Home Assistant via Bluetooth. The integration supports AirHeaterBLE (AA55/AA66), AirHeaterCC (ABBA), Sunster (CBFF), Hcalory (MVP1/MVP2), HeatGenie/Boygu, and Webasto ThermoConnect Cronus controllers.
 
 ## Features
 
-- 🌡️ **Climate Entity** - Full thermostat control with target temperature and presets (Away, Comfort)
-- 🔥 **Heater Level Control** - Adjust heating power (1-10) via number entity
-- ⚙️ **Running Mode Selection** - Switch between Level and Temperature modes
-- 📊 **Comprehensive Sensors** - Monitor temperature, voltage, altitude, and heater status
-- ⛽ **Fuel Consumption Tracking** - Monitor fuel usage with 3 dedicated sensors
+- 🌡️ **Climate Entity** - Controller-specific temperature control
+- 🔥 **Heater Level Control** - Adjust heating power where the controller exposes a level
+- ⚙️ **Mode Selection** - Select the modes supported by the detected controller
+- 📊 **Protocol-backed Sensors** - Monitor the values supplied by the controller
+- ⛽ **Fuel Consumption Tracking** - Local estimates for the established air-heater protocols
   - Hourly consumption rate (L/h) - real-time instantaneous rate
   - Daily consumption (L) - automatically resets at midnight
   - Total consumption (L) - lifetime tracking
 - 🔌 **Bluetooth LE** - Direct local connection, no cloud required
 - ⚡ **Real-time Updates** - 30-second polling interval
 - 💾 **Data Persistence** - Fuel consumption data saved across restarts
-- 🌐 **Multi-Protocol Support** - Works with AA55, AA66, ABBA, CBFF, and Hcalory protocol heaters
-- 🛠️ **Configuration Settings** - AirHeaterBLE-like settings:
-  - Language, Temperature Unit, Altitude Unit
-  - Tank Volume, Pump Type, Temperature Offset
-- 🌡️ **Auto Temperature Offset** - Automatic offset adjustment using external temperature sensor
-- ⏰ **Time Sync** - Synchronize heater clock with Home Assistant
+- 🌐 **Multi-Protocol Support** - Nine controller protocols across six app families
+- 🛠️ **Conditional Controls** - Configuration, calibration, timers, and unit settings are created only when supported by the active protocol
 
 ## Table of Contents
 
@@ -64,6 +60,8 @@ This integration supports **multiple protocols** and has been tested with variou
 | ABBA | 80% | AirHeaterCC | Different command structure |
 | CBFF/FEAA | 60% | Sunster | Double XOR encryption variant |
 | Hcalory MVP1/MVP2 | 95% | Hcalory | Hcalory controller variants, including HBU1S |
+| HeatGenie / Boygu | 95% | Heat Genie | Register protocol with optional probes and component state bits |
+| Webasto Cronus | 95% | ThermoConnect | Record protocol for air and water controllers |
 
 ABBA, CBFF, and Hcalory protocols are used by various heater brands. If you own a heater that uses one of these protocols, please check the [Issues](https://github.com/Spettacolo83/homeassistant-diesel-heater/issues), beta test, and report any problems.
 
@@ -72,6 +70,8 @@ ABBA, CBFF, and Hcalory protocols are used by various heater brands. If you own 
 - **FFE0** Service: `0000ffe0-0000-1000-8000-00805f9b34fb` (AA55/AA66 heaters)
 - **FFF0** Service: `0000fff0-0000-1000-8000-00805f9b34fb` (ABBA/HeaterCC, CBFF/Sunster, Hcalory MVP1)
 - **BD39** Service: `0000bd39-0000-1000-8000-00805f9b34fb` (Hcalory MVP2 heaters like HBU1S)
+- **181A** Service: `0000181a-0000-1000-8000-00805f9b34fb` (HeatGenie/Boygu; characteristic direction is verified after connecting)
+- **Cronus** characteristics: notify `4229d528-33d0-4aa7-9af1-00b03fc128f9`, write `2ed964d9-1371-45ee-a84b-1d134d5ce7b7`
 
 ### Tested Heaters
 
@@ -80,12 +80,14 @@ ABBA, CBFF, and Hcalory protocols are used by various heater brands. If you own 
 - HeaterCC compatible heaters
 - Sunster TB10Pro WiFi
 - Hcalory HBU1S and similar models
-- Generic Chinese diesel heaters using AirHeaterBLE, AirHeaterCC, Sunster, or Hcalory apps
+- HeatGenie/Boygu controllers
+- Webasto ThermoConnect Cronus Smart controllers
+- Generic heaters whose BLE transport and status protocol match a supported family
 
 ## Screenshots
 
 ### Fuel Consumption Sensors
-Monitor your heater's fuel consumption with real-time tracking:
+Monitor locally estimated fuel consumption for the established air-heater protocols:
 
 ![Fuel Consumption Sensors](https://raw.githubusercontent.com/Spettacolo83/homeassistant-diesel-heater/main/docs/images/fuel-consumption-sensors.png)
 
@@ -224,8 +226,8 @@ Before adding the integration, you need to find your heater's Bluetooth MAC addr
 After setup, go to the integration's **Configure** button to access these options:
 
 - **PIN**: Change the heater connection PIN
-- **Preset Away Temperature**: Target temperature for Away preset (default: 16°C)
-- **Preset Comfort Temperature**: Target temperature for Comfort preset (default: 22°C)
+- **Preset Away Temperature**: Target temperature for Away preset (default: 8°C)
+- **Preset Comfort Temperature**: Target temperature for Comfort preset (default: 21°C)
 - **External Temperature Sensor**: Select an external HA temperature sensor for auto offset adjustment
 - **Auto Offset Max**: Maximum offset value when using external sensor (1-9, only shown when external sensor is configured)
 
@@ -233,24 +235,45 @@ After setup, go to the integration's **Configure** button to access these option
 
 Entities are created **conditionally based on the detected BLE protocol**. Only entities that the protocol supports are created, preventing unsupported entities from showing as "Unavailable".
 
-#### Core Entities (all protocols)
+#### Shared Entities
 
 | Platform | Entity | Description |
 |----------|--------|-------------|
-| Climate | `climate.diesel_heater` | Thermostat control (8-36°C), presets (Away, Comfort) |
-| Fan | `fan.diesel_heater_heater_level` | Level control as fan entity (1-10) |
+| Climate | `climate.diesel_heater` | Controller-specific temperature control |
 | Switch | `switch.diesel_heater_power` | Simple ON/OFF control |
-| Switch | `switch.diesel_heater_auto_offset` | Auto Temperature Offset toggle *(Config)* |
-| Select | `select.diesel_heater_running_mode` | Mode selector (Off, Level, Temperature) |
-| Number | `number.diesel_heater_level` | Set heater power level (1-10) |
-| Number | `number.diesel_heater_target_temperature` | Set target temperature (8-36°C) |
 | Number | `number.diesel_heater_tank_capacity` | Set tank capacity for fuel estimation *(Config)* |
-| Button | `button.diesel_heater_sync_time` | Sync heater clock with HA time *(Config)* |
-| Button | `button.diesel_heater_reset_est_fuel_remaining` | Reset estimated fuel after refuel *(Config)* |
-| Sensor | Case Temperature, Interior Temperature, Voltage, Running Step/Mode, Set Level, Altitude, Error Code | Basic heater sensors |
-| Sensor | Estimated Hourly/Daily/Total Fuel, Fuel Remaining, Fuel Since Refuel | Fuel tracking (computed locally) |
-| Sensor | Daily/Total Runtime, History sensors | Runtime tracking (computed locally) |
-| Binary Sensor | Active, Problem, Connected | Heater status sensors *(Diagnostic)* |
+| Sensor | Interior Temperature, Supply Voltage, Protocol | Controller telemetry and detected protocol |
+| Binary Sensor | Active, Connected | Heater activity and BLE connection *(Diagnostic)* |
+
+#### Established Air-Heater Entities (AA55, AA66, ABBA, CBFF, Hcalory, HeatGenie)
+
+| Platform | Entity | Description |
+|----------|--------|-------------|
+| Fan | `fan.diesel_heater_heater_level` | Level control in Level mode |
+| Select | `select.diesel_heater_running_mode` | Level and Temperature modes; ABBA also offers ventilation when supported |
+| Number | Level, Target Temperature | Values and ranges reported by the active controller |
+| Button | Sync Time, Reset Estimated Fuel Remaining | Clock sync and local fuel-estimate reset *(Config)* |
+| Sensor | Case Temperature, Error Code, Running Step/Mode, Set Level | Air-heater status fields |
+| Sensor | Estimated Fuel, Runtime, and History | Locally computed tracking |
+| Binary Sensor | Problem | Controller error condition *(Diagnostic)* |
+
+#### HeatGenie-only Telemetry
+
+| Platform | Entity | Description |
+|----------|--------|-------------|
+| Sensor | Intake Temperature, Outlet Temperature | Created only when the controller reports each supported probe |
+| Binary Sensor | Fuel Pump, Fan, Glow Plug | Independent state bits from the HeatGenie status register |
+
+#### Webasto Cronus Entities
+
+| Platform | Entity | Description |
+|----------|--------|-------------|
+| Select | Mode | Heating, Ventilation, Boost, and Eco |
+| Sensor | External Temperature, Coolant Temperature, Configured/Maximum Run Duration | ThermoConnect record values |
+| Sensor | Air Pressure | Air-controller telemetry |
+| Binary Sensor | Continuous Run, Interlock | ThermoConnect controller status |
+
+Cronus air controllers additionally expose a level in Ventilation mode and a target temperature in Heating, Boost, and Eco modes. Cronus water controllers do not expose an air level or air setpoint. Cronus does not create the air-heater fuel/runtime estimates, generic running-step/mode, case-temperature, error, altitude, fan-level, preset, sync-time, or fuel-reset entities.
 
 #### Extended Entities (AA55 Encrypted, AA66 Encrypted, CBFF)
 
@@ -266,13 +289,16 @@ Entities are created **conditionally based on the detected BLE protocol**. Only 
 |----------|--------|-------------|
 | Select | Language, Pump Type, Tank Volume | Heater configuration selects *(Config)* |
 
-#### Unit/Auto Entities (AA66 Encrypted, ABBA, CBFF)
+#### Unit, Timer, and Auto Entities
 
 | Platform | Entity | Description |
 |----------|--------|-------------|
-| Switch | Auto Start/Stop | Auto Start/Stop toggle |
-| Switch | Temperature Unit, Altitude Unit | Unit switches *(Config)* |
-| Binary Sensor | Auto Start/Stop | Auto Start/Stop status |
+| Switch | Auto Start/Stop | AA66 Encrypted, ABBA, CBFF, and Hcalory |
+| Switch | Temperature Unit | AA66 Encrypted, ABBA, CBFF, Hcalory, and HeatGenie |
+| Switch | Altitude Unit | AA66 Encrypted, ABBA, and CBFF |
+| Switch | Timer | AA55 Encrypted and AA66 Encrypted |
+| Select | High Altitude Mode | Hcalory MVP2 three-position controller setting |
+| Binary Sensor | Auto Start/Stop | AA66 Encrypted, ABBA, and CBFF |
 
 #### CBFF-only Entities (Sunster)
 
@@ -292,6 +318,8 @@ Entities are created **conditionally based on the detected BLE protocol**. Only 
 ## Dashboard Cards
 
 ### Recommended Setup
+
+These examples apply to the established air-heater protocols. For Cronus, use its Mode select and the entities created for the detected air or water controller.
 
 Create a nice dashboard with these cards:
 
@@ -490,7 +518,7 @@ content: |
 
 ## Protocol Details
 
-This integration communicates via Bluetooth LE and supports seven protocol modes across the AirHeaterBLE, HeaterCC, Sunster, and Hcalory families. See the [protocol reference](docs/protocols/README.md) for the validated transport, frame, and command details.
+This integration communicates via Bluetooth LE and supports nine protocol modes across the AirHeaterBLE, HeaterCC, Sunster, Hcalory, HeatGenie, and ThermoConnect families. See the [protocol reference](docs/protocols/README.md) for the validated transport, frame, and command details.
 
 ### AA55/AA66 Protocol (AirHeaterBLE heaters)
 
