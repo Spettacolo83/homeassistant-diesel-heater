@@ -97,6 +97,11 @@ class TestProtocolCronus:
              0, 0, 0, 0, 0x51, 0, 3, 0x48, 6, 7)
         )
 
+    def test_parses_app_write_ack_record_id_and_status(self):
+        assert ProtocolCronus.parse_write_ack(bytearray((0, 0, 0, 0, 0x52, 0, 2, 0x30, 0))) == (0x30, True)
+        assert ProtocolCronus.parse_write_ack(bytearray((0, 0, 0, 0, 0x52, 0, 2, 0x31, 1))) == (0x31, False)
+        assert ProtocolCronus.parse_write_ack(bytearray((0, 0, 0, 0, 0x56, 0, 2, 0x30, 0))) is None
+
     def test_parses_app_response_fragments(self):
         assert ProtocolCronus.parse_frame(bytearray((0, 0, 0, 0, 0x56, 0, 3, 0x20, 0, 1, 72))) == (
             0x20,

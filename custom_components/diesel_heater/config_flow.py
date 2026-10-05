@@ -61,11 +61,12 @@ HEATER_NAME_PREFIXES = (
 
 def _is_likely_heater(discovery_info: BluetoothServiceInfoBleak) -> bool:
     """Return True if a BLE advertisement has an app-recognized heater name."""
-    name = (discovery_info.name or "").upper()
+    raw_name = discovery_info.name or ""
+    name = raw_name.upper()
     return (
         _is_heatgenie_device(discovery_info)
         or any(name.startswith(prefix) for prefix in HEATER_NAME_PREFIXES)
-        or "CRONUS" in name
+        or "CRONUS" in raw_name
         or (name.startswith("HEATER") and name[6:].isdigit())
     )
 
