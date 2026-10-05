@@ -606,7 +606,7 @@ class ProtocolCronus(HeaterProtocol):
         "air_level": 49, "air_setpoint": 50, "air_setpoint_boost": 27,
         "air_setpoint_eco": 28, "temp_int": 32, "temp_ext": 33,
         "temp_coolant": 34, "voltage": 24, "air_pressure": 23,
-        "timer_available": 73, "timer_disposable_day": 74,
+        "power": 129, "timer_available": 73, "timer_disposable_day": 74,
         "timer_assignment": 71, "activated_timers": 72, "timer_mo": 75,
         "timer_tu": 76, "timer_we": 77, "timer_th": 78, "timer_fr": 79,
         "timer_sa": 80, "timer_su": 81, "time": 97,
@@ -657,6 +657,13 @@ class ProtocolCronus(HeaterProtocol):
             payload_length = max(0, data[6] - 1)
             return record_id, bytes(data[8 : 8 + payload_length]), -1, False
         return None
+
+    @classmethod
+    def parse_write_ack(cls, data: bytearray) -> tuple[int, bool] | None:
+        """Return the record ID and success state from an app-style write ack."""
+        if len(data) < 9 or data[4] != 0x52 or data[6] != 2:
+            return None
+        return data[7], data[8] == 0
 
     @staticmethod
     def _int(records: dict[str, bytes], key: str, default: int | None = None) -> int | None:
