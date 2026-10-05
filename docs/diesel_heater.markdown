@@ -187,6 +187,8 @@ The integration estimates fuel consumption based on the heater's power level (0.
 - Persisted across Home Assistant restarts
 - Available for graphing via Home Assistant's native statistics
 
+For **Webasto Cronus Smart** controllers, the mobile protocol reports whether the controller is connected to an air or water heater, but does not report the attached heater model. Fuel-tracking entities are therefore disabled until the installed model is selected in the integration options. The available diesel profiles are Air Top Evo 40/55 and Thermo Top Evo 4/5 kW. Ventilation is tracked as zero fuel use; heating is an estimate from the model's documented modulation range, with the air-heater Boost and Eco modes using their documented mode behavior.
+
 ### Graphing fuel consumption
 
 Use the built-in statistics graph card:

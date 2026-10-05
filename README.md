@@ -89,6 +89,8 @@ Monitor your heater's fuel consumption with real-time tracking:
 
 ![Fuel Consumption Sensors](https://raw.githubusercontent.com/Spettacolo83/homeassistant-diesel-heater/main/docs/images/fuel-consumption-sensors.png)
 
+For **Webasto Cronus Smart** controllers, the mobile protocol reports whether the controller is connected to an air or water heater, but does not report the attached heater model. Fuel-tracking entities are therefore disabled until the installed model is selected in the integration options. The available diesel profiles are Air Top Evo 40/55 and Thermo Top Evo 4/5 kW. Ventilation is tracked as zero fuel use; heating is an estimate from the model's documented modulation range, with the air-heater Boost and Eco modes using their documented mode behavior.
+
 ### Heater Controls
 Full control over your heater including temperature, level, and mode selection:
 

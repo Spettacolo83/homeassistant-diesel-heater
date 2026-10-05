@@ -31,6 +31,7 @@ def create_mock_coordinator(protocol_mode: int = 0) -> MagicMock:
     coordinator.async_set_tank_capacity = AsyncMock()
     coordinator.protocol_mode = protocol_mode
     coordinator._heater_uses_fahrenheit = False
+    coordinator.has_cronus_fuel_estimate = False
     coordinator.data = {
         "connected": True,
         "set_level": 5,
@@ -262,6 +263,20 @@ class TestAsyncSetupEntry:
         }
         assert not any(isinstance(entity, VevorTankCapacityNumber) for entity in entities)
         assert not any(isinstance(entity, VevorCurrentFuelLevelNumber) for entity in entities)
+
+    @pytest.mark.asyncio
+    async def test_cronus_water_creates_fuel_controls_with_matching_profile(self):
+        coordinator = create_mock_coordinator(protocol_mode=9)
+        coordinator.has_cronus_fuel_estimate = True
+        coordinator.data["cronus_controller_type"] = "water"
+        async_add_entities = MagicMock()
+
+        await async_setup_entry(MagicMock(), MagicMock(runtime_data=coordinator), async_add_entities)
+
+        assert {type(entity) for entity in async_add_entities.call_args[0][0]} == {
+            VevorTankCapacityNumber,
+            VevorCurrentFuelLevelNumber,
+        }
 
     @pytest.mark.asyncio
     async def test_cronus_water_omits_air_and_calculated_controls(self):
