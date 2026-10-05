@@ -448,7 +448,10 @@ class TestAsyncSetupEntry:
         assert result is True
         assert entry.runtime_data == mock_coordinator
         hass.config_entries.async_forward_entry_setups.assert_called_once()
-        hass.services.async_register.assert_called_once()
+        assert hass.services.async_register.call_count == 2
+        assert {call.args[1] for call in hass.services.async_register.call_args_list} == {
+            "send_command", "set_timer"
+        }
 
     @pytest.mark.asyncio
     async def test_setup_entry_timeout_continues(self):
@@ -546,7 +549,8 @@ class TestSendCommandService:
         service_handler = None
         def capture_handler(domain, service, handler, schema):
             nonlocal service_handler
-            service_handler = handler
+            if service == "send_command":
+                service_handler = handler
         hass.services.async_register = capture_handler
 
         entry = MagicMock()
@@ -591,7 +595,8 @@ class TestSendCommandService:
         service_handler = None
         def capture_handler(domain, service, handler, schema):
             nonlocal service_handler
-            service_handler = handler
+            if service == "send_command":
+                service_handler = handler
         hass.services.async_register = capture_handler
 
         entry = MagicMock()
@@ -633,7 +638,8 @@ class TestSendCommandService:
         service_handler = None
         def capture_handler(domain, service, handler, schema):
             nonlocal service_handler
-            service_handler = handler
+            if service == "send_command":
+                service_handler = handler
         hass.services.async_register = capture_handler
 
         entry = MagicMock()
@@ -675,7 +681,8 @@ class TestSendCommandService:
         service_handler = None
         def capture_handler(domain, service, handler, schema):
             nonlocal service_handler
-            service_handler = handler
+            if service == "send_command":
+                service_handler = handler
         hass.services.async_register = capture_handler
 
         entry = MagicMock()
@@ -717,7 +724,8 @@ class TestSendCommandService:
         service_handler = None
         def capture_handler(domain, service, handler, schema):
             nonlocal service_handler
-            service_handler = handler
+            if service == "send_command":
+                service_handler = handler
         hass.services.async_register = capture_handler
 
         entry = MagicMock()

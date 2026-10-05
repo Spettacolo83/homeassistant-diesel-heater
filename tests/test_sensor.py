@@ -406,8 +406,8 @@ class TestAsyncSetupEntry:
 
         async_add_entities.assert_called_once()
         call_args = async_add_entities.call_args[0][0]
-        # Mode 1 creates only core sensors (18)
-        assert len(call_args) == 18
+        # Mode 1 creates the core sensors, including protocol diagnostics (19)
+        assert len(call_args) == 19
 
     @pytest.mark.asyncio
     async def test_async_setup_entry_protocol_mode_0(self):
@@ -423,8 +423,8 @@ class TestAsyncSetupEntry:
 
         async_add_entities.assert_called_once()
         call_args = async_add_entities.call_args[0][0]
-        # Mode 0 creates all sensors (18 core + 3 extended + 5 CBFF = 26)
-        assert len(call_args) == 26
+        # Mode 0 creates core, extended, and CBFF sensors (27)
+        assert len(call_args) == 27
 
     @pytest.mark.asyncio
     async def test_async_setup_entry_protocol_mode_2(self):
@@ -440,8 +440,8 @@ class TestAsyncSetupEntry:
 
         async_add_entities.assert_called_once()
         call_args = async_add_entities.call_args[0][0]
-        # Mode 2 creates core + extended (18 + 3 = 21)
-        assert len(call_args) == 21
+        # Mode 2 creates core plus extended sensors (22)
+        assert len(call_args) == 22
 
     @pytest.mark.asyncio
     async def test_async_setup_entry_protocol_mode_6(self):
@@ -457,8 +457,8 @@ class TestAsyncSetupEntry:
 
         async_add_entities.assert_called_once()
         call_args = async_add_entities.call_args[0][0]
-        # Mode 6 creates all sensors (18 core + 3 extended + 5 CBFF = 26)
-        assert len(call_args) == 26
+        # Mode 6 creates core, extended, and CBFF sensors (27)
+        assert len(call_args) == 27
 
 
 # ---------------------------------------------------------------------------

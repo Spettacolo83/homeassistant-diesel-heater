@@ -29,6 +29,7 @@ def create_mock_coordinator(protocol_mode: int = 0) -> MagicMock:
     coordinator.async_set_heater_offset = AsyncMock()
     coordinator.async_set_tank_capacity = AsyncMock()
     coordinator.protocol_mode = protocol_mode
+    coordinator._heater_uses_fahrenheit = False
     coordinator.data = {
         "connected": True,
         "set_level": 5,
@@ -206,8 +207,8 @@ class TestAsyncSetupEntry:
         # Verify async_add_entities was called
         async_add_entities.assert_called_once()
         call_args = async_add_entities.call_args[0][0]
-        # Mode 0 creates all entities (4 total)
-        assert len(call_args) == 4
+        # Mode 0 creates four core entities plus temperature offset
+        assert len(call_args) == 5
 
     @pytest.mark.asyncio
     async def test_async_setup_entry_protocol_mode_2(self):
@@ -223,8 +224,8 @@ class TestAsyncSetupEntry:
 
         async_add_entities.assert_called_once()
         call_args = async_add_entities.call_args[0][0]
-        # Mode 2 includes offset
-        assert len(call_args) == 4
+        # Mode 2 creates four core entities plus temperature offset
+        assert len(call_args) == 5
 
     @pytest.mark.asyncio
     async def test_async_setup_entry_protocol_mode_1(self):
@@ -240,8 +241,8 @@ class TestAsyncSetupEntry:
 
         async_add_entities.assert_called_once()
         call_args = async_add_entities.call_args[0][0]
-        # Mode 1 excludes offset (only 3 entities)
-        assert len(call_args) == 3
+        # Mode 1 creates the four core entities
+        assert len(call_args) == 4
 
 
 # ---------------------------------------------------------------------------

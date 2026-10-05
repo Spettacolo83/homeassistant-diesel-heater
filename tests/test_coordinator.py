@@ -2835,13 +2835,15 @@ class TestGATTWrite:
         mock_client = MagicMock()
         mock_client.write_gatt_char = AsyncMock()
         coordinator._client = mock_client
-        coordinator._characteristic = "standard_char"
+        standard_char = MagicMock()
+        standard_char.uuid = "0000standard"
+        coordinator._characteristic = standard_char
         coordinator._abba_write_char = None
 
         packet = bytearray([0xAA, 0x55, 0x01, 0x00])
         await coordinator._write_gatt(packet)
 
-        mock_client.write_gatt_char.assert_called_once_with("standard_char", packet, response=False)
+        mock_client.write_gatt_char.assert_called_once_with(standard_char, packet, response=False)
 
     @pytest.mark.asyncio
     async def test_write_gatt_abba_characteristic(self):
@@ -2851,13 +2853,17 @@ class TestGATTWrite:
         mock_client = MagicMock()
         mock_client.write_gatt_char = AsyncMock()
         coordinator._client = mock_client
-        coordinator._characteristic = "standard_char"
-        coordinator._abba_write_char = "abba_write_char"
+        standard_char = MagicMock()
+        standard_char.uuid = "0000standard"
+        abba_write_char = MagicMock()
+        abba_write_char.uuid = "0000abba"
+        coordinator._characteristic = standard_char
+        coordinator._abba_write_char = abba_write_char
 
         packet = bytearray([0xBA, 0xAB, 0x01, 0x00])
         await coordinator._write_gatt(packet)
 
-        mock_client.write_gatt_char.assert_called_once_with("abba_write_char", packet, response=False)
+        mock_client.write_gatt_char.assert_called_once_with(abba_write_char, packet, response=False)
 
 
 # ---------------------------------------------------------------------------
@@ -3166,19 +3172,18 @@ class TestFahrenheitConversion:
     """Tests for Fahrenheit temperature conversion."""
 
     @pytest.mark.asyncio
-    async def test_set_temperature_converts_to_fahrenheit(self):
-        """Test async_set_temperature converts to Fahrenheit when heater uses it."""
+    async def test_set_temperature_uses_fahrenheit_native_unit(self):
+        """Test async_set_temperature sends Fahrenheit inputs unchanged."""
         coordinator = create_mock_coordinator()
         coordinator._heater_uses_fahrenheit = True
         coordinator._send_command = AsyncMock(return_value=True)
         coordinator.async_request_refresh = AsyncMock()
 
-        # Set 20°C, should convert to 68°F
-        await coordinator.async_set_temperature(20)
+        # The service input is in the heater's configured native unit.
+        await coordinator.async_set_temperature(68)
 
         coordinator._send_command.assert_called_once()
         call_args = coordinator._send_command.call_args
-        # Command 4 is set temperature, arg should be 68 (20*9/5+32)
         assert call_args[0][0] == 4
         assert call_args[0][1] == 68
 
