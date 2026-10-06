@@ -4565,6 +4565,23 @@ class TestBurnoffOnShutdown:
         coordinator._burnoff.schedule_wait.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_run_burnoff_skips_ventilation_step(self):
+        """Run Burn-off does not switch a ventilation step into heating."""
+        coordinator = create_mock_coordinator()
+        _enable_burnoff(coordinator)
+        _set_heating(coordinator)
+        coordinator.data["running_mode"] = RUNNING_MODE_LEVEL
+        coordinator.data["running_step"] = RUNNING_STEP_VENTILATION
+        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator._burnoff.schedule_wait = MagicMock()
+
+        await coordinator.async_run_burnoff()
+
+        assert coordinator.burnoff_active is False
+        coordinator._send_command.assert_not_called()
+        coordinator._burnoff.schedule_wait.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_power_off_now_restores_then_offs(self):
         """Power Off Now restores saved mode then sends immediate off."""
         coordinator = create_mock_coordinator()
