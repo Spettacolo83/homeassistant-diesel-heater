@@ -80,12 +80,21 @@ class VevorHeaterClimate(
         self._current_preset: str | None = None
         self._restored_abba_target: float | None = None
         self._user_cleared_preset: bool = False  # Track if user explicitly selected "None"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, coordinator.address)},
-            "name": "Vevor Heater",
-            "manufacturer": "Vevor",
-            "model": "Diesel Heater",
-        }
+        self._attr_device_info = (
+            {
+                "identifiers": {(DOMAIN, coordinator.address)},
+                "name": "Webasto Cronus",
+                "manufacturer": "Webasto",
+                "model": "Cronus Smart",
+            }
+            if coordinator.protocol_mode == 9
+            else {
+                "identifiers": {(DOMAIN, coordinator.address)},
+                "name": "Vevor Heater",
+                "manufacturer": "Vevor",
+                "model": "Diesel Heater",
+            }
+        )
         self._attr_unique_id = f"{coordinator.address}_climate"
 
         # Set temperature unit and range statically based on heater's native unit
@@ -95,6 +104,10 @@ class VevorHeaterClimate(
             self._attr_min_temp = 50 if coordinator.protocol_mode == 8 else 32  # 32°F = 0°C
             self._attr_max_temp = 104  # 104°F = 40°C
             self._attr_target_temperature_step = 1.0  # 1°F step (72 possible values)
+        elif coordinator.protocol_mode == 9:
+            self._attr_temperature_unit = UnitOfTemperature.CELSIUS
+            self._attr_min_temp = 5
+            self._attr_max_temp = 35
         else:
             self._attr_temperature_unit = UnitOfTemperature.CELSIUS
             self._attr_min_temp = 10 if coordinator.protocol_mode == 8 else 0  # Hcalory supports 0-40°C, other protocols 8-36°C
@@ -115,16 +128,33 @@ class VevorHeaterClimate(
         if isinstance(target, (int, float)) and 8 <= target <= 36:
             self._restored_abba_target = float(target)
 
+
+
     @property
     def supported_features(self) -> ClimateEntityFeature:
-        """Hide target temperature and presets during burn-off.
+        """Return the controls the active controller and burn-off state allow.
 
-        HVAC on/off stay available so Heat can cancel the cycle and Off can
-        skip remaining burn-off (restore snapshot, then power off).
+        HVAC on/off stay available during burn-off so Heat can cancel the cycle
+        and Off can skip the remaining time. Cronus exposes only the controls
+        documented for its air or water controller.
         """
         if self.coordinator.burnoff_active:
             return ClimateEntityFeature.TURN_OFF | ClimateEntityFeature.TURN_ON
-        return self._attr_supported_features
+        if self.coordinator.protocol_mode != 9:
+            return self._attr_supported_features
+        power_features = ClimateEntityFeature.TURN_OFF | ClimateEntityFeature.TURN_ON
+        if self.coordinator.data.get("cronus_controller_type") != "air":
+            return power_features
+        if self.coordinator.data.get("cronus_mode") == "ventilation":
+            return power_features
+        return power_features | ClimateEntityFeature.TARGET_TEMPERATURE
+
+    @property
+    def preset_modes(self) -> list[str] | None:
+        """Cronus does not expose the integration-specific temperature presets."""
+        if self.coordinator.protocol_mode == 9:
+            return None
+        return self._attr_preset_modes
 
     @property
     def current_temperature(self) -> float | None:
@@ -160,6 +190,15 @@ class VevorHeaterClimate(
         """
         running_step = self.coordinator.data.get("running_step")
         running_state = self.coordinator.data.get("running_state", 0)
+
+        if self.coordinator.protocol_mode == 9:
+            if running_state != 1:
+                return HVACAction.OFF
+            return (
+                HVACAction.FAN
+                if self.coordinator.data.get("cronus_mode") == "ventilation"
+                else HVACAction.HEATING
+            )
 
         if running_step is None:
             return None

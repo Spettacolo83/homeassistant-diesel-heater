@@ -2,7 +2,7 @@
 
 Pure Python library for parsing and controlling BLE diesel heaters.
 
-Supports Vevor, Hcalory, Sunster, and HeaterCC diesel heater protocols
+Supports Vevor, Hcalory, Sunster, HeaterCC, HeatGenie/Boygu, and Webasto Cronus controller protocols
 over Bluetooth Low Energy (BLE). No dependency on Home Assistant.
 
 ## Supported Protocols
@@ -16,6 +16,8 @@ over Bluetooth Low Energy (BLE). No dependency on Home Assistant.
 | ABBA | 5 | HeaterCC protocol, 21+ bytes, own command format |
 | CBFF | 6 | Sunster v2.1, 47 bytes, optional double-XOR encryption |
 | Hcalory | 7 | MVP1/MVP2 protocol, variable length with checksum |
+| HeatGenie | 8 | HeatGenie/Boygu register protocol |
+| Cronus | 9 | Webasto ThermoConnect record protocol |
 
 ## Installation
 
@@ -56,6 +58,8 @@ All protocol classes implement the `HeaterProtocol` interface:
 - `ProtocolABBA` - ABBA/HeaterCC protocol
 - `ProtocolCBFF` - CBFF/Sunster v2.1 protocol
 - `ProtocolHcalory` - Hcalory MVP1/MVP2 protocol
+- `ProtocolHeatGenie` - HeatGenie/Boygu register protocol
+- `ProtocolCronus` - Webasto ThermoConnect record protocol
 
 ### Methods
 

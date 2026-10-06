@@ -17,6 +17,7 @@ from custom_components.diesel_heater.const import (
     CONF_AUTO_OFFSET_MAX,
     CONF_BURNOFF_DURATION,
     CONF_BURNOFF_ENABLED,
+    CONF_CRONUS_HEATER_MODEL,
     CONF_EXTERNAL_TEMP_SENSOR,
     CONF_PIN,
     CONF_PRESET_AWAY_TEMP,
@@ -156,6 +157,24 @@ class TestBluetoothDiscovery:
 
 
 # ---------------------------------------------------------------------------
+
+    async def test_cronus_discovery_accepts_the_app_name_pattern(self):
+        flow = VevorHeaterConfigFlow()
+        discovery = _make_ble_discovery(name="Webasto CRONUS Smart")
+
+        result = await flow.async_step_bluetooth(discovery)
+
+        assert result["type"] == "form"
+        assert result["step_id"] == "confirm"
+
+    async def test_cronus_discovery_requires_the_app_case_sensitive_pattern(self):
+        flow = VevorHeaterConfigFlow()
+        discovery = _make_ble_discovery(name="Webasto cronus Smart")
+
+        result = await flow.async_step_bluetooth(discovery)
+
+        assert result["type"] == "abort"
+        assert result["reason"] == "not_supported"
 # Confirm step (after bluetooth discovery)
 # ---------------------------------------------------------------------------
 
@@ -604,6 +623,17 @@ class TestOptionsFlow:
 
         assert result["type"] == "form"
         assert result["step_id"] == "init"
+
+    async def test_schema_has_cronus_heater_model_field(self):
+        flow = self._create_flow()
+
+        result = await flow.async_step_init()
+
+        schema_keys = {
+            key.schema for key in result["data_schema"].schema.keys()
+            if hasattr(key, "schema")
+        }
+        assert CONF_CRONUS_HEATER_MODEL in schema_keys
 
     async def test_schema_has_pin_field(self):
         flow = self._create_flow()

@@ -21,6 +21,10 @@ async def async_setup_entry(
 ) -> None:
     """Set up Vevor Heater buttons."""
     coordinator = entry.runtime_data
+    if coordinator.protocol_mode == 9:
+        if coordinator.has_cronus_fuel_estimate:
+            async_add_entities([VevorResetFuelLevelButton(coordinator)])
+        return
 
     async_add_entities([
         VevorTimeSyncButton(coordinator),
@@ -79,12 +83,21 @@ class VevorResetFuelLevelButton(CoordinatorEntity[VevorHeaterCoordinator], Butto
         """Initialize the button."""
         super().__init__(coordinator)
         self._attr_unique_id = f"{coordinator.address}_reset_est_fuel_remaining"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, coordinator.address)},
-            "name": "Vevor Diesel Heater",
-            "manufacturer": "Vevor",
-            "model": "Diesel Heater",
-        }
+        self._attr_device_info = (
+            {
+                "identifiers": {(DOMAIN, coordinator.address)},
+                "name": "Webasto Cronus",
+                "manufacturer": "Webasto",
+                "model": "Cronus Smart",
+            }
+            if coordinator.protocol_mode == 9
+            else {
+                "identifiers": {(DOMAIN, coordinator.address)},
+                "name": "Vevor Diesel Heater",
+                "manufacturer": "Vevor",
+                "model": "Diesel Heater",
+            }
+        )
 
     async def async_press(self) -> None:
         """Handle the button press."""

@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, AsyncMock
 from . import conftest  # noqa: F401
 
 from custom_components.diesel_heater.select import (
+    CronusModeSelect,
     VevorHeaterModeSelect,
     VevorHeaterLanguageSelect,
     VevorHeaterPumpTypeSelect,
@@ -1197,3 +1198,31 @@ class TestDeviceInfo:
 
         assert select._attr_device_info is not None
         assert "identifiers" in select._attr_device_info
+
+class TestCronusModeSelect:
+    """Tests for the ThermoConnect air-controller selector."""
+
+    def test_current_option_uses_cronus_mode(self):
+        coordinator = create_mock_coordinator(protocol_mode=9)
+        coordinator.data.update({"cronus_controller_type": "air", "cronus_mode": "boost"})
+        select = CronusModeSelect(coordinator)
+
+        assert select.current_option == "Boost"
+        assert select.available
+
+    @pytest.mark.asyncio
+    async def test_select_option_writes_documented_mode(self):
+        coordinator = create_mock_coordinator(protocol_mode=9)
+        coordinator.data.update({"cronus_controller_type": "air", "cronus_mode": "heating"})
+        coordinator.async_set_cronus_mode = AsyncMock()
+        select = CronusModeSelect(coordinator)
+
+        await select.async_select_option("Ventilation")
+
+        coordinator.async_set_cronus_mode.assert_awaited_once_with("ventilation")
+
+    def test_is_available_for_water_controller(self):
+        coordinator = create_mock_coordinator(protocol_mode=9)
+        coordinator.data["cronus_controller_type"] = "water"
+
+        assert not CronusModeSelect(coordinator).available

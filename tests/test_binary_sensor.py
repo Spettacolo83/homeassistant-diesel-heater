@@ -15,6 +15,8 @@ from custom_components.diesel_heater.binary_sensor import (
     VevorBurnoffActiveSensor,
     VevorBurnoffPendingSensor,
     VevorComponentActiveSensor,
+    VevorCronusContinuousRunSensor,
+    VevorCronusInterlockSensor,
     async_setup_entry,
 )
 from custom_components.diesel_heater.const import (
@@ -535,3 +537,33 @@ class TestVevorBurnoffPendingSensor:
         sensor = VevorBurnoffPendingSensor(coordinator)
 
         assert sensor.is_on is False
+
+
+class TestCronusBinarySensors:
+    """Tests for ThermoConnect-only diagnostic records."""
+
+    @pytest.mark.asyncio
+    async def test_uses_interlock_instead_of_generic_problem(self):
+        coordinator = create_mock_coordinator(protocol_mode=9)
+        coordinator.data.update(cronus_nonstop=True, cronus_interlock=True)
+        entry = MagicMock(runtime_data=coordinator)
+        async_add_entities = MagicMock()
+
+        await async_setup_entry(MagicMock(), entry, async_add_entities)
+
+        entities = async_add_entities.call_args[0][0]
+        assert any(isinstance(entity, VevorCronusContinuousRunSensor) for entity in entities)
+        assert any(isinstance(entity, VevorCronusInterlockSensor) for entity in entities)
+        assert not any(isinstance(entity, VevorHeaterProblemSensor) for entity in entities)
+
+    def test_shared_binary_entities_identify_cronus_as_webasto(self):
+        coordinator = create_mock_coordinator(protocol_mode=9)
+
+        assert VevorHeaterActiveSensor(coordinator)._attr_device_info["manufacturer"] == "Webasto"
+        assert VevorHeaterConnectedSensor(coordinator)._attr_device_info["model"] == "Cronus Smart"
+
+    def test_interlock_uses_the_documented_record(self):
+        coordinator = create_mock_coordinator(protocol_mode=9)
+        coordinator.data["cronus_interlock"] = True
+
+        assert VevorCronusInterlockSensor(coordinator).is_on is True

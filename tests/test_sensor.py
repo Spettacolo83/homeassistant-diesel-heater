@@ -38,6 +38,8 @@ from custom_components.diesel_heater.sensor import (
     VevorBurnoffRemainingSensor,
     VevorBurnoffCyclesSensor,
     VevorBurnoffHoursSensor,
+    VevorCronusAirPressureSensor,
+    VevorCronusModeSensor,
     async_setup_entry,
 )
 from custom_components.diesel_heater.const import (
@@ -55,6 +57,7 @@ def create_mock_coordinator(protocol_mode: int = 0) -> MagicMock:
     coordinator._heater_id = "EE:FF"
     coordinator.last_update_success = True
     coordinator.protocol_mode = protocol_mode
+    coordinator.has_cronus_fuel_estimate = False
     coordinator.data = {
         "connected": True,
         "running_state": 1,
@@ -1352,3 +1355,46 @@ class TestVevorBurnoffHoursSensor:
         sensor = VevorBurnoffHoursSensor(coordinator)
 
         assert sensor.native_value == 1.5
+
+
+class TestCronusSensorSetup:
+    """ThermoConnect exposes only supported telemetry and configured estimates."""
+
+    @pytest.mark.asyncio
+    async def test_water_omits_air_and_calculated_sensors(self):
+        coordinator = create_mock_coordinator(protocol_mode=9)
+        coordinator.data.update(
+            cronus_controller_type="water",
+            cronus_duration=60,
+            cronus_max_duration=120,
+            cronus_external_temperature=5,
+            cronus_coolant_temperature=70,
+            cronus_air_pressure=4,
+        )
+        entry = MagicMock(runtime_data=coordinator)
+        async_add_entities = MagicMock()
+
+        await async_setup_entry(MagicMock(), entry, async_add_entities)
+
+        entities = async_add_entities.call_args[0][0]
+        assert not any(isinstance(entity, VevorSetLevelSensor) for entity in entities)
+        assert not any(isinstance(entity, VevorCaseTemperatureSensor) for entity in entities)
+        assert not any(isinstance(entity, VevorErrorCodeSensor) for entity in entities)
+        assert not any(isinstance(entity, VevorHourlyFuelConsumptionSensor) for entity in entities)
+        assert not any(isinstance(entity, VevorAltitudeSensor) for entity in entities)
+        assert not any(isinstance(entity, VevorCronusAirPressureSensor) for entity in entities)
+        assert any(isinstance(entity, VevorCronusModeSensor) for entity in entities)
+
+    @pytest.mark.asyncio
+    async def test_water_creates_calculated_sensors_with_matching_profile(self):
+        coordinator = create_mock_coordinator(protocol_mode=9)
+        coordinator.has_cronus_fuel_estimate = True
+        coordinator.data.update(cronus_controller_type="water")
+        async_add_entities = MagicMock()
+
+        await async_setup_entry(MagicMock(), MagicMock(runtime_data=coordinator), async_add_entities)
+
+        entities = async_add_entities.call_args[0][0]
+        assert any(isinstance(entity, VevorHourlyFuelConsumptionSensor) for entity in entities)
+        assert any(isinstance(entity, VevorFuelRemainingSensor) for entity in entities)
+        assert any(isinstance(entity, VevorTotalRuntimeSensor) for entity in entities)

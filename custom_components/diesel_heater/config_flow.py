@@ -17,6 +17,9 @@ from .const import (
     CONF_AUTO_OFFSET_MAX,
     CONF_EXTERNAL_TEMP_SENSOR,
     CONF_FORCE_TEMP_UNIT,
+    CONF_CRONUS_HEATER_MODEL,
+    CRONUS_HEATER_MODEL_OPTIONS,
+    DEFAULT_CRONUS_HEATER_MODEL,
     CONF_NEO_PASSWORD,
     CONF_PIN,
     CONF_PRESET_AWAY_TEMP,
@@ -61,10 +64,12 @@ HEATER_NAME_PREFIXES = (
 
 def _is_likely_heater(discovery_info: BluetoothServiceInfoBleak) -> bool:
     """Return True if a BLE advertisement has an app-recognized heater name."""
-    name = (discovery_info.name or "").upper()
+    raw_name = discovery_info.name or ""
+    name = raw_name.upper()
     return (
         _is_heatgenie_device(discovery_info)
         or any(name.startswith(prefix) for prefix in HEATER_NAME_PREFIXES)
+        or "CRONUS" in raw_name
         or (name.startswith("HEATER") and name[6:].isdigit())
     )
 
@@ -367,6 +372,18 @@ class VevorHeaterOptionsFlowHandler(config_entries.OptionsFlow):
                 selector.SelectSelectorConfig(
                     options=list(FORCE_TEMP_UNIT_OPTIONS),
                     translation_key=CONF_FORCE_TEMP_UNIT,
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Optional(
+                CONF_CRONUS_HEATER_MODEL,
+                default=self.config_entry.data.get(
+                    CONF_CRONUS_HEATER_MODEL, DEFAULT_CRONUS_HEATER_MODEL
+                ),
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=list(CRONUS_HEATER_MODEL_OPTIONS),
+                    translation_key=CONF_CRONUS_HEATER_MODEL,
                     mode=selector.SelectSelectorMode.DROPDOWN,
                 )
             ),

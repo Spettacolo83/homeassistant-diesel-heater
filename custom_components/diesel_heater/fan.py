@@ -37,7 +37,8 @@ async def async_setup_entry(
 ) -> None:
     """Set up Vevor Heater fan from config entry."""
     coordinator = entry.runtime_data
-    async_add_entities([VevorHeaterFan(coordinator)])
+    if coordinator.protocol_mode != 9:
+        async_add_entities([VevorHeaterFan(coordinator)])
 
 
 class VevorHeaterFan(FanEntity):

@@ -112,3 +112,7 @@ def test_manifest_requirement_pin_is_concrete():
             f"requirement {req!r} has no version constraint — "
             "pin it to the exact version published on PyPI"
         )
+
+
+def test_manifest_requires_cronus_protocol_release():
+    assert "diesel-heater-ble>=0.3.6" in _load_manifest()["requirements"]

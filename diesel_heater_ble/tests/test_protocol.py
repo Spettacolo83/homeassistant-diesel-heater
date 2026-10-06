@@ -14,6 +14,7 @@ from diesel_heater_ble import (
     ProtocolAA55Encrypted,
     ProtocolAA66,
     ProtocolAA66Encrypted,
+    ProtocolCronus,
     ProtocolABBA,
     ProtocolHeatGenie,
     ProtocolCBFF,
@@ -23,6 +24,7 @@ from diesel_heater_ble import (
     _u8_to_number,
     _unsign_to_sign,
 )
+
 
 
 # ---------------------------------------------------------------------------
@@ -72,6 +74,85 @@ class TestHelpers:
         data = bytearray([0x42] * 48)
         assert _encrypt_data(data) == _decrypt_data(data)
 
+
+class TestProtocolCronus:
+    """Tests for the ThermoConnect Webasto Cronus record transport."""
+
+    def test_read_record_matches_app_frame(self):
+        assert ProtocolCronus.build_read_record(0x20) == bytearray(
+            (0, 0, 0, 0, 0x55, 0, 1, 0x20)
+        )
+
+    def test_power_command_matches_app_frame(self):
+        assert ProtocolCronus.build_power_command(True) == bytearray(
+            (0, 0, 0, 0, 0x50, 0, 4, 0x81, 2, 1, 1)
+        )
+        assert ProtocolCronus.build_power_command(False) == bytearray(
+            (0, 0, 0, 0, 0x50, 0, 4, 0x81, 2, 1, 0)
+        )
+
+    def test_write_record_uses_app_fragmentation(self):
+        assert ProtocolCronus.build_write_record(0x48, bytes(range(8))) == bytearray(
+            (0, 0, 0, 0, 0x50, 0, 8, 0x48, 8, 0, 1, 2, 3, 4, 5,
+             0, 0, 0, 0, 0x51, 0, 3, 0x48, 6, 7)
+        )
+
+    def test_parses_app_write_ack_record_id_and_status(self):
+        assert ProtocolCronus.parse_write_ack(bytearray((0, 0, 0, 0, 0x52, 0, 2, 0x30, 0))) == (0x30, True)
+        assert ProtocolCronus.parse_write_ack(bytearray((0, 0, 0, 0, 0x52, 0, 2, 0x31, 1))) == (0x31, False)
+        assert ProtocolCronus.parse_write_ack(bytearray((0, 0, 0, 0, 0x56, 0, 2, 0x30, 0))) is None
+
+    def test_parses_app_response_fragments(self):
+        assert ProtocolCronus.parse_frame(bytearray((0, 0, 0, 0, 0x56, 0, 3, 0x20, 0, 1, 72))) == (
+            0x20,
+            b"H",
+            1,
+            True,
+        )
+        assert ProtocolCronus.parse_frame(bytearray((0, 0, 0, 0, 0x57, 0, 3, 0x48, 6, 7))) == (
+            0x48,
+            b"\x06\x07",
+            -1,
+            False,
+        )
+
+    def test_normalizes_air_controller_records(self):
+        parsed = ProtocolCronus().parse_records({
+            "h1_available": b"\x02", "air_state": b"\x01",
+            "air_state_real": b"\x03", "air_mode": b"\x02",
+            "air_interlock": b"\x00", "air_setpoint_boost": b"F",
+            "air_level": b"\x04", "temp_int": b"G", "temp_ext": b"A",
+            "temp_coolant": b"D", "voltage": b"/\xe4",
+            "air_pressure": b"\x03\xf5",
+        })
+        assert parsed == {
+            "connected": True, "cronus_controller_type": "air", "cronus_mode": "boost",
+            "cronus_state": 1, "cronus_state_real": 3, "cronus_interlock": False,
+            "running_state": 1, "running_step": 3,
+            "supply_voltage": 12.26, "cab_temperature": 21,
+            "cronus_external_temperature": 15, "cronus_coolant_temperature": 18,
+            "cronus_air_pressure": 1013, "set_temp": 20, "set_level": 4,
+            "running_mode": 1,
+        }
+
+
+    def test_normalizes_water_controller_records(self):
+        parsed = ProtocolCronus().parse_records({
+            "h1_available": b"\x01", "water_state": b"\x02",
+            "water_state_real": b"\x04", "water_mode": b"\x03",
+            "water_interlock": b"\x01", "water_duration": b"\x1e",
+            "water_max_duration": b"\x78", "water_nonstop": b"\x00",
+            "temp_int": b"G", "temp_ext": b"A", "temp_coolant": b"D",
+            "voltage": b"/\xe4",
+        })
+        assert parsed == {
+            "connected": True, "cronus_controller_type": "water", "cronus_mode": "eco",
+            "cronus_state": 2, "cronus_state_real": 4, "cronus_interlock": True,
+            "running_state": 1, "running_step": 4,
+            "cronus_duration": 30, "cronus_max_duration": 120, "cronus_nonstop": 0,
+            "supply_voltage": 12.26, "cab_temperature": 21,
+            "cronus_external_temperature": 15, "cronus_coolant_temperature": 18,
+        }
 
 # ---------------------------------------------------------------------------
 # VevorCommandMixin (shared AA55 command builder)

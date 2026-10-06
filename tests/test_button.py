@@ -29,6 +29,8 @@ def create_mock_coordinator() -> MagicMock:
     coordinator.async_reset_fuel_level = AsyncMock()
     coordinator.async_power_off_now = AsyncMock()
     coordinator.async_run_burnoff = AsyncMock()
+    coordinator.protocol_mode = 0
+    coordinator.has_cronus_fuel_estimate = False
     coordinator.data = {
         "connected": True,
     }
@@ -254,3 +256,31 @@ class TestButtonAttributes:
 
         assert button._attr_device_info is not None
         assert "identifiers" in button._attr_device_info
+
+
+class TestCronusButtonSetup:
+    """ThermoConnect creates only supported buttons and configured estimates."""
+
+    @pytest.mark.asyncio
+    async def test_does_not_create_generic_buttons(self):
+        coordinator = create_mock_coordinator()
+        coordinator.protocol_mode = 9
+        entry = MagicMock(runtime_data=coordinator)
+        async_add_entities = MagicMock()
+
+        await async_setup_entry(MagicMock(), entry, async_add_entities)
+
+        async_add_entities.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_creates_only_reset_button_with_matching_profile(self):
+        coordinator = create_mock_coordinator()
+        coordinator.protocol_mode = 9
+        coordinator.has_cronus_fuel_estimate = True
+        async_add_entities = MagicMock()
+
+        await async_setup_entry(MagicMock(), MagicMock(runtime_data=coordinator), async_add_entities)
+
+        assert [type(entity) for entity in async_add_entities.call_args[0][0]] == [
+            VevorResetFuelLevelButton
+        ]

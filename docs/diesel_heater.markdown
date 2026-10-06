@@ -30,7 +30,7 @@ ha_integration_type: device
 ha_quality_scale: bronze
 ---
 
-The **Diesel Heater** {% term integration %} allows you to control and monitor diesel air heaters via Bluetooth Low Energy (BLE). This integration provides local control without requiring cloud connectivity.
+The **Diesel Heater** {% term integration %} allows you to control and monitor supported diesel air and water heater controllers via Bluetooth Low Energy (BLE). This integration provides local control without requiring cloud connectivity.
 
 ## Supported devices
 
@@ -40,6 +40,8 @@ This integration supports heaters whose BLE transport and status protocol match 
 - **HeaterCC/AirHeaterCC** ABBA controllers
 - **Sunster** CBFF/FEAA V2.1 controllers
 - **Hcalory** MVP1 and MVP2 controllers
+- **HeatGenie/Boygu** register-protocol controllers
+- **Webasto ThermoConnect Cronus** air and water controllers
 
 Brand names and an app installation alone do not establish compatibility. The
 integration verifies the protocol after connecting.
@@ -55,6 +57,8 @@ integration verifies the protocol after connecting.
 | ABBA | AirHeaterCC | HeaterCC heaters |
 | CBFF/FEAA | Sunster | V2.1 protocol; encrypted variants use double XOR |
 | Hcalory MVP1/MVP2 | Hcalory | Separate Hcalory transport variants |
+| HeatGenie / Boygu | Heat Genie | Register protocol with optional probes and component state bits |
+| Webasto Cronus | ThermoConnect | Record protocol for air and water controllers |
 
 See the [protocol reference](protocols/README.md) for the validated transport,
 status, and command behavior for each family.
@@ -86,35 +90,48 @@ After setup, you can configure these options:
 
 Entities are created based on the detected BLE protocol. Only entities supported by your heater's protocol are created.
 
+### Availability by controller family
+
+| Controller family | Additional controls and telemetry | Important limits |
+|---|---|---|
+| AA55 / AA66 | Established air-heater entities and local auto-offset | No encrypted-controller settings, timer, component bits, or intake/outlet probes |
+| AA55 Encrypted | Temperature Offset, Backlight, and Timer | No Language, Pump Type, Tank Volume, or unit switches |
+| AA66 Encrypted | Temperature Offset, Backlight, Timer, Language, Pump Type, Tank Volume, Auto Start/Stop, Temperature Unit, and Altitude Unit | Extended telemetry only where reported |
+| ABBA / HeaterCC | Auto Start/Stop, Temperature Unit, Altitude Unit, High Altitude, and supported ventilation | No timer, component bits, or intake/outlet probes |
+| CBFF / Sunster | Extended telemetry, controller configuration, unit settings, Auto Start/Stop, and CBFF diagnostics | No component bits or intake/outlet probes |
+| Hcalory MVP1/MVP2 | Auto Start/Stop, Temperature Unit, and three-position High Altitude Mode | No altitude sensor, auto-offset, timer, component bits, or intake/outlet probes |
+| HeatGenie / Boygu | Temperature Unit, optional Intake/Outlet Temperature, and Fuel Pump/Fan/Glow Plug state bits | No auto-offset, timer, or controller configuration selects |
+| Webasto Cronus | ThermoConnect Mode, controller-specific temperatures and durations, Continuous Run, and Interlock | Air and water capabilities differ; see the sections below |
+
 ### Climate
 
 The climate entity provides thermostat control:
 
 - Temperature range: controller-specific
-- Presets: Away, Comfort
+- Presets: Away, Comfort (not created for Cronus)
 - HVAC modes: Off, Heat
 
 ### Fan
 
-Fan entity for heater level control (1-10) when in Level mode.
+Fan entity for heater level control (1-10) when in Level mode. It is not created for Cronus.
 
 ### Sensors
 
 | Sensor | Description |
 |--------|-------------|
 | Interior Temperature | Cabin/room temperature |
-| Case Temperature | Heater body temperature |
+| Case Temperature | Heater body temperature (not Cronus) |
 | Supply Voltage | Power supply voltage |
-| Running Step | Current operation step (Standby, Running, Cooldown, etc.) |
-| Running Mode | Current mode (Off, Level, Temperature) |
+| Running Step | Current operation step (established air-heater protocols) |
+| Running Mode | Current mode (established air-heater protocols) |
 | Set Level | Current power level setting |
-| Altitude | Current altitude reading |
-| Error | Error code if any fault detected |
-| Estimated Hourly Fuel Consumption | Real-time fuel consumption rate (L/h) |
-| Estimated Daily Fuel Consumed | Today's fuel consumption (resets at midnight) |
-| Estimated Total Fuel Consumed | Lifetime fuel consumption |
-| Daily Runtime | Hours of operation today |
-| Total Runtime | Cumulative hours of operation |
+| Altitude | Current altitude reading (not Hcalory or Cronus) |
+| Error | Error code if any fault detected (not Cronus) |
+| Estimated Hourly Fuel Consumption | Locally estimated rate for established air-heater protocols and selected Cronus model profiles |
+| Estimated Daily Fuel Consumed | Locally estimated daily consumption for established air-heater protocols and selected Cronus model profiles |
+| Estimated Total Fuel Consumed | Locally estimated lifetime consumption for established air-heater protocols and selected Cronus model profiles |
+| Daily Runtime | Locally tracked daily runtime for established air-heater protocols and selected Cronus model profiles |
+| Total Runtime | Locally tracked cumulative runtime for established air-heater protocols and selected Cronus model profiles |
 | Burn-off Remaining | Seconds left in the current max-power burn-off cycle |
 | Heat Cycles Since Burn-off | Controller heat cycles since the last successful burn-off |
 | Heat Hours Since Burn-off | RUNNING hours since the last successful burn-off |
@@ -123,6 +140,10 @@ Additional sensors for specific protocols:
 - **Carbon Monoxide** (CBFF): CO level in ppm
 - **Hardware/Software Version** (CBFF): Firmware information
 - **Remaining Run Time** (CBFF): Time until auto-shutoff
+- **Intake/Outlet Temperature** (HeatGenie): created only when that controller reports the probe
+- **External/Coolant Temperature and Run Duration** (Cronus): ThermoConnect record telemetry
+- **Air Pressure** (Cronus air controllers): controller-reported pressure
+- **Mode** (Cronus water controllers): read-only controller telemetry
 
 ### Binary sensors
 
@@ -134,6 +155,8 @@ Additional sensors for specific protocols:
 | Auto Start/Stop | Auto temperature control status |
 | Burn-off Active | Whether a max-power burn-off cycle is running |
 | Burn-off Pending | Next RUNNING start will run in-run burn-off |
+| Fuel Pump, Fan, Glow Plug | HeatGenie component bits |
+| Continuous Run, Interlock | Cronus controller status |
 
 ### Switches
 
@@ -141,28 +164,30 @@ Additional sensors for specific protocols:
 |--------|-------------|
 | Power | Turn heater on/off |
 | Automatic Burn-off | Enable automatic soot burn-off (in-run, dirty HA Off, deferred external Off; off by default) |
-| Auto Temperature Offset | Enable automatic offset using external sensor |
+| Auto Temperature Offset | Enable automatic offset using external sensor (not Hcalory, HeatGenie, or Cronus) |
 | Auto Start/Stop | Enable automatic temperature control with full stop |
 | Fahrenheit Mode | Use Fahrenheit for temperature display |
 | Feet Mode | Use feet for altitude display |
-| High Altitude Mode | Available only when reported by the controller protocol |
+| High Altitude Mode | ABBA binary setting or Hcalory MVP2 three-position setting |
 
 ### Selects
 
 | Select | Description |
 |--------|-------------|
-| Running Mode | Switch between Off, Level, and Temperature modes |
+| Running Mode | Switch between Level and Temperature modes; ABBA can additionally offer Ventilation |
+| Cronus Mode | Air controllers only: Heating, Ventilation, Boost, and Eco |
 | Language | Display language (EN, CN, DE, Silent, RU) |
 | Pump Type | Fuel pump type (16/22/28/32 µl) |
 | Tank Volume | Tank size for fuel estimation |
 | Backlight | Display backlight brightness |
+| High Altitude Mode | Hcalory MVP2: Disabled, Mode 1, Mode 2 |
 
 ### Numbers
 
 | Number | Description |
 |--------|-------------|
-| Level | Set heater power level (1-10) |
-| Target Temperature | Set target temperature within the controller-supported range |
+| Level | Set heater power level (1-10); Cronus air controllers expose it in Ventilation mode |
+| Target Temperature | Set target temperature within the controller-supported range; Cronus air controllers expose it outside Ventilation mode |
 | Temperature Offset | Manual temperature offset (-9 to +9) |
 | Tank Capacity | Tank capacity for fuel tracking |
 | Burn-off Duration | Minutes at max power for a burn-off cycle (1-30, default 10) |
@@ -173,8 +198,8 @@ Additional sensors for specific protocols:
 
 | Button | Description |
 |--------|-------------|
-| Sync Time | Synchronize heater clock with Home Assistant |
-| Reset Estimated Fuel Remaining | Reset fuel tracking after refueling |
+| Sync Time | Synchronize heater clock with Home Assistant (not Cronus) |
+| Reset Estimated Fuel Remaining | Reset local fuel tracking after refueling (not Cronus) |
 | Power Off Now | Skip burn-off and power off immediately |
 | Run Burn-off | Run max-power burn-off without shutting down |
 
@@ -197,6 +222,8 @@ The integration estimates fuel consumption based on the heater's power level (0.
 - Calculated in real-time while the heater is running
 - Persisted across Home Assistant restarts
 - Available for graphing via Home Assistant's native statistics
+
+For **Webasto Cronus Smart** controllers, the mobile protocol reports whether the controller is connected to an air or water heater, but does not report the attached heater model. Fuel-tracking entities are therefore disabled until the installed model is selected in the integration options. The available diesel profiles are Air Top Evo 40/55 and Thermo Top Evo 4/5 kW. Ventilation is tracked as zero fuel use; heating is an estimate from the model's documented modulation range, with the air-heater Boost and Eco modes using their documented mode behavior.
 
 ### Graphing fuel consumption
 
@@ -231,7 +258,7 @@ title: Daily Fuel Consumption
 
 ### Temperature control not working
 
-Temperature control only works in **Temperature Mode**. Check the Running Mode select entity and switch from Level Mode if needed.
+For established air-heater protocols, temperature control requires **Temperature Mode**. Cronus air controllers provide a setpoint in Heating, Boost, and Eco modes; their Ventilation mode has no temperature setpoint. Cronus water controllers do not expose an air setpoint.
 
 ### Burn-off
 

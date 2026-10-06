@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import sys
 import types
+from datetime import timezone
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -355,6 +356,13 @@ class _StubButtonEntity(_StubEntity):
     pass
 
 
+class _StubRestoreEntity:
+    """Stub for homeassistant.helpers.restore_state.RestoreEntity."""
+
+    async def async_get_last_state(self):
+        return None
+
+
 # Inject entity stubs - import modules first to create them via our finder
 import homeassistant.helpers.entity  # noqa: E402
 import homeassistant.components.sensor  # noqa: E402
@@ -365,6 +373,7 @@ import homeassistant.components.switch  # noqa: E402
 import homeassistant.components.select  # noqa: E402
 import homeassistant.components.number  # noqa: E402
 import homeassistant.components.button  # noqa: E402
+import homeassistant.helpers.restore_state  # noqa: E402
 
 sys.modules["homeassistant.helpers.update_coordinator"].CoordinatorEntity = _StubCoordinatorEntity
 sys.modules["homeassistant.helpers.entity"].Entity = _StubEntity
@@ -377,6 +386,7 @@ sys.modules["homeassistant.components.switch"].SwitchEntity = _StubSwitchEntity
 sys.modules["homeassistant.components.select"].SelectEntity = _StubSelectEntity
 sys.modules["homeassistant.components.number"].NumberEntity = _StubNumberEntity
 sys.modules["homeassistant.components.button"].ButtonEntity = _StubButtonEntity
+sys.modules["homeassistant.helpers.restore_state"].RestoreEntity = _StubRestoreEntity
 
 
 # ---------------------------------------------------------------------------
@@ -418,6 +428,10 @@ if "homeassistant.const" not in sys.modules:
 # Set real string values for constants used as dict keys
 sys.modules["homeassistant.const"].ATTR_TEMPERATURE = "temperature"
 sys.modules["homeassistant.const"].CONF_ADDRESS = "address"
+
+import homeassistant.util.dt as _ha_dt  # noqa: E402
+
+_ha_dt.UTC = timezone.utc
 
 
 # ---------------------------------------------------------------------------
