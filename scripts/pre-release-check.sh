@@ -86,7 +86,11 @@ python3 -m venv "$TMPDIR/venv"
 # shellcheck disable=SC1091
 source "$TMPDIR/venv/bin/activate"
 pip install -q --upgrade pip
-pip install -q "diesel-heater-ble==$PYPI_VER"
+# --no-cache-dir + explicit index-url bypasses stale pip mirror cache that lags
+# behind the authoritative /pypi/.../json API we checked above (seen 2026-10-06:
+# the JSON API served 0.3.6 immediately after `twine upload`, but the pip simple
+# index took several minutes to see it).
+pip install -q --no-cache-dir --index-url https://pypi.org/simple/ "diesel-heater-ble==$PYPI_VER"
 
 python3 - "$INTEGRATION_PATH" <<'PYEOF'
 import ast
