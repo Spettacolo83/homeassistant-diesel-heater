@@ -704,6 +704,10 @@ class BurnoffController:
                 self._host._logger.warning("Cannot start burn-off while ventilating")
                 return
 
+            if self._host.data.get("running_step") not in BURNOFF_HEAT_STEPS:
+                self._host._logger.warning("Cannot start burn-off: heater is not actively heating")
+                return
+
             self.accumulator.pending = False
             self.cycle.saved_mode = self._host.data.get("running_mode")
             self.cycle.saved_level = self._host.data.get("set_level")

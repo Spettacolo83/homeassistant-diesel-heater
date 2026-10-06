@@ -4581,6 +4581,23 @@ class TestBurnoffOnShutdown:
         coordinator._send_command.assert_not_called()
         coordinator._burnoff.schedule_wait.assert_not_called()
 
+    @pytest.mark.parametrize("step", [RUNNING_STEP_STANDBY, RUNNING_STEP_COOLDOWN])
+    @pytest.mark.asyncio
+    async def test_run_burnoff_skips_non_combustion_step(self, step):
+        """Run Burn-off does not re-ignite or interrupt shutdown."""
+        coordinator = create_mock_coordinator()
+        _enable_burnoff(coordinator)
+        _set_heating(coordinator)
+        coordinator.data["running_step"] = step
+        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator._burnoff.schedule_wait = MagicMock()
+
+        await coordinator.async_run_burnoff()
+
+        assert coordinator.burnoff_active is False
+        coordinator._send_command.assert_not_called()
+        coordinator._burnoff.schedule_wait.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_power_off_now_restores_then_offs(self):
         """Power Off Now restores saved mode then sends immediate off."""
