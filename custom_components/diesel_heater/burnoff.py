@@ -45,12 +45,14 @@ class BurnoffPhase(StrEnum):
     """Live burn-off cycle phase.
 
     pending (start on next RUNNING) is accumulator state, not a phase.
+    PAUSED keeps this cycle's snapshot while the heater is off or cooling down.
     """
 
     IDLE = "idle"
     RUNNING = "running"
     AWAITING_STATUS = "awaiting_status"
     RESTORING = "restoring"
+    PAUSED = "paused"
 
 
 @dataclass
@@ -117,7 +119,7 @@ class BurnoffController:
 
     @property
     def active(self) -> bool:
-        """Return True while a cycle is running or still restoring the snapshot."""
+        """Return True while a cycle is running, paused, or still restoring."""
         return self.cycle.phase != BurnoffPhase.IDLE
 
     @property
@@ -399,6 +401,8 @@ class BurnoffController:
         restoring = bool(burnoff.get("awaiting_snapshot_write", burnoff.get("restore_pending", False)))
         if phase_raw == BurnoffPhase.RESTORING or restoring:
             return BurnoffPhase.RESTORING
+        if phase_raw == BurnoffPhase.PAUSED:
+            return BurnoffPhase.PAUSED
         if phase_raw in (
             BurnoffPhase.RUNNING,
             BurnoffPhase.AWAITING_STATUS,
@@ -435,7 +439,7 @@ class BurnoffController:
             self.cycle.phase.value,
         )
         self.notify_state()
-        if self.cycle.phase == BurnoffPhase.RESTORING:
+        if self.cycle.phase in (BurnoffPhase.RESTORING, BurnoffPhase.PAUSED):
             return
         if remaining is not None and remaining > 0:
             self.schedule_wait()
@@ -484,6 +488,14 @@ class BurnoffController:
         if self.cycle.phase == BurnoffPhase.IDLE:
             return
 
+        if self.cycle.phase == BurnoffPhase.PAUSED:
+            if (
+                self._host.data.get("running_state") == RUNNING_STATE_ON
+                and self._host.data.get("running_step") == RUNNING_STEP_RUNNING
+            ):
+                self._host.hass.async_create_task(self.resume_paused_cycle())
+            return
+
         if self.cycle.phase == BurnoffPhase.RESTORING:
             if self.ecu_can_restore():
                 self._host.hass.async_create_task(self.try_snapshot_write())
@@ -507,15 +519,74 @@ class BurnoffController:
             else:
                 self._host.hass.async_create_task(self.apply_max_power())
 
+    def _will_retry_after_abort(self, *, was_in_run: bool, nearly_done: bool) -> bool:
+        """Return True if this external abort should resume on the next RUNNING."""
+        if not self._host.burnoff_enabled or self.skip_pending_on_off or nearly_done:
+            return False
+        return not (was_in_run and self.accumulator.in_run_aborts + 1 > MAX_BURNOFF_IN_RUN_ABORTS)
+
+    async def pause_for_retry(self) -> None:
+        """Stop the wait and keep this cycle's snapshot until the heater is RUNNING.
+
+        saved_mode, saved_level, saved_temp, saved_protocol_state, and ends_at stay
+        on the cycle. Nothing is written while the unit is off or in cooldown.
+        """
+        self.cancel_event.set()
+        task = self.task
+        self.task = None
+        if task is not None and not task.done():
+            task.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await task
+
+        async with self.lock:
+            if self.cycle.phase == BurnoffPhase.IDLE:
+                return
+            self.cycle.phase = BurnoffPhase.PAUSED
+            await self._host.async_save_data()
+            self.notify_state()
+
+    async def resume_paused_cycle(self) -> None:
+        """Continue the paused cycle without reading a new setpoint from the heater."""
+        async with self.lock:
+            if self.cycle.phase != BurnoffPhase.PAUSED:
+                return
+            if (
+                self._host.data.get("running_state") != RUNNING_STATE_ON
+                or self._host.data.get("running_step") != RUNNING_STEP_RUNNING
+            ):
+                return
+            # A later LCD off must be able to abort this resumed cycle.
+            self.cancel_event.clear()
+            ends_at = self.cycle.ends_at
+            expired = ends_at is None or ends_at <= datetime.now(UTC)
+            self.cycle.phase = BurnoffPhase.RUNNING
+            if not expired:
+                if not await self.apply_max_power():
+                    self.cycle.phase = BurnoffPhase.AWAITING_STATUS
+                await self._host.async_save_data()
+                self.notify_state()
+                self.schedule_wait()
+                return
+        await self.complete()
+
     async def abort_on_external_shutdown(self) -> None:
         """Cancel burn-off when the ECU stopped outside Home Assistant."""
         if not self.active:
+            return
+        if self.cycle.phase == BurnoffPhase.PAUSED:
             return
         if not self.ecu_shutdown_observed():
             return
         was_in_run = not self.cycle.shutdown_after
         nearly_done = self.nearly_complete()
         self._host._logger.info("Burn-off aborted: heater stopped externally (controller or ECU)")
+        if self._will_retry_after_abort(was_in_run=was_in_run, nearly_done=nearly_done):
+            if was_in_run:
+                self.accumulator.in_run_aborts += 1
+            self.publish_accumulator()
+            await self.pause_for_retry()
+            return
         await self.cancel(restore=True)
         if not self._host.burnoff_enabled or self.skip_pending_on_off:
             return
@@ -695,13 +766,13 @@ class BurnoffController:
                 return
 
             self.accumulator.pending = False
+            duration = self._host.burnoff_duration_minutes
             self.cycle.saved_mode = self._host.data.get("running_mode")
             self.cycle.saved_level = self._host.data.get("set_level")
             self.cycle.saved_temp = self._host.data.get("set_temp")
             self.cycle.saved_protocol_state = self._host.burnoff_protocol_snapshot()
             self.cycle.shutdown_after = shutdown_after
             self.cycle.phase = BurnoffPhase.RUNNING
-            duration = self._host.burnoff_duration_minutes
             self.cycle.ends_at = datetime.now(UTC) + timedelta(minutes=duration)
 
             self._host._logger.info(

@@ -5257,6 +5257,90 @@ class TestUnifiedBurnoff:
         assert coordinator._burnoff.cycle.shutdown_after is False
 
     @pytest.mark.asyncio
+    async def test_lcd_off_during_burnoff_reuses_stashed_setpoint(self):
+        """LCD off then on resumes burn-off with the pre-burn-off mode, not level 10."""
+        coordinator = create_mock_coordinator()
+        _enable_in_run(coordinator, hours=1, duration=15)
+        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator._burnoff.schedule_wait = MagicMock()
+        tasks = _install_task_runner(coordinator)
+        ends_at = datetime.now(UTC) + timedelta(minutes=12)
+
+        coordinator.data["running_state"] = RUNNING_STATE_ON
+        coordinator.data["running_step"] = RUNNING_STEP_RUNNING
+        coordinator.data["running_mode"] = RUNNING_MODE_LEVEL
+        coordinator.data["set_level"] = MAX_LEVEL
+        coordinator.data["set_temp"] = 10
+        coordinator._burnoff.cycle.phase = BurnoffPhase.RUNNING
+        coordinator._burnoff.cycle.shutdown_after = False
+        coordinator._burnoff.cycle.saved_mode = RUNNING_MODE_TEMPERATURE
+        coordinator._burnoff.cycle.saved_level = 4
+        coordinator._burnoff.cycle.saved_temp = 21
+        coordinator._burnoff.cycle.saved_protocol_state = {"heatgenie_run_mode": 0}
+        coordinator._burnoff.cycle.ends_at = ends_at
+
+        coordinator.data["running_step"] = RUNNING_STEP_COOLDOWN
+        coordinator._burnoff.observe_status()
+        coordinator._burnoff.schedule_abort_if_ecu_stopped()
+        await asyncio.gather(*tasks)
+        tasks.clear()
+
+        coordinator._send_command.assert_not_called()
+        assert coordinator.burnoff_active is True
+        assert coordinator._burnoff.pending is False
+        assert coordinator._burnoff.cycle.phase == BurnoffPhase.PAUSED
+        assert coordinator._burnoff.cycle.saved_mode == RUNNING_MODE_TEMPERATURE
+        assert coordinator._burnoff.cycle.saved_level == 4
+        assert coordinator._burnoff.cycle.saved_temp == 21
+        assert coordinator._burnoff.cycle.ends_at == ends_at
+
+        coordinator.data["running_state"] = RUNNING_STATE_OFF
+        coordinator.data["running_step"] = RUNNING_STEP_STANDBY
+        coordinator._burnoff.observe_status()
+        coordinator._burnoff.schedule_abort_if_ecu_stopped()
+        if tasks:
+            await asyncio.gather(*tasks)
+            tasks.clear()
+
+        coordinator._send_command.assert_not_called()
+        assert coordinator._burnoff.cycle.phase == BurnoffPhase.PAUSED
+        assert coordinator._burnoff.cycle.saved_temp == 21
+        assert coordinator._burnoff.cycle.saved_mode == RUNNING_MODE_TEMPERATURE
+
+        persisted = coordinator._burnoff.storage_payload()
+        restored = create_mock_coordinator()
+        restored._burnoff.schedule_wait = MagicMock()
+        await restored._burnoff.load_state(persisted)
+        assert restored._burnoff.cycle.phase == BurnoffPhase.PAUSED
+        assert restored._burnoff.cycle.saved_mode == RUNNING_MODE_TEMPERATURE
+        assert restored._burnoff.cycle.saved_level == 4
+        assert restored._burnoff.cycle.saved_temp == 21
+        assert restored._burnoff.cycle.saved_protocol_state == {"heatgenie_run_mode": 0}
+        assert restored._burnoff.cycle.ends_at is not None
+        assert abs((restored._burnoff.cycle.ends_at - ends_at).total_seconds()) < 1
+        restored._burnoff.schedule_wait.assert_not_called()
+
+        coordinator.data["running_state"] = RUNNING_STATE_ON
+        coordinator.data["running_step"] = RUNNING_STEP_RUNNING
+        coordinator.data["running_mode"] = RUNNING_MODE_LEVEL
+        coordinator.data["set_level"] = MAX_LEVEL
+        coordinator.data["set_temp"] = 10
+        coordinator._burnoff.observe_status()
+        coordinator._burnoff.schedule_abort_if_ecu_stopped()
+        await asyncio.gather(*tasks)
+
+        assert coordinator.burnoff_active is True
+        assert coordinator._burnoff.cycle.phase == BurnoffPhase.RUNNING
+        assert coordinator._burnoff.cycle.saved_mode == RUNNING_MODE_TEMPERATURE
+        assert coordinator._burnoff.cycle.saved_level == 4
+        assert coordinator._burnoff.cycle.saved_temp == 21
+        assert coordinator._burnoff.cycle.saved_protocol_state == {"heatgenie_run_mode": 0}
+        assert coordinator._burnoff.cycle.ends_at == ends_at
+        commands = [call[0] for call in coordinator._send_command.call_args_list]
+        assert (2, RUNNING_MODE_TEMPERATURE) not in commands
+        assert (4, 21) not in commands
+
+    @pytest.mark.asyncio
     async def test_parse_error_off_does_not_set_pending(self):
         """Forcing running_state=0 without observe (parse-error path) is not LCD Off."""
         coordinator = create_mock_coordinator()
@@ -5311,7 +5395,10 @@ class TestUnifiedBurnoff:
 
         assert coordinator._burnoff.accumulator.heating_seconds == 120.0
         assert coordinator._burnoff.accumulator.cycles == 2
-        assert coordinator._burnoff.accumulator.pending is True
+        assert coordinator._burnoff.accumulator.pending is False
+        assert coordinator._burnoff.cycle.phase == BurnoffPhase.PAUSED
+        assert coordinator._burnoff.cycle.saved_mode == RUNNING_MODE_TEMPERATURE
+        assert coordinator._burnoff.cycle.saved_temp == 21
 
         coordinator.data["running_state"] = RUNNING_STATE_ON
         coordinator.data["running_step"] = RUNNING_STEP_RUNNING
@@ -5544,9 +5631,12 @@ class TestUnifiedBurnoff:
         await coordinator._burnoff.abort_on_external_shutdown()
 
         assert coordinator._burnoff.accumulator.heating_seconds == 3600.0
-        assert coordinator._burnoff.accumulator.pending is True
+        assert coordinator._burnoff.accumulator.pending is False
         assert coordinator._burnoff.accumulator.skip_in_run is False
         assert coordinator._burnoff.accumulator.in_run_aborts == 1
+        assert coordinator._burnoff.cycle.phase == BurnoffPhase.PAUSED
+        assert coordinator._burnoff.cycle.saved_mode == RUNNING_MODE_TEMPERATURE
+        assert coordinator._burnoff.cycle.saved_temp == 21
 
         # Same early-abort remaining time as the first attempt above.
         self._active_in_run(coordinator, remaining_seconds=500)

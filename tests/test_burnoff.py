@@ -51,6 +51,11 @@ def test_phases_are_mutually_exclusive():
     assert controller.cycle.phase == BurnoffPhase.RESTORING
     assert controller.remaining_seconds is None
 
+    controller.cycle.phase = BurnoffPhase.PAUSED
+    assert controller.active is True
+    assert controller.cycle.phase == BurnoffPhase.PAUSED
+    assert controller.remaining_seconds is None
+
 
 def test_storage_payload_writes_phase_and_legacy_flag():
     """Live-cycle storage includes phase plus the old awaiting_snapshot_write flag."""
