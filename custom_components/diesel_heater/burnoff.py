@@ -695,11 +695,12 @@ class BurnoffController:
                 self._host._logger.warning("Cannot start burn-off: heater is not running")
                 return
 
-            if self._host.data.get("running_mode") == RUNNING_MODE_VENTILATION:
-                self._host._logger.warning("Cannot start burn-off while ventilating")
-                return
-
-            if self._host.data.get("running_step") == RUNNING_STEP_VENTILATION:
+            # CBFF reports ventilation as running_mode 3. ABBA reports it as
+            # running_step 6 and leaves running_mode as Level or Temperature.
+            if (
+                self._host.data.get("running_mode") == RUNNING_MODE_VENTILATION
+                or self._host.data.get("running_step") == RUNNING_STEP_VENTILATION
+            ):
                 self._host._logger.warning("Cannot start burn-off while ventilating")
                 return
 
