@@ -26,6 +26,7 @@ from .const import (
     RUNNING_STEP_RUNNING,
     RUNNING_STEP_SELF_TEST,
     RUNNING_STEP_STANDBY,
+    RUNNING_STEP_VENTILATION,
     UPDATE_INTERVAL,
     UPDATE_INTERVAL_HCALORY,
 )
@@ -692,6 +693,19 @@ class BurnoffController:
 
             if self._host.data.get("running_state") != RUNNING_STATE_ON:
                 self._host._logger.warning("Cannot start burn-off: heater is not running")
+                return
+
+            # CBFF reports ventilation as running_mode 3. ABBA reports it as
+            # running_step 6 and leaves running_mode as Level or Temperature.
+            if (
+                self._host.data.get("running_mode") == RUNNING_MODE_VENTILATION
+                or self._host.data.get("running_step") == RUNNING_STEP_VENTILATION
+            ):
+                self._host._logger.warning("Cannot start burn-off while ventilating")
+                return
+
+            if self._host.data.get("running_step") not in BURNOFF_HEAT_STEPS:
+                self._host._logger.warning("Cannot start burn-off: heater is not actively heating")
                 return
 
             self.accumulator.pending = False
