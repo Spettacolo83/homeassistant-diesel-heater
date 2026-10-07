@@ -8,14 +8,20 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from homeassistant.const import EntityCategory, UnitOfTemperature, UnitOfVolume
+from homeassistant.const import EntityCategory, UnitOfTemperature, UnitOfTime, UnitOfVolume
 
 from . import VevorHeaterConfigEntry
 from .const import (
     DOMAIN,
+    MAX_BURNOFF_AFTER_CYCLES,
+    MAX_BURNOFF_AFTER_HOURS,
+    MAX_BURNOFF_DURATION,
     MAX_HEATER_OFFSET,
     MAX_LEVEL,
     MAX_TEMP_CELSIUS,
+    MIN_BURNOFF_AFTER_CYCLES,
+    MIN_BURNOFF_AFTER_HOURS,
+    MIN_BURNOFF_DURATION,
     MIN_HEATER_OFFSET,
     MIN_LEVEL,
     MIN_TEMP_CELSIUS,
@@ -55,6 +61,9 @@ async def async_setup_entry(
             VevorHeaterTemperatureNumber(coordinator),
             VevorTankCapacityNumber(coordinator),
             VevorCurrentFuelLevelNumber(coordinator),
+            VevorBurnoffDurationNumber(coordinator),
+            VevorBurnoffAfterCyclesNumber(coordinator),
+            VevorBurnoffAfterHoursNumber(coordinator),
         ]
 
         # Offset number (encrypted + CBFF protocols only)
@@ -111,9 +120,14 @@ class VevorHeaterLevelNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberEn
 
         Level entity is only available when NOT in Temperature mode (mode 1).
         In Temperature mode, level commands are ignored by the heater.
+        Locked while burn-off is active: set_level is snapshotted at start
+        and restored afterwards.
         """
         # First check coordinator availability
         if not super().available:
+            return False
+
+        if self.coordinator.burnoff_active:
             return False
 
         if self.coordinator.protocol_mode == 9:
@@ -216,9 +230,14 @@ class VevorHeaterTemperatureNumber(
 
         Temperature entity is only available when NOT in Level mode (mode 2).
         In Level mode, temperature commands are ignored by the heater.
+        Locked while burn-off is active: set_temp is snapshotted at start
+        and restored afterwards.
         """
         # First check coordinator availability
         if not super().available:
+            return False
+
+        if self.coordinator.burnoff_active:
             return False
 
         if self.coordinator.protocol_mode == 9:
@@ -430,6 +449,119 @@ class VevorCurrentFuelLevelNumber(CoordinatorEntity[VevorHeaterCoordinator], Num
     async def async_set_native_value(self, value: float) -> None:
         """Set new current fuel level (updates consumed counter)."""
         await self.coordinator.async_set_current_fuel_level(value)
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+
+class VevorBurnoffDurationNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberEntity):
+    """Length of a max-power burn-off cycle, in minutes."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Burn-off Duration"
+    _attr_icon = "mdi:timer-sand"
+    _attr_native_min_value = MIN_BURNOFF_DURATION
+    _attr_native_max_value = MAX_BURNOFF_DURATION
+    _attr_native_step = 1
+    _attr_native_unit_of_measurement = UnitOfTime.MINUTES
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the number entity."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_burnoff_duration"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, coordinator.address)},
+            "name": "Vevor Diesel Heater",
+            "manufacturer": "Vevor",
+            "model": "Diesel Heater",
+        }
+
+    @property
+    def native_value(self) -> float:
+        """Return the configured burn-off duration."""
+        return self.coordinator.burnoff_duration_minutes
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Set burn-off duration in minutes."""
+        await self.coordinator.async_set_burnoff_duration(int(value))
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+
+class VevorBurnoffAfterCyclesNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberEntity):
+    """Controller heat cycles after which in-run burn-off starts (0 = off)."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Burn-off After Cycles"
+    _attr_icon = "mdi:counter"
+    _attr_native_min_value = MIN_BURNOFF_AFTER_CYCLES
+    _attr_native_max_value = MAX_BURNOFF_AFTER_CYCLES
+    _attr_native_step = 1
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the number entity."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_burnoff_after_cycles"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, coordinator.address)},
+            "name": "Vevor Diesel Heater",
+            "manufacturer": "Vevor",
+            "model": "Diesel Heater",
+        }
+
+    @property
+    def native_value(self) -> float:
+        """Return the configured cycle threshold."""
+        return self.coordinator.burnoff_after_cycles
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Set the cycle threshold."""
+        await self.coordinator.async_set_burnoff_after_cycles(int(value))
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+
+class VevorBurnoffAfterHoursNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberEntity):
+    """RUNNING hours after which in-run burn-off starts (0 = off)."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Burn-off After Hours"
+    _attr_icon = "mdi:timer-outline"
+    _attr_native_min_value = MIN_BURNOFF_AFTER_HOURS
+    _attr_native_max_value = MAX_BURNOFF_AFTER_HOURS
+    _attr_native_step = 1
+    _attr_native_unit_of_measurement = UnitOfTime.HOURS
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the number entity."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_burnoff_after_hours"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, coordinator.address)},
+            "name": "Vevor Diesel Heater",
+            "manufacturer": "Vevor",
+            "model": "Diesel Heater",
+        }
+
+    @property
+    def native_value(self) -> float:
+        """Return the configured hours threshold."""
+        return self.coordinator.burnoff_after_hours
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Set the hours threshold."""
+        await self.coordinator.async_set_burnoff_after_hours(int(value))
 
     @callback
     def _handle_coordinator_update(self) -> None:

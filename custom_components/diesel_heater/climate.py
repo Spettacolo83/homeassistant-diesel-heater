@@ -132,7 +132,14 @@ class VevorHeaterClimate(
 
     @property
     def supported_features(self) -> ClimateEntityFeature:
-        """Return only controls documented for the active controller."""
+        """Return the controls the active controller and burn-off state allow.
+
+        HVAC on/off stay available during burn-off so Heat can cancel the cycle
+        and Off can skip the remaining time. Cronus exposes only the controls
+        documented for its air or water controller.
+        """
+        if self.coordinator.burnoff_active:
+            return ClimateEntityFeature.TURN_OFF | ClimateEntityFeature.TURN_ON
         if self.coordinator.protocol_mode != 9:
             return self._attr_supported_features
         power_features = ClimateEntityFeature.TURN_OFF | ClimateEntityFeature.TURN_ON
@@ -142,16 +149,12 @@ class VevorHeaterClimate(
             return power_features
         return power_features | ClimateEntityFeature.TARGET_TEMPERATURE
 
-
-
     @property
     def preset_modes(self) -> list[str] | None:
         """Cronus does not expose the integration-specific temperature presets."""
         if self.coordinator.protocol_mode == 9:
             return None
         return self._attr_preset_modes
-
-
 
     @property
     def current_temperature(self) -> float | None:

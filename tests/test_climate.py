@@ -23,6 +23,7 @@ def create_mock_coordinator() -> MagicMock:
     coordinator.async_set_temperature = AsyncMock()
     coordinator.async_turn_on = AsyncMock()
     coordinator.async_turn_off = AsyncMock()
+    coordinator.burnoff_active = False
     coordinator.data = {
         "connected": True,
         "running_state": 1,
@@ -963,6 +964,26 @@ class TestClimateTemperatureUnit:
 
         # Verify supported_features is set
         assert climate._attr_supported_features is not None
+
+    def test_keeps_setpoint_features_when_burnoff_inactive(self):
+        """Climate still exposes target temperature and presets when idle."""
+        coordinator = create_mock_coordinator()
+        coordinator.burnoff_active = False
+        config_entry = create_mock_config_entry()
+        climate = VevorHeaterClimate(coordinator, config_entry)
+
+        assert climate.supported_features == climate._attr_supported_features
+        assert climate.available is True
+
+    def test_hides_setpoint_features_during_burnoff(self):
+        """Target temperature and presets write saved set_temp; hide them."""
+        coordinator = create_mock_coordinator()
+        coordinator.burnoff_active = True
+        config_entry = create_mock_config_entry()
+        climate = VevorHeaterClimate(coordinator, config_entry)
+
+        assert climate.supported_features != climate._attr_supported_features
+        assert climate.available is True
 
 
 # ---------------------------------------------------------------------------

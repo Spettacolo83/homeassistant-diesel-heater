@@ -6,12 +6,29 @@ from unittest.mock import ANY, AsyncMock, MagicMock
 import pytest
 
 from custom_components.diesel_heater import coordinator as coordinator_module
+from custom_components.diesel_heater.burnoff import BurnoffController
+from custom_components.diesel_heater.const import (
+    CONF_BURNOFF_ENABLED,
+    RUNNING_MODE_TEMPERATURE,
+    RUNNING_STATE_ON,
+    RUNNING_STEP_COOLDOWN,
+    RUNNING_STEP_RUNNING,
+    RUNNING_STEP_STANDBY,
+)
 from custom_components.diesel_heater.coordinator import VevorHeaterCoordinator
 
 from . import conftest  # noqa: F401
 
 FFF1 = "0000fff1-0000-1000-8000-00805f9b34fb"
 FFF2 = "0000fff2-0000-1000-8000-00805f9b34fb"
+
+
+def neo_config_response(minimum: int = 8, maximum: int = 36) -> bytearray:
+    """Build the full 0x5C/0x16 configuration frame parsed by the Neo app."""
+    frame = bytearray(24)
+    frame[:2] = bytearray((0x5C, 0x16))
+    frame[4], frame[5] = minimum, maximum
+    return frame
 
 
 def coordinator_for_layout(neo: bool) -> VevorHeaterCoordinator:
@@ -25,6 +42,8 @@ def coordinator_for_layout(neo: bool) -> VevorHeaterCoordinator:
         properties=["write-without-response"] if neo else ["write"],
     )
     coordinator.data = {"connected": False, "running_state": 1}
+    coordinator.config_entry = SimpleNamespace(data={})
+    coordinator._burnoff = BurnoffController(coordinator)
     coordinator._notification_data = None
     coordinator._neo_password = 100000000
     coordinator._logger = MagicMock()
@@ -60,6 +79,28 @@ def test_5a25_maps_only_observed_states(raw_state: int, expected: int) -> None:
     assert coordinator.data["neo_run_type"] == 2
     assert coordinator.data["neo_raw_state"] == raw_state
     assert coordinator.data["running_state"] == expected
+
+
+@pytest.mark.parametrize(
+    ("raw_state", "expected_step"),
+    [
+        (1, None),
+        (2, RUNNING_STEP_RUNNING),
+        (3, RUNNING_STEP_RUNNING),
+        (4, RUNNING_STEP_RUNNING),
+        (5, RUNNING_STEP_RUNNING),
+        (0, RUNNING_STEP_STANDBY),
+        (6, RUNNING_STEP_COOLDOWN),
+        (7, RUNNING_STEP_COOLDOWN),
+        (8, RUNNING_STEP_COOLDOWN),
+    ],
+)
+def test_5a25_only_maps_evidenced_cooldown_steps(raw_state: int, expected_step: int | None) -> None:
+    coordinator = coordinator_for_layout(True)
+    frame = bytearray(39)
+    frame[:2], frame[3] = b"Z%", raw_state
+    coordinator._notification_callback(FFF2, frame)
+    assert coordinator.data["running_step"] == expected_step
 
 
 def test_5a25_unknown_state_preserves_previous_running_state() -> None:
@@ -104,7 +145,7 @@ async def test_auth_succeeds_only_after_5c16() -> None:
     coordinator = coordinator_for_layout(True)
     coordinator._write_gatt = AsyncMock(
         side_effect=lambda packet: coordinator._notification_callback(
-            FFF2, bytearray.fromhex("5c16")
+            FFF2, neo_config_response()
         )
     )
     assert await coordinator._send_dz06_neo_auth() is True
@@ -117,7 +158,7 @@ async def test_auth_uses_configured_neo_connection_password() -> None:
     coordinator._neo_password = 12345678
     coordinator._write_gatt = AsyncMock(
         side_effect=lambda packet: coordinator._notification_callback(
-            FFF2, bytearray.fromhex("5c16")
+            FFF2, neo_config_response()
         )
     )
     assert await coordinator._send_dz06_neo_auth() is True
@@ -127,7 +168,11 @@ async def test_auth_uses_configured_neo_connection_password() -> None:
 @pytest.mark.asyncio
 async def test_auth_without_5c16_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     coordinator = coordinator_for_layout(True)
-    coordinator._write_gatt = AsyncMock()
+    coordinator._write_gatt = AsyncMock(
+        side_effect=lambda packet: coordinator._notification_callback(
+            FFF2, bytearray.fromhex("5c16")
+        )
+    )
     clock = iter((0, 11))
     fake_time = SimpleNamespace(monotonic=lambda: next(clock, 11.0))
     monkeypatch.setattr(coordinator_module, "time", fake_time)
@@ -242,6 +287,148 @@ async def test_temperature_write_failure_is_logged() -> None:
     await coordinator.async_set_temperature(30)
 
     coordinator._logger.warning.assert_called_once_with(
-        "DZ06 Neo temperature write failed: %s", ANY
+        "DZ06 Neo control write failed: %s", ANY
     )
     coordinator.async_request_refresh.assert_not_awaited()
+
+
+def test_bluetooth_config_response_sets_neo_target_range() -> None:
+    coordinator = coordinator_for_layout(True)
+    coordinator._notification_callback(FFF2, neo_config_response())
+    assert coordinator.data["neo_min_target"] == 8
+    assert coordinator.data["neo_max_target"] == 36
+
+
+@pytest.mark.asyncio
+async def test_max_power_control_uses_the_app_packet_and_configured_limit() -> None:
+    coordinator = coordinator_for_layout(True)
+    coordinator.data.update(
+        {
+            "neo_min_target": 8,
+            "neo_max_target": 36,
+            "neo_raw_state": 1,
+            "set_temp": 22,
+            "altitude": 1500,
+        }
+    )
+    response = bytearray(39)
+    response[:2], response[3], response[15], response[34] = b"Z%", 1, 36, 1
+    coordinator._write_gatt = AsyncMock(
+        side_effect=lambda packet: coordinator._notification_callback(FFF2, response)
+    )
+
+    assert await coordinator._async_set_dz06_neo_control(1, 36, 1500) is True
+    assert coordinator._write_gatt.await_args.args[0] == bytearray.fromhex(
+        "a5090151012405dc01bdae"
+    )
+
+
+@pytest.mark.asyncio
+async def test_burnoff_shutdown_uses_neo_app_power_off_packet() -> None:
+    coordinator = coordinator_for_layout(True)
+    coordinator.data.update(
+        {
+            "neo_min_target": 8,
+            "neo_max_target": 36,
+            "neo_raw_state": 1,
+            "neo_run_type": 1,
+            "set_temp": 30,
+            "altitude": 1,
+        }
+    )
+    response = bytearray(39)
+    response[:2], response[3] = b"Z%", 0
+    coordinator._write_gatt = AsyncMock(
+        side_effect=lambda packet: coordinator._notification_callback(FFF2, response)
+    )
+
+    await coordinator._power_off()
+    assert coordinator._write_gatt.await_args.args[0] == bytearray.fromhex(
+        "a509015c011e00010129ea"
+    )
+
+
+@pytest.mark.asyncio
+async def test_ha_neo_power_off_does_not_create_pending_burnoff() -> None:
+    coordinator = coordinator_for_layout(True)
+    coordinator.config_entry = SimpleNamespace(data={CONF_BURNOFF_ENABLED: True})
+    coordinator.data.update(
+        {
+            "running_state": RUNNING_STATE_ON,
+            "running_step": RUNNING_STEP_RUNNING,
+            "running_mode": RUNNING_MODE_TEMPERATURE,
+        }
+    )
+    coordinator._burnoff.observe_status()
+    coordinator._send_dz06_neo_power = AsyncMock(return_value=True)
+
+    await coordinator._power_off()
+
+    response = bytearray(39)
+    response[:2], response[3], response[34] = b"Z%", 0, 2
+    coordinator._notification_callback(FFF2, response)
+
+    assert coordinator.burnoff_pending is False
+    assert coordinator._burnoff.ha_power_off is False
+
+
+@pytest.mark.asyncio
+async def test_neo_temperature_write_accepts_stored_none_limits() -> None:
+    coordinator = coordinator_for_layout(True)
+    coordinator.data.update(
+        {
+            "neo_min_target": None,
+            "neo_max_target": None,
+            "neo_raw_state": 2,
+            "neo_run_type": 2,
+            "set_temp": 22,
+            "altitude": 1500,
+        }
+    )
+    response = bytearray(39)
+    response[:2], response[15], response[34] = b"Z%", 30, 2
+    coordinator._write_gatt = AsyncMock(
+        side_effect=lambda packet: coordinator._notification_callback(FFF2, response)
+    )
+
+    assert await coordinator.async_set_temperature(30) is True
+    assert coordinator._write_gatt.await_args.args[0] == bytearray.fromhex(
+        "a5090151021e05dc0165e6"
+    )
+
+
+@pytest.mark.asyncio
+async def test_neo_power_off_failure_clears_ha_shutdown_intent() -> None:
+    coordinator = coordinator_for_layout(True)
+    coordinator._send_dz06_neo_power = AsyncMock(return_value=False)
+
+    await coordinator._power_off()
+
+    assert coordinator._burnoff.ha_power_off is False
+    coordinator.async_request_refresh.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_neo_burnoff_requires_a_complete_restorable_snapshot() -> None:
+    coordinator = coordinator_for_layout(True)
+    coordinator._burnoff.cycle.saved_protocol_state = {"neo_altitude": 1500}
+    coordinator._write_gatt = AsyncMock()
+
+    assert await coordinator.async_apply_burnoff_max_power(coordinator._burnoff.cycle) is False
+    coordinator._write_gatt.assert_not_awaited()
+
+
+def test_neo_burnoff_snapshot_captures_the_configured_upper_limit() -> None:
+    coordinator = coordinator_for_layout(True)
+    coordinator.data.update(
+        {
+            "neo_raw_state": 2,
+            "neo_run_type": 2,
+            "set_temp": 22,
+            "altitude": 1500,
+            "neo_min_target": 8,
+            "neo_max_target": 35,
+        }
+    )
+
+    assert coordinator.burnoff_protocol_snapshot()["neo_max_target"] == 35

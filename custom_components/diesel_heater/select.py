@@ -165,7 +165,13 @@ class VevorHeaterModeSelect(SelectEntity):
 
     @property
     def available(self) -> bool:
-        """Return if entity is available."""
+        """Return if entity is available.
+
+        Locked while burn-off is active: running mode is snapshotted at start
+        and restored afterwards.
+        """
+        if self.coordinator.burnoff_active:
+            return False
         return self.coordinator.data.get("connected", False)
 
     @property

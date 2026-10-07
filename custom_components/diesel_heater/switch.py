@@ -33,6 +33,8 @@ async def async_setup_entry(
     entities: list[SwitchEntity] = [
         VevorHeaterPowerSwitch(coordinator),
     ]
+    if mode != 9:
+        entities.append(VevorBurnoffSwitch(coordinator))
 
     # Auto Temperature Offset (not available for Hcalory - @Xev, issue #34)
     if mode not in (7, 8, 9):
@@ -101,6 +103,44 @@ class VevorHeaterPowerSwitch(CoordinatorEntity[VevorHeaterCoordinator], SwitchEn
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the heater off."""
         await self.coordinator.async_turn_off()
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+
+class VevorBurnoffSwitch(CoordinatorEntity[VevorHeaterCoordinator], SwitchEntity):
+    """Enable automatic soot burn-off (in-run thresholds and dirty HA Off)."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Automatic Burn-off"
+    _attr_icon = "mdi:fire"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the switch."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_automatic_burnoff"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, coordinator.address)},
+            "name": "Vevor Diesel Heater",
+            "manufacturer": "Vevor",
+            "model": "Diesel Heater",
+        }
+
+    @property
+    def is_on(self) -> bool:
+        """Return true if automatic burn-off is enabled."""
+        return self.coordinator.burnoff_enabled
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Enable automatic burn-off."""
+        await self.coordinator.async_set_burnoff_enabled(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Disable automatic burn-off."""
+        await self.coordinator.async_set_burnoff_enabled(False)
 
     @callback
     def _handle_coordinator_update(self) -> None:

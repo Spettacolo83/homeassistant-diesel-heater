@@ -29,6 +29,8 @@ async def async_setup_entry(
     async_add_entities([
         VevorTimeSyncButton(coordinator),
         VevorResetFuelLevelButton(coordinator),
+        VevorPowerOffNowButton(coordinator),
+        VevorRunBurnoffButton(coordinator),
     ])
 
 
@@ -100,3 +102,60 @@ class VevorResetFuelLevelButton(CoordinatorEntity[VevorHeaterCoordinator], Butto
     async def async_press(self) -> None:
         """Handle the button press."""
         await self.coordinator.async_reset_fuel_level()
+
+
+class VevorPowerOffNowButton(CoordinatorEntity[VevorHeaterCoordinator], ButtonEntity):
+    """Skip burn-off and power the heater off immediately."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Power Off Now"
+    _attr_icon = "mdi:power-off"
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the button."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_power_off_now"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, coordinator.address)},
+            "name": "Vevor Diesel Heater",
+            "manufacturer": "Vevor",
+            "model": "Diesel Heater",
+        }
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        return self.coordinator.data.get("connected", False)
+
+    async def async_press(self) -> None:
+        """Handle the button press."""
+        await self.coordinator.async_power_off_now()
+
+
+class VevorRunBurnoffButton(CoordinatorEntity[VevorHeaterCoordinator], ButtonEntity):
+    """Run max-power burn-off without shutting down afterwards."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Run Burn-off"
+    _attr_icon = "mdi:fire"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the button."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_run_burnoff"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, coordinator.address)},
+            "name": "Vevor Diesel Heater",
+            "manufacturer": "Vevor",
+            "model": "Diesel Heater",
+        }
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        return self.coordinator.data.get("connected", False)
+
+    async def async_press(self) -> None:
+        """Handle the button press."""
+        await self.coordinator.async_run_burnoff()

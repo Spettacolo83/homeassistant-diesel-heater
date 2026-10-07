@@ -28,6 +28,7 @@ from homeassistant.util import dt as dt_util
 
 from homeassistant.helpers.event import async_track_state_change_event
 
+from .burnoff import BurnoffController, BurnoffPhase
 from .const import (
     ABBA_NOTIFY_UUID,
     ABBA_SERVICE_UUID,
@@ -38,6 +39,10 @@ from .const import (
     CHARACTERISTIC_UUID_ALT,
     CONF_AUTO_OFFSET_ENABLED,
     CONF_AUTO_OFFSET_MAX,
+    CONF_BURNOFF_AFTER_CYCLES,
+    CONF_BURNOFF_AFTER_HOURS,
+    CONF_BURNOFF_DURATION,
+    CONF_BURNOFF_ENABLED,
     CONF_EXTERNAL_TEMP_SENSOR,
     CONF_FORCE_TEMP_UNIT,
     CONF_CRONUS_HEATER_MODEL,
@@ -48,6 +53,10 @@ from .const import (
     CRONUS_NOTIFY_UUID,
     CRONUS_WRITE_UUID,
     DEFAULT_AUTO_OFFSET_MAX,
+    DEFAULT_BURNOFF_AFTER_CYCLES,
+    DEFAULT_BURNOFF_AFTER_HOURS,
+    DEFAULT_BURNOFF_DURATION,
+    DEFAULT_BURNOFF_ENABLED,
     DEFAULT_FORCE_TEMP_UNIT,
     DEFAULT_NEO_PASSWORD,
     DEFAULT_PIN,
@@ -62,20 +71,33 @@ from .const import (
     HCALORY_MVP2_WRITE_UUID,
     DZ06_NEO_NOTIFY_UUID,
     DZ06_NEO_WRITE_UUID,
+    MAX_BURNOFF_AFTER_CYCLES,
+    MAX_BURNOFF_AFTER_HOURS,
+    MAX_BURNOFF_DURATION,
     MAX_HEATER_OFFSET,
+    MAX_LEVEL,
     MAX_HISTORY_DAYS,
+    MIN_BURNOFF_AFTER_CYCLES,
+    MIN_BURNOFF_AFTER_HOURS,
+    MIN_BURNOFF_DURATION,
     MIN_HEATER_OFFSET,
     PROTOCOL_HEADER_ABBA,
     PROTOCOL_HEADER_CBFF,
     PROTOCOL_HEADER_AA77,
+    RUNNING_MODE_LEVEL,
+    RUNNING_MODE_TEMPERATURE,
+    RUNNING_STATE_OFF,
     RUNNING_STATE_ON,
     RUNNING_STEP_COOLDOWN,
     RUNNING_STEP_RUNNING,
+    RUNNING_STEP_STANDBY,
     SENSOR_TEMP_MAX,
     SENSOR_TEMP_MIN,
     SERVICE_UUID,
     SERVICE_UUID_ALT,
     STORAGE_KEY_AUTO_OFFSET_ENABLED,
+    STORAGE_KEY_BURNOFF,
+    STORAGE_KEY_BURNOFF_ACCUMULATOR,
     STORAGE_KEY_FUEL_SINCE_RESET,
     STORAGE_KEY_LAST_REFUELED,
     STORAGE_KEY_TANK_CAPACITY,
@@ -242,8 +264,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             "fuel_remaining": None,
             "fuel_consumed_since_reset": 0.0,
             "last_refueled": None,  # ISO timestamp of last refuel reset
-            "neo_raw_state": None,  # Set only after an authenticated DZ06 status frame
+            "neo_raw_state": None,  # Set only after a confirmed DZ06 Bluetooth status frame
             "neo_run_type": None,
+            "neo_min_target": None,
+            "neo_max_target": None,
         }
 
         # Fuel consumption tracking (minimal)
@@ -266,6 +290,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._auto_offset_unsub: callable | None = None
         self._last_auto_offset_time: float = 0.0
         self._current_heater_offset: int = 0  # Current offset sent to heater via cmd 12
+
+        # Max-power soot burn-off. Live cycle, soot accumulator, and entity
+        # fields live on the controller; this coordinator stays a facade for
+        # entities and BLE.
+        self._burnoff = BurnoffController(self)
 
     @property
     def protocol_mode(self) -> int:
@@ -442,6 +471,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 auto_offset_enabled = data.get(STORAGE_KEY_AUTO_OFFSET_ENABLED, False)
                 self.data["auto_offset_enabled"] = auto_offset_enabled
                 self._logger.debug("Loaded auto_offset_enabled: %s", auto_offset_enabled)
+
+                # Resume in-progress max-power burn-off after HA restart
+                await self._burnoff.load_state(data.get(STORAGE_KEY_BURNOFF))
+                self._burnoff.load_accumulator(
+                    data.get(STORAGE_KEY_BURNOFF_ACCUMULATOR)
+                )
 
                 # Import existing history into statistics for native graphing
                 await self._import_all_history_statistics()
@@ -728,6 +763,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 STORAGE_KEY_LAST_REFUELED: self.data.get("last_refueled"),
                 # Settings
                 STORAGE_KEY_AUTO_OFFSET_ENABLED: self.data.get("auto_offset_enabled", False),
+                STORAGE_KEY_BURNOFF: self._burnoff.storage_payload(),
+                STORAGE_KEY_BURNOFF_ACCUMULATOR: self._burnoff.accumulator_payload(),
             }
             await self._store.async_save(data)
             self._logger.debug(
@@ -1114,10 +1151,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if self._is_running_for_tracking():
             self._total_runtime_seconds += elapsed_seconds
             self._daily_runtime_seconds += elapsed_seconds
+            self._burnoff.accumulate_hours(elapsed_seconds)
 
         # Update data dictionary (convert to hours for display)
         self.data["daily_runtime_hours"] = round(self._daily_runtime_seconds / 3600.0, 2)
         self.data["total_runtime_hours"] = round(self._total_runtime_seconds / 3600.0, 2)
+        self._burnoff.publish_accumulator()
+        self._burnoff.maybe_start_in_run()
 
     async def _check_daily_reset(self) -> None:
         """Check if we need to reset daily fuel counter (runs every update, even if offline)."""
@@ -1653,21 +1693,42 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """Handle notification from heater."""
         if self.is_dz06_neo:
             self._notification_data = bytearray(data)
+            if len(data) == 24 and data[:2] == bytearray((0x5C, 0x16)):
+                minimum, maximum = data[4], data[5]
+                if minimum <= maximum:
+                    self.data["neo_min_target"] = minimum
+                    self.data["neo_max_target"] = maximum
             if len(data) == 39 and data[:2] == bytearray((0x5A, 0x25)):
+                run_type = data[34]
                 self.data.update({
                     "connected": True,
                     "supply_voltage": data[6] / 10.0,
                     "set_temp": float(data[15]),
                     "cab_temperature": float(data[35]),
                     "altitude": int.from_bytes(data[32:34], "big"),
-                    "neo_run_type": data[34],
+                    "neo_run_type": run_type,
                 })
                 raw_state = data[3]
                 self.data["neo_raw_state"] = raw_state
-                if raw_state in (1, 2, 4, 5):
-                    self.data["running_state"] = 1
-                elif raw_state in (0, 7, 8):
-                    self.data["running_state"] = 0
+                if raw_state == 1:
+                    # The Neo app labels state 1 as self-check, before heating.
+                    self.data["running_state"] = RUNNING_STATE_ON
+                    self.data["running_step"] = None
+                elif raw_state in (2, 3, 4, 5):
+                    self.data["running_state"] = RUNNING_STATE_ON
+                    self.data["running_step"] = RUNNING_STEP_RUNNING
+                elif raw_state in (6, 7, 8):
+                    self.data["running_state"] = RUNNING_STATE_OFF
+                    self.data["running_step"] = RUNNING_STEP_COOLDOWN
+                elif raw_state == 0:
+                    self.data["running_state"] = RUNNING_STATE_OFF
+                    self.data["running_step"] = RUNNING_STEP_STANDBY
+                if run_type == 1:
+                    self.data["running_mode"] = RUNNING_MODE_LEVEL
+                elif run_type == 2:
+                    self.data["running_mode"] = RUNNING_MODE_TEMPERATURE
+                self._burnoff.observe_status()
+                self._burnoff.schedule_abort_if_ecu_stopped()
             return
         if getattr(self, "_is_cronus_device", False):
             self._handle_cronus_notification(bytearray(data))
@@ -1891,6 +1952,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 "Protocol mode changed: %d -> %d (%s)",
                 old_mode, self._protocol_mode, protocol.name
             )
+
+        # Soot/pending from this parse, then sync any live cycle with ECU cooldown.
+        self._burnoff.observe_status()
+        self._burnoff.schedule_abort_if_ecu_stopped()
 
     def _apply_ui_temperature_offset(self) -> None:
         """Apply HA-side UI temperature offset (display only, not sent to heater).
@@ -2203,9 +2268,61 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             altitude = int(altitude)
         except (TypeError, ValueError):
             return None
-        if run_type not in (1, 2) or not 8 <= target <= 36 or not 0 <= altitude <= 0xFFFF:
+        minimum = self.data.get("neo_min_target")
+        maximum = self.data.get("neo_max_target")
+        try:
+            minimum = int(minimum) if minimum is not None else 8
+            maximum = int(maximum) if maximum is not None else 36
+        except (TypeError, ValueError):
+            return None
+        if (
+            run_type not in (1, 2)
+            or minimum > maximum
+            or not minimum <= target <= maximum
+            or not 0 <= altitude <= 0xFFFF
+        ):
             return None
         return run_type, target, altitude
+
+    async def _async_set_dz06_neo_control(
+        self, run_type: int, target: int, altitude: int
+    ) -> bool:
+        # Send Neo's app-backed control packet and await its matching status.
+        minimum = self.data.get("neo_min_target")
+        maximum = self.data.get("neo_max_target")
+        try:
+            minimum = int(minimum) if minimum is not None else 8
+            maximum = int(maximum) if maximum is not None else 36
+        except (TypeError, ValueError):
+            return False
+        if (
+            run_type not in (1, 2)
+            or not minimum <= target <= maximum
+            or not 0 <= altitude <= 0xFFFF
+        ):
+            return False
+        self._notification_data = None
+        try:
+            await self._write_gatt(self._neo_packet(0x51, run_type, target, altitude))
+        except Exception as err:
+            self._logger.warning("DZ06 Neo control write failed: %s", err)
+            return False
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            await asyncio.sleep(0.1)
+            response = self._notification_data
+            if response is None:
+                continue
+            if (
+                len(response) == 39
+                and response[:2] == bytearray((0x5A, 0x25))
+                and response[15] == target
+                and response[34] == run_type
+            ):
+                await self.async_request_refresh()
+                return True
+            self._notification_data = None
+        return False
 
     async def _send_dz06_neo_auth(self) -> bool:
         """Read Neo configuration using its configured connection password."""
@@ -2233,7 +2350,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         while time.monotonic() < deadline:
             await asyncio.sleep(0.1)
             response = self._notification_data
-            if response and len(response) >= 2 and response[:2] == bytearray((0x5C, 0x16)):
+            if response and len(response) == 24 and response[:2] == bytearray((0x5C, 0x16)):
                 return True
         return False
 
@@ -2397,6 +2514,257 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         # Should not reach here, but just in case
         return False
 
+    @property
+    def burnoff_enabled(self) -> bool:
+        """Return whether automatic burn-off (in-run and dirty Off) is enabled."""
+        return bool(
+            self.config_entry.data.get(CONF_BURNOFF_ENABLED, DEFAULT_BURNOFF_ENABLED)
+        )
+
+    @property
+    def burnoff_duration_minutes(self) -> int:
+        """Return configured burn-off duration in minutes."""
+        try:
+            value = int(
+                self.config_entry.data.get(
+                    CONF_BURNOFF_DURATION, DEFAULT_BURNOFF_DURATION
+                )
+            )
+        except (TypeError, ValueError):
+            value = DEFAULT_BURNOFF_DURATION
+        return max(MIN_BURNOFF_DURATION, min(MAX_BURNOFF_DURATION, value))
+
+    @property
+    def burnoff_after_cycles(self) -> int:
+        """Return in-run burn-off cycle threshold (0 = disabled)."""
+        try:
+            value = int(
+                self.config_entry.data.get(
+                    CONF_BURNOFF_AFTER_CYCLES, DEFAULT_BURNOFF_AFTER_CYCLES
+                )
+            )
+        except (TypeError, ValueError):
+            value = DEFAULT_BURNOFF_AFTER_CYCLES
+        return max(MIN_BURNOFF_AFTER_CYCLES, min(MAX_BURNOFF_AFTER_CYCLES, value))
+
+    @property
+    def burnoff_after_hours(self) -> int:
+        """Return in-run burn-off hours threshold (0 = disabled)."""
+        try:
+            value = int(
+                self.config_entry.data.get(
+                    CONF_BURNOFF_AFTER_HOURS, DEFAULT_BURNOFF_AFTER_HOURS
+                )
+            )
+        except (TypeError, ValueError):
+            value = DEFAULT_BURNOFF_AFTER_HOURS
+        return max(MIN_BURNOFF_AFTER_HOURS, min(MAX_BURNOFF_AFTER_HOURS, value))
+
+    @property
+    def burnoff_active(self) -> bool:
+        """Return whether a burn-off cycle is currently running or restoring."""
+        return self._burnoff.active
+
+    @property
+    def burnoff_pending(self) -> bool:
+        """Return whether in-run burn-off will start on the next RUNNING step."""
+        return self._burnoff.pending
+
+    @property
+    def burnoff_remaining_seconds(self) -> int | None:
+        """Return remaining burn-off time in seconds, or None if inactive."""
+        return self._burnoff.remaining_seconds
+
+    @property
+    def burnoff_cycles_since(self) -> int:
+        """Return controller heat cycles since the last successful burn-off."""
+        return self._burnoff.accumulator.cycles
+
+    @property
+    def burnoff_hours_since(self) -> float:
+        """Return RUNNING hours since the last successful burn-off."""
+        return self._burnoff.hours_since
+
+    async def async_set_burnoff_enabled(self, enabled: bool) -> None:
+        """Enable or disable automatic burn-off (in-run and dirty Off)."""
+        new_data = {**self.config_entry.data, CONF_BURNOFF_ENABLED: bool(enabled)}
+        self.hass.config_entries.async_update_entry(self.config_entry, data=new_data)
+        if not enabled:
+            await self._burnoff.disable()
+        self.async_set_updated_data(self.data)
+
+    async def async_set_burnoff_duration(self, minutes: int) -> None:
+        """Set burn-off duration in minutes.
+
+        Changing duration during an active cycle does not reset the current timer.
+        """
+        try:
+            value = int(minutes)
+        except (TypeError, ValueError):
+            value = DEFAULT_BURNOFF_DURATION
+        value = max(MIN_BURNOFF_DURATION, min(MAX_BURNOFF_DURATION, value))
+        new_data = {**self.config_entry.data, CONF_BURNOFF_DURATION: value}
+        self.hass.config_entries.async_update_entry(self.config_entry, data=new_data)
+        self.async_set_updated_data(self.data)
+
+    async def async_set_burnoff_after_cycles(self, cycles: int) -> None:
+        """Set the in-run burn-off cycle threshold (0 disables)."""
+        try:
+            value = int(cycles)
+        except (TypeError, ValueError):
+            value = DEFAULT_BURNOFF_AFTER_CYCLES
+        value = max(MIN_BURNOFF_AFTER_CYCLES, min(MAX_BURNOFF_AFTER_CYCLES, value))
+        new_data = {**self.config_entry.data, CONF_BURNOFF_AFTER_CYCLES: value}
+        self.hass.config_entries.async_update_entry(self.config_entry, data=new_data)
+        self.async_set_updated_data(self.data)
+        self._burnoff.maybe_start_in_run()
+
+    async def async_set_burnoff_after_hours(self, hours: int) -> None:
+        """Set the in-run burn-off hours threshold (0 disables)."""
+        try:
+            value = int(hours)
+        except (TypeError, ValueError):
+            value = DEFAULT_BURNOFF_AFTER_HOURS
+        value = max(MIN_BURNOFF_AFTER_HOURS, min(MAX_BURNOFF_AFTER_HOURS, value))
+        new_data = {**self.config_entry.data, CONF_BURNOFF_AFTER_HOURS: value}
+        self.hass.config_entries.async_update_entry(self.config_entry, data=new_data)
+        self.async_set_updated_data(self.data)
+        self._burnoff.maybe_start_in_run()
+
+    def burnoff_protocol_snapshot(self) -> dict[str, int]:
+        """Return protocol state needed to restore a burn-off snapshot."""
+        snapshot: dict[str, int] = {}
+        if self._protocol_mode == 8:
+            raw_mode = self.data.get("heatgenie_run_mode")
+            if raw_mode in (0, 1, 2):
+                snapshot["heatgenie_run_mode"] = raw_mode
+        if self.is_dz06_neo:
+            settings = self._neo_control_settings()
+            if settings is not None:
+                run_type, target, altitude = settings
+                maximum = self.data.get("neo_max_target")
+                if maximum is None:
+                    return snapshot
+                try:
+                    maximum = int(maximum)
+                except (TypeError, ValueError):
+                    return snapshot
+                snapshot.update(
+                    {
+                        "neo_max_target": maximum,
+                        "neo_run_type": run_type,
+                        "neo_target": target,
+                        "neo_altitude": altitude,
+                    }
+                )
+        return snapshot
+
+    async def async_apply_burnoff_max_power(self, cycle: Any) -> bool:
+        """Apply the app-backed maximum-power operation for this protocol."""
+        if self._protocol_mode == 8:
+            # HeatGenie's DB0_DN_SHORT_PARA uses raw mode 1 for manual heating.
+            mode_ok = bool(await self._send_command(2, 1))
+            return bool(await self.async_set_level(MAX_LEVEL)) and mode_ok
+
+        if self.is_dz06_neo:
+            snapshot = cycle.saved_protocol_state or {}
+            try:
+                int(snapshot["neo_run_type"])
+                int(snapshot["neo_target"])
+                altitude = int(snapshot["neo_altitude"])
+                maximum = int(snapshot["neo_max_target"])
+            except (KeyError, TypeError, ValueError):
+                self._logger.warning("DZ06 Neo burn-off requires a restorable status snapshot")
+                return False
+            # The app uses opcode 0x51, run type 1, at its configured upper target.
+            return await self._async_set_dz06_neo_control(1, maximum, altitude)
+
+        mode_ok = True
+        if self.data.get("running_mode") != RUNNING_MODE_LEVEL:
+            mode_ok = bool(await self.async_set_mode(RUNNING_MODE_LEVEL))
+        return bool(await self.async_set_level(MAX_LEVEL)) and mode_ok
+
+    async def async_restore_burnoff_snapshot(self, cycle: Any) -> bool:
+        """Restore the app-native mode and target captured before burn-off."""
+        mode = cycle.saved_mode
+        if mode is None:
+            return True
+
+        snapshot = cycle.saved_protocol_state or {}
+        if self.is_dz06_neo:
+            try:
+                return await self._async_set_dz06_neo_control(
+                    int(snapshot["neo_run_type"]),
+                    int(snapshot["neo_target"]),
+                    int(snapshot["neo_altitude"]),
+                )
+            except (KeyError, TypeError, ValueError):
+                self._logger.warning("DZ06 Neo burn-off snapshot is incomplete")
+                return False
+
+        if self._protocol_mode == 8:
+            raw_mode = snapshot.get("heatgenie_run_mode")
+            if raw_mode not in (0, 1, 2):
+                self._logger.warning("HeatGenie burn-off snapshot is missing raw mode")
+                return False
+            mode_ok = bool(await self._send_command(2, raw_mode))
+            if raw_mode == 1 and cycle.saved_level is not None:
+                return bool(await self.async_set_level(int(cycle.saved_level))) and mode_ok
+            if raw_mode == 0 and cycle.saved_temp is not None:
+                return bool(await self.async_set_temperature(float(cycle.saved_temp))) and mode_ok
+            return mode_ok
+
+        mode_ok = bool(await self.async_set_mode(int(mode)))
+        if mode == RUNNING_MODE_LEVEL and cycle.saved_level is not None:
+            return bool(await self.async_set_level(int(cycle.saved_level))) and mode_ok
+        if mode == RUNNING_MODE_TEMPERATURE and cycle.saved_temp is not None:
+            return bool(await self.async_set_temperature(float(cycle.saved_temp))) and mode_ok
+        return mode_ok
+
+    async def _power_off(self) -> None:
+        """Send the real power-off command."""
+        # ABBA uses a toggle command (0xA1) for both ON and OFF.
+        # Skip if already off, and never toggle during cooldown (would restart).
+        if self._protocol_mode == 5 and (
+            self.data.get("running_state", 0) == 0
+            or self.data.get("running_step") == RUNNING_STEP_COOLDOWN
+        ):
+            self._logger.info(
+                "ABBA: Heater already off or in cooldown, skipping toggle"
+            )
+            return
+
+        # Do not treat the resulting status transition as an external shutdown.
+        self._burnoff.ha_power_off = True
+        if self.is_dz06_neo:
+            success = await self._send_dz06_neo_power(False)
+            if success:
+                await self.async_request_refresh()
+            else:
+                self._burnoff.ha_power_off = False
+            return
+        success = await self._send_command(3, 0)
+        if success:
+            await self.async_request_refresh()
+        else:
+            self._burnoff.ha_power_off = False
+
+    async def async_start_burnoff(self, *, shutdown_after: bool = True) -> None:
+        """Run at max power, optionally shutting down when the timer expires.
+
+        Snapshots the current running mode and setpoint so they can be restored
+        before power-off (or when burn-off is cancelled).
+        """
+        await self._burnoff.start(shutdown_after=shutdown_after)
+
+    async def async_run_burnoff(self) -> None:
+        """Run a max-power burn-off without shutting down afterwards."""
+        await self.async_start_burnoff(shutdown_after=False)
+
+    async def async_power_off_now(self) -> None:
+        """Skip burn-off and power off immediately."""
+        await self.async_turn_off(immediate=True)
+
     async def _send_dz06_neo_power(self, turn_on: bool) -> bool:
         """Send and confirm a captured Neo ON/OFF command."""
         if not self.is_dz06_neo:
@@ -2436,9 +2804,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 await self.async_request_refresh()
             return
         if self.is_dz06_neo:
+            await self._burnoff.cancel(restore=False)
             if await self._send_dz06_neo_power(True):
                 await self.async_request_refresh()
             return
+        await self._burnoff.cancel(restore=True)
         # ABBA uses a toggle command (0xA1) for both ON and OFF.
         # Guard against accidental toggle while already running or cooling down.
         if self._protocol_mode == 5:
@@ -2452,28 +2822,48 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if success:
             await self.async_request_refresh()
 
-    async def async_turn_off(self) -> None:
-        """Turn heater off."""
+    async def async_turn_off(self, *, immediate: bool = False) -> None:
+        """Turn heater off.
+
+        By default, when burn-off is enabled, this switches to max power for the
+        configured duration, restores the previous heating mode, then sends the
+        real power-off command. Pass immediate=True to skip burn-off.
+        """
         if self._protocol_mode == 9:
             if await self._async_write_cronus_record("power", bytes((1, 0))):
                 await self.async_request_refresh()
             return
-        if self.is_dz06_neo:
-            if await self._send_dz06_neo_power(False):
-                await self.async_request_refresh()
+        if immediate:
+            # Power Off Now: skip burn-off now and do not pending on the Off edge.
+            self._burnoff.skip_pending_on_off = True
+            await self._burnoff.cancel(restore=True)
+            if not self._burnoff.ecu_shutdown_observed():
+                await self._power_off()
             return
+
+        if self._burnoff.active:
+            if (
+                self._burnoff.cycle.phase == BurnoffPhase.RESTORING
+                or self._burnoff.ecu_shutdown_observed()
+            ):
+                # Restore only; sending Off while cooling can ABBA-toggle back on.
+                await self._burnoff.cancel(restore=True)
+                return
+            # Second Off during a live cycle: skip remaining time and power off.
+            await self.async_turn_off(immediate=True)
+            return
+
         # ABBA uses a toggle command (0xA1) for both ON and OFF.
-        # Guard against accidental toggle while already off or cooling down.
-        if self._protocol_mode == 5:
-            if self.data.get("running_step") == RUNNING_STEP_COOLDOWN:
-                self._logger.info("ABBA: Heater is cooling down, skipping toggle command")
-                return
-            if self.data.get("running_state", 0) == 0:
-                self._logger.info("ABBA: Heater already off, skipping toggle command")
-                return
-        success = await self._send_command(3, 0)
-        if success:
-            await self.async_request_refresh()
+        # Guard against accidental toggle: skip if already off.
+        if self._protocol_mode == 5 and self.data.get("running_state", 0) == 0:
+            self._logger.info("ABBA: Heater already off, skipping toggle command")
+            return
+
+        if self._burnoff.should_run_before_shutdown():
+            await self.async_start_burnoff(shutdown_after=True)
+            return
+
+        await self._power_off()
 
     async def async_set_level(self, level: int) -> None:
         """Set heater level (1-10).
@@ -2494,6 +2884,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 await self.async_request_refresh()
             return
 
+        if self._burnoff.active and not self._burnoff.cycle.applying:
+            self._logger.info("Ignoring level change during burn-off")
+            return False
+
         level = max(1, min(10, level))
         if self._protocol_mode == 5:  # ABBA/HeaterCC uses level up/down button commands
             current_level_raw = self.data.get("set_level")
@@ -2501,12 +2895,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 current_level = max(1, min(10, int(current_level_raw)))
             except (TypeError, ValueError):
                 self._logger.warning("ABBA: Cannot set level without current set_level")
-                return
+                return False
 
             diff = level - current_level
             if diff == 0:
                 self._logger.info("ABBA: Level already %d, skipping command", level)
-                return
+                return True
 
             step_arg = 1 if diff > 0 else -1
             steps = abs(diff)
@@ -2528,7 +2922,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 self._logger.info("✅ SET LEVEL SUCCESS: level=%d", level)
             else:
                 self._logger.warning("❌ SET LEVEL FAILED: level=%d", level)
-            return
+            return success
 
         # CBFF and Hcalory use SEPARATE commands: cmd 5 for level, cmd 4 for temperature
         # AAXX protocols use SAME command (cmd 4) for both level and temperature
@@ -2551,6 +2945,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._logger.info("✅ SET LEVEL SUCCESS: level=%d", level)
         else:
             self._logger.warning("❌ SET LEVEL FAILED: level=%d", level)
+        return success
 
     async def async_set_temperature(self, temperature: float) -> None:
         """Set target temperature in heater's native unit (no conversions).
@@ -2560,6 +2955,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         - AAXX protocols (modes 1-4): 8-36°C
         - Other protocols: 8-36°C (safe default)
         """
+        if self._burnoff.active and not self._burnoff.cycle.applying:
+            self._logger.info("Ignoring temperature change during burn-off")
+            return False
+
         current_temp = self.data.get("set_temp", "unknown")
         current_mode = self.data.get("running_mode", "unknown")
         if self._protocol_mode == 9:
@@ -2589,6 +2988,16 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             else:
                 temperature = max(10, min(40, temperature))
                 unit_str = "°C"
+        elif self.is_dz06_neo:
+            minimum = self.data.get("neo_min_target")
+            maximum = self.data.get("neo_max_target")
+            try:
+                minimum = int(minimum) if minimum is not None else 8
+                maximum = int(maximum) if maximum is not None else 36
+            except (TypeError, ValueError):
+                return False
+            temperature = max(minimum, min(maximum, temperature))
+            unit_str = "°C"
         elif self._heater_uses_fahrenheit:
             temperature = max(32, min(104, temperature))
             unit_str = "°F"
@@ -2609,29 +3018,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if self.is_dz06_neo:
             settings = self._neo_control_settings()
             if settings is None:
-                return
+                return False
             run_type, _, altitude = settings
-            self._notification_data = None
-            try:
-                await self._write_gatt(self._neo_packet(0x51, run_type, command_temp, altitude))
-            except Exception as err:
-                self._logger.warning("DZ06 Neo temperature write failed: %s", err)
-                return
-            deadline = time.monotonic() + 3
-            while time.monotonic() < deadline:
-                await asyncio.sleep(0.1)
-                response = self._notification_data
-                if response is None:
-                    continue
-                if (
-                    len(response) == 39
-                    and response[:2] == bytearray((0x5A, 0x25))
-                    and response[15] == command_temp
-                ):
-                    await self.async_request_refresh()
-                    return
-                self._notification_data = None
-            return
+            return await self._async_set_dz06_neo_control(
+                run_type, command_temp, altitude
+            )
         success = await self._send_command(4, command_temp)
 
         if success:
@@ -2645,6 +3036,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             )
         else:
             self._logger.warning("🌡️ SET TEMPERATURE FAILED: command not sent successfully")
+        return success
 
     async def async_set_cronus_mode(self, mode_name: str) -> None:
         """Set a controller mode exposed by ThermoConnect."""
@@ -2669,11 +3061,15 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         Mode 3 (Ventilation) is ABBA-only and only works when heater is in standby.
         It activates fan-only mode without heating.
         """
+        if self._burnoff.active and not self._burnoff.cycle.applying:
+            self._logger.info("Ignoring mode change during burn-off")
+            return False
+
         # Ventilation mode (ABBA only)
         if mode == 3:
             if self._protocol_mode != 5:
                 self._logger.warning("Ventilation mode is only available for ABBA devices")
-                return
+                return False
 
             running_step = self.data.get("running_step", 0)
             if running_step not in (0, 6):  # STANDBY or VENTILATION
@@ -2681,13 +3077,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     "Ventilation mode only available when heater is off (current step: %d)",
                     running_step
                 )
-                return
+                return False
 
             self._logger.info("Activating ventilation mode (ABBA 0xA4)")
             success = await self._send_command(101, 0)  # Command 101 = ventilation
             if success:
                 await self.async_request_refresh()
-            return
+            return success
 
         # Standard modes (0-2)
         mode = max(0, min(2, mode))
@@ -2695,6 +3091,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         success = await self._send_command(2, mode)
         if success:
             await self.async_request_refresh()
+        return success
 
     async def async_set_auto_start_stop(self, enabled: bool) -> None:
         """Set Automatic Start/Stop mode (cmd 18).
@@ -3066,6 +3463,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     async def async_shutdown(self) -> None:
         """Shutdown coordinator."""
         self._logger.debug("Shutting down Vevor Heater coordinator")
+
+        # Stop the burn-off wait task; in-progress state is already persisted
+        await self._burnoff.stop_wait_task()
 
         # Clean up external sensor listener
         if self._auto_offset_unsub:

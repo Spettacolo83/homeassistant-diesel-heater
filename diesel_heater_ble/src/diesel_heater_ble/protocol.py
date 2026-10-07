@@ -873,6 +873,7 @@ class ProtocolHeatGenie(HeaterProtocol):
             "running_state": 0 if state in (0, 5) else 1,
             "running_step": state,
             "running_mode": running_mode,
+            "heatgenie_run_mode": (flags >> 5) & 0x03,
             "set_level": registers[32],
             "set_temp": registers[33],
             "supply_voltage": int.from_bytes(registers[2:4], "little") / 10,

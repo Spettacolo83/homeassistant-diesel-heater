@@ -12,8 +12,15 @@ from custom_components.diesel_heater.number import (
     VevorHeaterTemperatureNumber,
     VevorHeaterOffsetNumber,
     VevorTankCapacityNumber,
+    VevorBurnoffDurationNumber,
+    VevorBurnoffAfterCyclesNumber,
+    VevorBurnoffAfterHoursNumber,
     VevorCurrentFuelLevelNumber,
     async_setup_entry,
+)
+from custom_components.diesel_heater.const import (
+    RUNNING_MODE_LEVEL,
+    RUNNING_MODE_TEMPERATURE,
 )
 
 
@@ -29,6 +36,13 @@ def create_mock_coordinator(protocol_mode: int = 0) -> MagicMock:
     coordinator.async_set_temperature = AsyncMock()
     coordinator.async_set_heater_offset = AsyncMock()
     coordinator.async_set_tank_capacity = AsyncMock()
+    coordinator.async_set_burnoff_duration = AsyncMock()
+    coordinator.async_set_burnoff_after_cycles = AsyncMock()
+    coordinator.async_set_burnoff_after_hours = AsyncMock()
+    coordinator.burnoff_duration_minutes = 10
+    coordinator.burnoff_after_cycles = 0
+    coordinator.burnoff_after_hours = 0
+    coordinator.burnoff_active = False
     coordinator.protocol_mode = protocol_mode
     coordinator._heater_uses_fahrenheit = False
     coordinator.has_cronus_fuel_estimate = False
@@ -188,6 +202,46 @@ class TestNumberAvailability:
         # Just verify property is accessible
         _ = number.available
 
+    def test_level_unavailable_during_burnoff(self):
+        """Level is a burn-off snapshot field and must be locked."""
+        coordinator = create_mock_coordinator()
+        coordinator.data["connected"] = True
+        coordinator.data["running_mode"] = RUNNING_MODE_LEVEL
+        coordinator.burnoff_active = True
+        number = VevorHeaterLevelNumber(coordinator)
+
+        assert number.available is False
+
+    def test_level_available_when_burnoff_inactive(self):
+        """Level stays available in Level mode when burn-off is not running."""
+        coordinator = create_mock_coordinator()
+        coordinator.data["connected"] = True
+        coordinator.data["running_mode"] = RUNNING_MODE_LEVEL
+        coordinator.burnoff_active = False
+        number = VevorHeaterLevelNumber(coordinator)
+
+        assert number.available is True
+
+    def test_temperature_unavailable_during_burnoff(self):
+        """Target temperature is a burn-off snapshot field and must be locked."""
+        coordinator = create_mock_coordinator()
+        coordinator.data["connected"] = True
+        coordinator.data["running_mode"] = RUNNING_MODE_TEMPERATURE
+        coordinator.burnoff_active = True
+        number = VevorHeaterTemperatureNumber(coordinator)
+
+        assert number.available is False
+
+    def test_temperature_available_when_burnoff_inactive(self):
+        """Target temperature stays available in Temperature mode when idle."""
+        coordinator = create_mock_coordinator()
+        coordinator.data["connected"] = True
+        coordinator.data["running_mode"] = RUNNING_MODE_TEMPERATURE
+        coordinator.burnoff_active = False
+        number = VevorHeaterTemperatureNumber(coordinator)
+
+        assert number.available is True
+
 
 # ---------------------------------------------------------------------------
 # Async setup entry tests
@@ -216,8 +270,8 @@ class TestAsyncSetupEntry:
         # Verify async_add_entities was called
         async_add_entities.assert_called_once()
         call_args = async_add_entities.call_args[0][0]
-        # Mode 0 creates four core entities plus temperature offset
-        assert len(call_args) == 5
+        # Mode 0 creates all entities (7 core + offset = 8)
+        assert len(call_args) == 8
 
     @pytest.mark.asyncio
     async def test_async_setup_entry_protocol_mode_2(self):
@@ -233,8 +287,8 @@ class TestAsyncSetupEntry:
 
         async_add_entities.assert_called_once()
         call_args = async_add_entities.call_args[0][0]
-        # Mode 2 creates four core entities plus temperature offset
-        assert len(call_args) == 5
+        # Mode 2 includes offset (7 core + offset = 8)
+        assert len(call_args) == 8
 
     @pytest.mark.asyncio
     async def test_async_setup_entry_protocol_mode_1(self):
@@ -250,8 +304,8 @@ class TestAsyncSetupEntry:
 
         async_add_entities.assert_called_once()
         call_args = async_add_entities.call_args[0][0]
-        # Mode 1 creates the four core entities
-        assert len(call_args) == 4
+        # Mode 1 excludes offset (7 core entities)
+        assert len(call_args) == 7
 
 
     @pytest.mark.asyncio
@@ -532,3 +586,77 @@ class TestHandleCoordinatorUpdate:
         number._handle_coordinator_update()
 
         number.async_write_ha_state.assert_called_once()
+
+
+class TestVevorBurnoffDurationNumber:
+    """Tests for burn-off duration number entity."""
+
+    def test_native_value(self):
+        """Test native_value returns coordinator duration."""
+        coordinator = create_mock_coordinator()
+        coordinator.burnoff_duration_minutes = 15
+        number = VevorBurnoffDurationNumber(coordinator)
+
+        assert number.native_value == 15
+
+    def test_min_max(self):
+        """Test duration range is 1-30 minutes."""
+        coordinator = create_mock_coordinator()
+        number = VevorBurnoffDurationNumber(coordinator)
+
+        assert number._attr_native_min_value == 1
+        assert number._attr_native_max_value == 30
+
+    @pytest.mark.asyncio
+    async def test_async_set_native_value(self):
+        """Test setting duration calls coordinator."""
+        coordinator = create_mock_coordinator()
+        number = VevorBurnoffDurationNumber(coordinator)
+
+        await number.async_set_native_value(8)
+
+        coordinator.async_set_burnoff_duration.assert_called_once_with(8)
+
+
+class TestVevorBurnoffAfterCyclesNumber:
+    """Tests for burn-off after cycles number entity."""
+
+    def test_native_value(self):
+        """Test native_value returns coordinator cycle threshold."""
+        coordinator = create_mock_coordinator()
+        coordinator.burnoff_after_cycles = 5
+        number = VevorBurnoffAfterCyclesNumber(coordinator)
+
+        assert number.native_value == 5
+
+    @pytest.mark.asyncio
+    async def test_async_set_native_value(self):
+        """Test setting cycles calls coordinator."""
+        coordinator = create_mock_coordinator()
+        number = VevorBurnoffAfterCyclesNumber(coordinator)
+
+        await number.async_set_native_value(3)
+
+        coordinator.async_set_burnoff_after_cycles.assert_called_once_with(3)
+
+
+class TestVevorBurnoffAfterHoursNumber:
+    """Tests for burn-off after hours number entity."""
+
+    def test_native_value(self):
+        """Test native_value returns coordinator hours threshold."""
+        coordinator = create_mock_coordinator()
+        coordinator.burnoff_after_hours = 4
+        number = VevorBurnoffAfterHoursNumber(coordinator)
+
+        assert number.native_value == 4
+
+    @pytest.mark.asyncio
+    async def test_async_set_native_value(self):
+        """Test setting hours calls coordinator."""
+        coordinator = create_mock_coordinator()
+        number = VevorBurnoffAfterHoursNumber(coordinator)
+
+        await number.async_set_native_value(2)
+
+        coordinator.async_set_burnoff_after_hours.assert_called_once_with(2)

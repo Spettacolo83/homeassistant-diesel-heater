@@ -132,6 +132,9 @@ Fan entity for heater level control (1-10) when in Level mode. It is not created
 | Estimated Total Fuel Consumed | Locally estimated lifetime consumption for established air-heater protocols and selected Cronus model profiles |
 | Daily Runtime | Locally tracked daily runtime for established air-heater protocols and selected Cronus model profiles |
 | Total Runtime | Locally tracked cumulative runtime for established air-heater protocols and selected Cronus model profiles |
+| Burn-off Remaining | Seconds left in the current max-power burn-off cycle |
+| Heat Cycles Since Burn-off | Controller heat cycles since the last successful burn-off |
+| Heat Hours Since Burn-off | RUNNING hours since the last successful burn-off |
 
 Additional sensors for specific protocols:
 - **Carbon Monoxide** (CBFF): CO level in ppm
@@ -150,6 +153,8 @@ Additional sensors for specific protocols:
 | Problem | Whether an error condition exists |
 | Connected | BLE connection status |
 | Auto Start/Stop | Auto temperature control status |
+| Burn-off Active | Whether a max-power burn-off cycle is running |
+| Burn-off Pending | Next RUNNING start will run in-run burn-off |
 | Fuel Pump, Fan, Glow Plug | HeatGenie component bits |
 | Continuous Run, Interlock | Cronus controller status |
 
@@ -158,6 +163,7 @@ Additional sensors for specific protocols:
 | Switch | Description |
 |--------|-------------|
 | Power | Turn heater on/off |
+| Automatic Burn-off | Enable automatic soot burn-off (in-run, dirty HA Off, deferred external Off; off by default) |
 | Auto Temperature Offset | Enable automatic offset using external sensor (not Hcalory, HeatGenie, or Cronus) |
 | Auto Start/Stop | Enable automatic temperature control with full stop |
 | Fahrenheit Mode | Use Fahrenheit for temperature display |
@@ -184,6 +190,9 @@ Additional sensors for specific protocols:
 | Target Temperature | Set target temperature within the controller-supported range; Cronus air controllers expose it outside Ventilation mode |
 | Temperature Offset | Manual temperature offset (-9 to +9) |
 | Tank Capacity | Tank capacity for fuel tracking |
+| Burn-off Duration | Minutes at max power for a burn-off cycle (1-30, default 10) |
+| Burn-off After Cycles | In-run burn-off after N controller heat cycles (0 = off) |
+| Burn-off After Hours | In-run burn-off after N RUNNING hours (0 = off) |
 
 ### Buttons
 
@@ -191,6 +200,8 @@ Additional sensors for specific protocols:
 |--------|-------------|
 | Sync Time | Synchronize heater clock with Home Assistant (not Cronus) |
 | Reset Estimated Fuel Remaining | Reset local fuel tracking after refueling (not Cronus) |
+| Power Off Now | Skip burn-off and power off immediately |
+| Run Burn-off | Run max-power burn-off without shutting down |
 
 ## Actions
 
@@ -248,6 +259,16 @@ title: Daily Fuel Consumption
 ### Temperature control not working
 
 For established air-heater protocols, temperature control requires **Temperature Mode**. Cronus air controllers provide a setpoint in Heating, Boost, and Eco modes; their Ventilation mode has no temperature setpoint. Cronus water controllers do not expose an air setpoint.
+
+### Burn-off
+
+When enabled (`switch.*_automatic_burnoff`, off by default), the heater runs at maximum power for a configurable duration (default 10 minutes) to burn off soot, then restores the previous heating mode and setpoint.
+
+- **HA Off while dirty and heating** (climate, power switch, or fan): max power, restore, then the real power-off. A clean Off powers off immediately. **Power Off Now**, or Off during an in-progress cycle, skips remaining time.
+- **In-run** (optional): after `number.*_burnoff_after_hours` of RUNNING time and/or `number.*_burnoff_after_cycles` controller heat cycles. Starts only on an established RUNNING step. Both thresholds default to 0 (disabled).
+- **LCD or ECU power Off while heating or in cooldown**: Home Assistant cannot intercept that Off. It sets pending and runs burn-off on the next RUNNING start. Off from Auto Start/Stop idle (ON + standby) does not set pending and does not re-ignite.
+
+Disabling `switch.*_automatic_burnoff` during a cycle restores the previous mode and keeps heating, and clears a deferred pending start. If the controller or ECU stops the heater while burn-off is already running, the cycle is cancelled and no extra off is sent. Restore waits until cooldown ends or the next Home Assistant turn-on.
 
 ### Commands not responding
 

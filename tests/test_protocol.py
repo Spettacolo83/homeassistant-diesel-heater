@@ -17,6 +17,7 @@ from diesel_heater_ble import (
     ProtocolABBA,
     ProtocolCBFF,
     ProtocolHcalory,
+    ProtocolHeatGenie,
     VevorCommandMixin,
     _decrypt_data,
     _encrypt_data,
@@ -2232,3 +2233,20 @@ class TestProtocolHcalory:
         assert self.proto._to_bcd(59) == 0x59
         assert self.proto._to_bcd(0) == 0x00
         assert self.proto._to_bcd(99) == 0x99
+
+
+def test_heatgenie_raw_run_mode_packets_match_the_app() -> None:
+    protocol = ProtocolHeatGenie()
+    assert protocol.build_command(2, 0, 0).hex() == "aa00660000001961"
+    assert protocol.build_command(2, 1, 0).hex() == "aa00660000010940"
+    assert protocol.build_command(2, 2, 0).hex() == "aa00660000023923"
+
+
+def test_heatgenie_status_preserves_raw_app_run_mode() -> None:
+    protocol = ProtocolHeatGenie()
+    frame = bytearray(50)
+    frame[0], frame[1], frame[7] = 0xAA, 9, 0xF2
+    frame[9] = 2 << 5
+    frame[-2:] = protocol.crc16(frame[:-2]).to_bytes(2, "big")
+
+    assert protocol.parse(frame)["heatgenie_run_mode"] == 2

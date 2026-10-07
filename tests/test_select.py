@@ -37,6 +37,7 @@ def create_mock_coordinator(protocol_mode: int = 1) -> MagicMock:
     coordinator.async_set_tank_volume = AsyncMock()
     coordinator.async_set_backlight = AsyncMock()
     coordinator.async_add_listener = MagicMock(return_value=MagicMock())
+    coordinator.burnoff_active = False
     coordinator.data = {
         "connected": True,
         "running_mode": 1,  # Level mode
@@ -751,6 +752,24 @@ class TestSelectAvailability:
         select = VevorHeaterModeSelect(coordinator)
 
         assert select.available is False
+
+    def test_mode_unavailable_during_burnoff(self):
+        """Running mode is a burn-off snapshot field and must be locked."""
+        coordinator = create_mock_coordinator()
+        coordinator.data["connected"] = True
+        coordinator.burnoff_active = True
+        select = VevorHeaterModeSelect(coordinator)
+
+        assert select.available is False
+
+    def test_mode_available_when_burnoff_inactive(self):
+        """Running mode stays available when burn-off is not running."""
+        coordinator = create_mock_coordinator()
+        coordinator.data["connected"] = True
+        coordinator.burnoff_active = False
+        select = VevorHeaterModeSelect(coordinator)
+
+        assert select.available is True
 
 
 # ---------------------------------------------------------------------------

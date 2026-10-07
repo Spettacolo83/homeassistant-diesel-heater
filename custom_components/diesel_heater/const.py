@@ -328,6 +328,30 @@ STORAGE_KEY_LAST_REFUELED: Final = "last_refueled"
 # Auto offset persistence key
 STORAGE_KEY_AUTO_OFFSET_ENABLED: Final = "auto_offset_enabled"
 
+# Max-power soot burn-off (automatic enable, in-run, and shutdown)
+CONF_BURNOFF_ENABLED: Final = "automatic_burnoff"
+CONF_BURNOFF_DURATION: Final = "burnoff_duration"
+CONF_BURNOFF_AFTER_CYCLES: Final = "burnoff_after_cycles"
+CONF_BURNOFF_AFTER_HOURS: Final = "burnoff_after_hours"
+DEFAULT_BURNOFF_ENABLED: Final = False
+DEFAULT_BURNOFF_DURATION: Final = 10  # minutes
+DEFAULT_BURNOFF_AFTER_CYCLES: Final = 0  # 0 = in-run by cycles disabled
+DEFAULT_BURNOFF_AFTER_HOURS: Final = 0  # 0 = in-run by hours disabled
+MIN_BURNOFF_DURATION: Final = 1
+MAX_BURNOFF_DURATION: Final = 30
+MIN_BURNOFF_AFTER_CYCLES: Final = 0
+MAX_BURNOFF_AFTER_CYCLES: Final = 20
+MIN_BURNOFF_AFTER_HOURS: Final = 0
+MAX_BURNOFF_AFTER_HOURS: Final = 24
+# Abort count after which threshold in-run is skipped. 1 means the first early
+# ECU abort still retries (pending); a second abort cannot loop Level 10 forever.
+MAX_BURNOFF_IN_RUN_ABORTS: Final = 1
+# Fraction of duration still remaining at which an ECU abort counts as a clean.
+# 0.2 = last 20%: Level 10 often trips Auto Start/Stop cooldown near the end.
+BURNOFF_NEAR_COMPLETE_REMAINING_RATIO: Final = 0.2
+STORAGE_KEY_BURNOFF: Final = "burnoff"
+STORAGE_KEY_BURNOFF_ACCUMULATOR: Final = "burnoff_accumulator"
+
 # History settings
 MAX_HISTORY_DAYS: Final = 30  # Keep last 30 days of daily consumption
 

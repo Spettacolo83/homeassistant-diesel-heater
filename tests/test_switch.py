@@ -9,6 +9,7 @@ from . import conftest  # noqa: F401
 
 from custom_components.diesel_heater.switch import (
     VevorHeaterPowerSwitch,
+    VevorBurnoffSwitch,
     VevorAutoStartStopSwitch,
     VevorAutoOffsetSwitch,
     VevorTempUnitSwitch,
@@ -33,6 +34,8 @@ def create_mock_coordinator() -> MagicMock:
     coordinator.async_set_temp_unit = AsyncMock()
     coordinator.async_set_altitude_unit = AsyncMock()
     coordinator.async_set_high_altitude = AsyncMock()
+    coordinator.async_set_burnoff_enabled = AsyncMock()
+    coordinator.burnoff_enabled = False
     coordinator._is_abba_device = False
     coordinator.config_entry = MagicMock()
     coordinator.config_entry.data = {"external_temp_sensor": "sensor.test"}
@@ -138,6 +141,53 @@ class TestVevorHeaterPowerSwitch:
         await switch.async_turn_off()
 
         coordinator.async_turn_off.assert_called_once()
+
+
+class TestVevorBurnoffSwitch:
+    """Tests for the Automatic Burn-off switch."""
+
+    def test_is_on_when_enabled(self):
+        """Test is_on follows coordinator.burnoff_enabled."""
+        coordinator = create_mock_coordinator()
+        coordinator.burnoff_enabled = True
+        switch = VevorBurnoffSwitch(coordinator)
+
+        assert switch.is_on is True
+
+    def test_is_on_when_disabled(self):
+        """Test is_on is False when burn-off is disabled."""
+        coordinator = create_mock_coordinator()
+        coordinator.burnoff_enabled = False
+        switch = VevorBurnoffSwitch(coordinator)
+
+        assert switch.is_on is False
+
+    @pytest.mark.asyncio
+    async def test_async_turn_on(self):
+        """Test async_turn_on enables burn-off."""
+        coordinator = create_mock_coordinator()
+        switch = VevorBurnoffSwitch(coordinator)
+
+        await switch.async_turn_on()
+
+        coordinator.async_set_burnoff_enabled.assert_called_once_with(True)
+
+    @pytest.mark.asyncio
+    async def test_async_turn_off(self):
+        """Test async_turn_off disables burn-off."""
+        coordinator = create_mock_coordinator()
+        switch = VevorBurnoffSwitch(coordinator)
+
+        await switch.async_turn_off()
+
+        coordinator.async_set_burnoff_enabled.assert_called_once_with(False)
+
+    def test_unique_id(self):
+        """Test unique_id format."""
+        coordinator = create_mock_coordinator()
+        switch = VevorBurnoffSwitch(coordinator)
+
+        assert switch._attr_unique_id.endswith("_automatic_burnoff")
 
 
 # ---------------------------------------------------------------------------
@@ -643,6 +693,7 @@ class TestSwitchEntityAttributes:
 
         switches = [
             VevorHeaterPowerSwitch(coordinator),
+            VevorBurnoffSwitch(coordinator),
             VevorAutoStartStopSwitch(coordinator),
             VevorAutoOffsetSwitch(coordinator),
             VevorTempUnitSwitch(coordinator),
@@ -660,6 +711,7 @@ class TestSwitchEntityAttributes:
 
         switches = [
             VevorHeaterPowerSwitch(coordinator),
+            VevorBurnoffSwitch(coordinator),
             VevorAutoStartStopSwitch(coordinator),
             VevorAutoOffsetSwitch(coordinator),
             VevorTempUnitSwitch(coordinator),
@@ -673,7 +725,7 @@ class TestSwitchEntityAttributes:
             unique_ids.add(switch._attr_unique_id)
 
         # All unique_ids should be different
-        assert len(unique_ids) == 6
+        assert len(unique_ids) == 7
 
     def test_all_switches_have_name(self):
         """Test all switches have name set."""
@@ -681,6 +733,7 @@ class TestSwitchEntityAttributes:
 
         switches = [
             VevorHeaterPowerSwitch(coordinator),
+            VevorBurnoffSwitch(coordinator),
             VevorAutoStartStopSwitch(coordinator),
             VevorAutoOffsetSwitch(coordinator),
             VevorTempUnitSwitch(coordinator),
@@ -698,6 +751,7 @@ class TestSwitchEntityAttributes:
 
         switches = [
             VevorHeaterPowerSwitch(coordinator),
+            VevorBurnoffSwitch(coordinator),
             VevorAutoStartStopSwitch(coordinator),
             VevorAutoOffsetSwitch(coordinator),
             VevorTempUnitSwitch(coordinator),
@@ -732,8 +786,8 @@ class TestAsyncSetupEntry:
 
         async_add_entities.assert_called_once()
         entities = async_add_entities.call_args[0][0]
-        # Mode 0: power + auto_offset + auto_start_stop + temp_unit + altitude_unit + high_altitude = 6
-        assert len(entities) == 6
+        # Mode 0: power + burnoff + auto_offset + auto_start_stop + temp_unit + altitude_unit + high_altitude = 7
+        assert len(entities) == 7
 
     @pytest.mark.asyncio
     async def test_setup_entry_protocol_mode_1_creates_core_only(self):
@@ -750,8 +804,8 @@ class TestAsyncSetupEntry:
 
         async_add_entities.assert_called_once()
         entities = async_add_entities.call_args[0][0]
-        # Mode 1: only power + auto_offset = 2
-        assert len(entities) == 2
+        # Mode 1: power + burnoff + auto_offset = 3
+        assert len(entities) == 3
 
     @pytest.mark.asyncio
     async def test_setup_entry_protocol_mode_2_creates_core_only(self):
@@ -768,8 +822,8 @@ class TestAsyncSetupEntry:
 
         async_add_entities.assert_called_once()
         entities = async_add_entities.call_args[0][0]
-        # Mode 2: power, auto offset, and encrypted-protocol timer = 3
-        assert len(entities) == 3
+        # Mode 2: power + burnoff + auto_offset + timer = 4
+        assert len(entities) == 4
 
     @pytest.mark.asyncio
     async def test_setup_entry_protocol_mode_4_creates_unit_switches(self):
@@ -786,8 +840,8 @@ class TestAsyncSetupEntry:
 
         async_add_entities.assert_called_once()
         entities = async_add_entities.call_args[0][0]
-        # Mode 4 additionally exposes the encrypted-protocol timer = 6
-        assert len(entities) == 6
+        # Mode 4: power + burnoff + auto_offset + auto_start_stop + temp_unit + altitude_unit + timer = 7
+        assert len(entities) == 7
 
     @pytest.mark.asyncio
     async def test_setup_entry_protocol_mode_5_creates_abba_switches(self):
@@ -804,8 +858,8 @@ class TestAsyncSetupEntry:
 
         async_add_entities.assert_called_once()
         entities = async_add_entities.call_args[0][0]
-        # Mode 5: power + auto_offset + auto_start_stop + temp_unit + altitude_unit + high_altitude = 6
-        assert len(entities) == 6
+        # Mode 5: power + burnoff + auto_offset + auto_start_stop + temp_unit + altitude_unit + high_altitude = 7
+        assert len(entities) == 7
 
     @pytest.mark.asyncio
     async def test_setup_entry_protocol_mode_6_creates_cbff_switches(self):
@@ -822,8 +876,8 @@ class TestAsyncSetupEntry:
 
         async_add_entities.assert_called_once()
         entities = async_add_entities.call_args[0][0]
-        # Mode 6: power + auto_offset + auto_start_stop + temp_unit + altitude_unit = 5
-        assert len(entities) == 5
+        # Mode 6: power + burnoff + auto_offset + auto_start_stop + temp_unit + altitude_unit = 6
+        assert len(entities) == 6
 
     @pytest.mark.asyncio
     async def test_setup_entry_entity_types_mode_0(self):
@@ -842,6 +896,7 @@ class TestAsyncSetupEntry:
         entity_types = [type(e).__name__ for e in entities]
 
         assert "VevorHeaterPowerSwitch" in entity_types
+        assert "VevorBurnoffSwitch" in entity_types
         assert "VevorAutoOffsetSwitch" in entity_types
         assert "VevorAutoStartStopSwitch" in entity_types
         assert "VevorTempUnitSwitch" in entity_types
@@ -860,6 +915,16 @@ class TestHandleCoordinatorUpdate:
         """Test PowerSwitch _handle_coordinator_update calls async_write_ha_state."""
         coordinator = create_mock_coordinator()
         switch = VevorHeaterPowerSwitch(coordinator)
+        switch.async_write_ha_state = MagicMock()
+
+        switch._handle_coordinator_update()
+
+        switch.async_write_ha_state.assert_called_once()
+
+    def test_burnoff_switch_handle_coordinator_update(self):
+        """Test BurnoffSwitch _handle_coordinator_update calls async_write_ha_state."""
+        coordinator = create_mock_coordinator()
+        switch = VevorBurnoffSwitch(coordinator)
         switch.async_write_ha_state = MagicMock()
 
         switch._handle_coordinator_update()

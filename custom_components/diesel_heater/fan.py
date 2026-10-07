@@ -70,6 +70,9 @@ class VevorHeaterFan(FanEntity):
         """Return if entity is available."""
         # Only available when connected and in Level mode
         # Manual mode only allows Start/Stop, not level control
+        # Locked while burn-off is active: fan writes the snapshotted set_level
+        if self.coordinator.burnoff_active:
+            return False
         if not self.coordinator.data.get("connected", False):
             return False
 

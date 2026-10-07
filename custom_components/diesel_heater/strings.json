@@ -179,6 +179,15 @@
       },
       "protocol": {
         "name": "Protocol"
+      },
+      "burnoff_remaining": {
+        "name": "Burn-off Remaining"
+      },
+      "burnoff_cycles": {
+        "name": "Heat Cycles Since Burn-off"
+      },
+      "burnoff_hours": {
+        "name": "Heat Hours Since Burn-off"
       }
     },
     "binary_sensor": {
@@ -193,6 +202,12 @@
       },
       "auto_start_stop_sensor": {
         "name": "Auto Start/Stop"
+      },
+      "burnoff_active": {
+        "name": "Burn-off Active"
+      },
+      "burnoff_pending": {
+        "name": "Burn-off Pending"
       }
     },
     "climate": {
@@ -220,6 +235,15 @@
       },
       "current_fuel_level": {
         "name": "Current Fuel Level"
+      },
+      "burnoff_duration": {
+        "name": "Burn-off Duration"
+      },
+      "burnoff_after_cycles": {
+        "name": "Burn-off After Cycles"
+      },
+      "burnoff_after_hours": {
+        "name": "Burn-off After Hours"
       }
     },
     "select": {
@@ -257,6 +281,9 @@
       },
       "high_altitude": {
         "name": "High Altitude Mode"
+      },
+      "automatic_burnoff": {
+        "name": "Automatic Burn-off"
       }
     },
     "button": {
@@ -265,6 +292,12 @@
       },
       "reset_est_fuel_remaining": {
         "name": "Reset Estimated Fuel Remaining"
+      },
+      "power_off_now": {
+        "name": "Power Off Now"
+      },
+      "run_burnoff": {
+        "name": "Run Burn-off"
       }
     }
   },

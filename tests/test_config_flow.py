@@ -15,6 +15,8 @@ from custom_components.diesel_heater.config_flow import (
 )
 from custom_components.diesel_heater.const import (
     CONF_AUTO_OFFSET_MAX,
+    CONF_BURNOFF_DURATION,
+    CONF_BURNOFF_ENABLED,
     CONF_CRONUS_HEATER_MODEL,
     CONF_EXTERNAL_TEMP_SENSOR,
     CONF_PIN,
@@ -776,10 +778,12 @@ class TestOptionsFlow:
         assert CONF_EXTERNAL_TEMP_SENSOR not in new_data
 
     async def test_preserves_existing_data(self):
-        """Options update should preserve data keys not in user_input."""
+        """Options update should preserve data keys not in user_input, including entity-persisted burn-off settings."""
         flow = self._create_flow(data={
             CONF_ADDRESS: MOCK_ADDRESS,
             CONF_PIN: DEFAULT_PIN,
+            CONF_BURNOFF_ENABLED: False,
+            CONF_BURNOFF_DURATION: 15,
         })
 
         await flow.async_step_init(user_input={
@@ -792,3 +796,5 @@ class TestOptionsFlow:
         new_data = call_kwargs[1]["data"]
         # Address should still be there (from original data)
         assert new_data[CONF_ADDRESS] == MOCK_ADDRESS
+        assert new_data[CONF_BURNOFF_ENABLED] is False
+        assert new_data[CONF_BURNOFF_DURATION] == 15

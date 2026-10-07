@@ -31,6 +31,7 @@ def create_mock_coordinator() -> MagicMock:
     coordinator.async_turn_off = AsyncMock()
     coordinator.async_set_level = AsyncMock()
     coordinator.async_add_listener = MagicMock(return_value=MagicMock())
+    coordinator.burnoff_active = False
     coordinator.data = {
         "connected": True,
         "running_state": 1,
@@ -171,6 +172,26 @@ class TestFanAvailability:
         fan = VevorHeaterFan(coordinator)
 
         assert fan.available is False
+
+    def test_unavailable_during_burnoff(self):
+        """Fan is another UI for saved level and must be locked during burn-off."""
+        coordinator = create_mock_coordinator()
+        coordinator.data["connected"] = True
+        coordinator.data["running_mode"] = RUNNING_MODE_LEVEL
+        coordinator.burnoff_active = True
+        fan = VevorHeaterFan(coordinator)
+
+        assert fan.available is False
+
+    def test_available_when_burnoff_inactive(self):
+        """Fan stays available in Level mode when burn-off is not running."""
+        coordinator = create_mock_coordinator()
+        coordinator.data["connected"] = True
+        coordinator.data["running_mode"] = RUNNING_MODE_LEVEL
+        coordinator.burnoff_active = False
+        fan = VevorHeaterFan(coordinator)
+
+        assert fan.available is True
 
 
 # ---------------------------------------------------------------------------

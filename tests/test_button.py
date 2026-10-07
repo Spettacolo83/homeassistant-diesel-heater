@@ -10,6 +10,8 @@ from . import conftest  # noqa: F401
 from custom_components.diesel_heater.button import (
     VevorTimeSyncButton,
     VevorResetFuelLevelButton,
+    VevorPowerOffNowButton,
+    VevorRunBurnoffButton,
     async_setup_entry,
 )
 
@@ -25,6 +27,8 @@ def create_mock_coordinator() -> MagicMock:
     coordinator.reset_fuel_level = AsyncMock()
     coordinator.async_sync_time = AsyncMock()
     coordinator.async_reset_fuel_level = AsyncMock()
+    coordinator.async_power_off_now = AsyncMock()
+    coordinator.async_run_burnoff = AsyncMock()
     coordinator.protocol_mode = 0
     coordinator.has_cronus_fuel_estimate = False
     coordinator.data = {
@@ -133,10 +137,10 @@ class TestAsyncSetupEntry:
 
         await async_setup_entry(hass, entry, async_add_entities)
 
-        # Verify async_add_entities was called with 2 buttons
+        # Verify async_add_entities was called with 4 buttons
         async_add_entities.assert_called_once()
         call_args = async_add_entities.call_args[0][0]
-        assert len(call_args) == 2
+        assert len(call_args) == 4
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +169,26 @@ class TestButtonAsyncPress:
         await button.async_press()
 
         coordinator.async_reset_fuel_level.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_power_off_now_async_press(self):
+        """Test Power Off Now button calls coordinator."""
+        coordinator = create_mock_coordinator()
+        button = VevorPowerOffNowButton(coordinator)
+
+        await button.async_press()
+
+        coordinator.async_power_off_now.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_run_burnoff_async_press(self):
+        """Test Run Burn-off button calls coordinator."""
+        coordinator = create_mock_coordinator()
+        button = VevorRunBurnoffButton(coordinator)
+
+        await button.async_press()
+
+        coordinator.async_run_burnoff.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -210,12 +234,12 @@ class TestButtonAttributes:
         # EntityCategory.CONFIG is mocked
         assert button._attr_entity_category is not None
 
-    def test_reset_fuel_entity_category(self):
-        """Test reset fuel button is in CONFIG category."""
+    def test_power_off_now_is_not_hidden_as_config(self):
+        """Power Off Now must stay visible so users can skip remaining burn-off."""
         coordinator = create_mock_coordinator()
-        button = VevorResetFuelLevelButton(coordinator)
+        button = VevorPowerOffNowButton(coordinator)
 
-        assert button._attr_entity_category is not None
+        assert getattr(button, "_attr_entity_category", None) is None
 
     def test_time_sync_device_info(self):
         """Test time sync button device_info."""
