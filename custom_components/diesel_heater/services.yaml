@@ -29,3 +29,21 @@ send_command:
           min: -128
           max: 127
           mode: box
+
+recover_bluetooth:
+  name: Recover Bluetooth adapter
+  description: >
+    Reset the Bluetooth adapter at kernel level (HCIDEVDOWN/HCIDEVUP + rfkill
+    unblock + USB reset) to work around a BlueZ scanner stall. Use this when
+    the heater is unreachable but the adapter still appears loaded in Home
+    Assistant — much lighter than restarting HA or the Raspberry Pi.
+  fields:
+    adapter:
+      name: Adapter
+      description: >
+        Specific HCI adapter to recover (e.g. hci0). If omitted, every HCI
+        adapter known to Home Assistant is recovered.
+      required: false
+      example: hci0
+      selector:
+        text:
