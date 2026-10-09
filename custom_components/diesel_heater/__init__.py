@@ -259,6 +259,96 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the Diesel Heater integration."""
     # Migrate storage files from old domain if they exist
     await async_migrate_from_old_domain(hass)
+
+    # ------------------------------------------------------------------
+    # Bluetooth recovery service — registered at component level (not
+    # per-entry) so it is callable even when the config entry is in
+    # setup_retry because the heater is unreachable. Classic
+    # chicken-and-egg: user needs the service to recover the BT adapter
+    # so the entry can finish setup, but service register inside
+    # async_setup_entry only runs after a successful entry setup.
+    # ------------------------------------------------------------------
+    if not hass.services.has_service(DOMAIN, SERVICE_RECOVER_BLUETOOTH):
+        async def async_recover_bluetooth(call: ServiceCall) -> dict[str, Any]:
+            """Reset one or all BT adapters at kernel level."""
+            try:
+                from homeassistant.components import bluetooth as bt_component
+                from bluetooth_auto_recovery import recover_adapter
+            except ImportError as err:
+                raise HomeAssistantError(
+                    "bluetooth_auto_recovery is not available in this HA environment; "
+                    "cannot recover the Bluetooth adapter from the integration"
+                ) from err
+
+            requested_adapter = call.data.get(ATTR_ADAPTER)
+            try:
+                adapters = await bt_component.async_get_adapters(hass)
+            except Exception as err:
+                raise HomeAssistantError(
+                    f"Could not enumerate Bluetooth adapters: {err}"
+                ) from err
+
+            results: list[dict[str, Any]] = []
+            for adapter_name, details in adapters.items():
+                if not adapter_name.startswith("hci"):
+                    continue
+                if requested_adapter and adapter_name != requested_adapter:
+                    continue
+                try:
+                    hci_idx = int(adapter_name[3:])
+                except ValueError:
+                    _LOGGER.warning(
+                        "Skipping adapter %s: cannot parse hci index", adapter_name
+                    )
+                    continue
+                mac = (details.get("address") or "").upper()
+                _LOGGER.info(
+                    "Attempting Bluetooth adapter recovery: %s (mac=%s)",
+                    adapter_name,
+                    mac,
+                )
+                try:
+                    ok = await recover_adapter(hci_idx, mac, True)
+                    results.append(
+                        {"adapter": adapter_name, "mac": mac, "recovered": bool(ok)}
+                    )
+                    _LOGGER.info(
+                        "Bluetooth adapter recovery result for %s: %s",
+                        adapter_name,
+                        ok,
+                    )
+                except Exception as err:
+                    _LOGGER.exception(
+                        "Bluetooth adapter recovery failed for %s", adapter_name
+                    )
+                    results.append(
+                        {"adapter": adapter_name, "mac": mac, "error": str(err)}
+                    )
+
+            if not results:
+                raise HomeAssistantError(
+                    "No HCI Bluetooth adapters found to recover"
+                    + (f" (filter: {requested_adapter})" if requested_adapter else "")
+                )
+
+            hass.bus.async_fire(
+                f"{DOMAIN}_bluetooth_recovered", {"adapters": results}
+            )
+            return {"adapters": results}
+
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_RECOVER_BLUETOOTH,
+            async_recover_bluetooth,
+            schema=SERVICE_RECOVER_BLUETOOTH_SCHEMA,
+            supports_response=True,
+        )
+        _LOGGER.debug(
+            "Registered bluetooth recovery service: %s.%s",
+            DOMAIN,
+            SERVICE_RECOVER_BLUETOOTH,
+        )
+
     return True
 
 
@@ -452,97 +542,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: DieselHeaterConfigEntry)
             schema=SERVICE_SET_TIMER_SCHEMA,
         )
         _LOGGER.debug("Registered timer service: %s.%s", DOMAIN, SERVICE_SET_TIMER)
-
-    # ------------------------------------------------------------------
-    # Bluetooth recovery service — resets the Pi onboard BT adapter at
-    # kernel level (HCIDEVDOWN/HCIDEVUP + rfkill unblock + USB reset),
-    # same mechanism habluetooth uses internally for FAILED adapters.
-    # Works around the BlueZ scanner stall where the adapter stays
-    # "loaded" from HA's point of view but silently stops delivering
-    # advertisements for some devices (reported by @Spettacolo83,
-    # recovered via Pi restart; this service recovers without any
-    # restart or shell_command).
-    # ------------------------------------------------------------------
-    if not hass.services.has_service(DOMAIN, SERVICE_RECOVER_BLUETOOTH):
-        async def async_recover_bluetooth(call: ServiceCall) -> dict[str, Any]:
-            """Reset one or all BT adapters at kernel level."""
-            try:
-                from homeassistant.components import bluetooth as bt_component
-                from bluetooth_auto_recovery import recover_adapter
-            except ImportError as err:
-                raise HomeAssistantError(
-                    "bluetooth_auto_recovery is not available in this HA environment; "
-                    "cannot recover the Bluetooth adapter from the integration"
-                ) from err
-
-            requested_adapter = call.data.get(ATTR_ADAPTER)
-            try:
-                adapters = await bt_component.async_get_adapters(hass)
-            except Exception as err:
-                raise HomeAssistantError(
-                    f"Could not enumerate Bluetooth adapters: {err}"
-                ) from err
-
-            results: list[dict[str, Any]] = []
-            for adapter_name, details in adapters.items():
-                if not adapter_name.startswith("hci"):
-                    continue
-                if requested_adapter and adapter_name != requested_adapter:
-                    continue
-                try:
-                    hci_idx = int(adapter_name[3:])
-                except ValueError:
-                    _LOGGER.warning(
-                        "Skipping adapter %s: cannot parse hci index", adapter_name
-                    )
-                    continue
-                mac = (details.get("address") or "").upper()
-                _LOGGER.info(
-                    "Attempting Bluetooth adapter recovery: %s (mac=%s)",
-                    adapter_name,
-                    mac,
-                )
-                try:
-                    ok = await recover_adapter(hci_idx, mac, True)
-                    results.append(
-                        {"adapter": adapter_name, "mac": mac, "recovered": bool(ok)}
-                    )
-                    _LOGGER.info(
-                        "Bluetooth adapter recovery result for %s: %s",
-                        adapter_name,
-                        ok,
-                    )
-                except Exception as err:
-                    _LOGGER.exception(
-                        "Bluetooth adapter recovery failed for %s", adapter_name
-                    )
-                    results.append(
-                        {"adapter": adapter_name, "mac": mac, "error": str(err)}
-                    )
-
-            if not results:
-                raise HomeAssistantError(
-                    "No HCI Bluetooth adapters found to recover"
-                    + (f" (filter: {requested_adapter})" if requested_adapter else "")
-                )
-
-            hass.bus.async_fire(
-                f"{DOMAIN}_bluetooth_recovered", {"adapters": results}
-            )
-            return {"adapters": results}
-
-        hass.services.async_register(
-            DOMAIN,
-            SERVICE_RECOVER_BLUETOOTH,
-            async_recover_bluetooth,
-            schema=SERVICE_RECOVER_BLUETOOTH_SCHEMA,
-            supports_response=True,
-        )
-        _LOGGER.debug(
-            "Registered bluetooth recovery service: %s.%s",
-            DOMAIN,
-            SERVICE_RECOVER_BLUETOOTH,
-        )
 
     return True
 
