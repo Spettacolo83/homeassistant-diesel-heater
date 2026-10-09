@@ -366,7 +366,7 @@ class BurnoffController:
         ):
             if self.start_scheduled:
                 return
-            self.start_scheduled = True
+            # start_in_run claims start_scheduled under self.lock.
             self._host.hass.async_create_task(self.start_in_run())
             return
         # Threshold already hit (or LCD Off) but not yet RUNNING.
@@ -377,10 +377,15 @@ class BurnoffController:
 
     async def start_in_run(self) -> None:
         """Start max-power burn-off without shutting down afterwards."""
+        async with self.lock:
+            if self.start_scheduled or self.active:
+                return
+            self.start_scheduled = True
         try:
             await self._host.async_start_burnoff(shutdown_after=False)
         finally:
-            self.start_scheduled = False
+            async with self.lock:
+                self.start_scheduled = False
 
     def _parse_ends_at(self, ends_at: Any) -> datetime | None:
         """Parse a stored ends_at value into an aware UTC datetime."""
@@ -427,9 +432,7 @@ class BurnoffController:
         self.cycle.saved_level = burnoff.get("saved_level")
         self.cycle.saved_temp = burnoff.get("saved_temp")
         saved_protocol_state = burnoff.get("saved_protocol_state")
-        self.cycle.saved_protocol_state = (
-            saved_protocol_state if isinstance(saved_protocol_state, dict) else None
-        )
+        self.cycle.saved_protocol_state = saved_protocol_state if isinstance(saved_protocol_state, dict) else None
         self.cycle.ends_at = self._parse_ends_at(burnoff.get("ends_at")) or datetime.now(UTC)
 
         remaining = self.remaining_seconds
