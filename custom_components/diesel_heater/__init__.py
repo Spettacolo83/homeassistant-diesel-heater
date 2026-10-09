@@ -272,17 +272,19 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         async def async_recover_bluetooth(call: ServiceCall) -> dict[str, Any]:
             """Reset one or all BT adapters at kernel level."""
             try:
-                from homeassistant.components import bluetooth as bt_component
+                from bluetooth_adapters import get_adapters as _get_adapters
                 from bluetooth_auto_recovery import recover_adapter
             except ImportError as err:
                 raise HomeAssistantError(
-                    "bluetooth_auto_recovery is not available in this HA environment; "
+                    "bluetooth_auto_recovery / bluetooth_adapters not available; "
                     "cannot recover the Bluetooth adapter from the integration"
                 ) from err
 
             requested_adapter = call.data.get(ATTR_ADAPTER)
             try:
-                adapters = await bt_component.async_get_adapters(hass)
+                adapters_mgr = _get_adapters()
+                await adapters_mgr.refresh()
+                adapters = adapters_mgr.adapters
             except Exception as err:
                 raise HomeAssistantError(
                     f"Could not enumerate Bluetooth adapters: {err}"
