@@ -106,6 +106,7 @@ class BurnoffController:
         self.ha_power_off = False
         # At most one in-run async_start_burnoff task at a time.
         self.start_scheduled = False
+        self.start_task: asyncio.Task[None] | None = None
         # Entity fields only. Listeners are not ready while the host is constructed.
         self._seed_data()
 
@@ -364,10 +365,11 @@ class BurnoffController:
             self._host.data.get("running_state") == RUNNING_STATE_ON
             and self._host.data.get("running_step") == RUNNING_STEP_RUNNING
         ):
-            if self.start_scheduled:
+            # Reserve the handle before returning. The lock claim happens later,
+            # inside the task, so a second status update must not queue another one.
+            if self.start_scheduled or (self.start_task is not None and not self.start_task.done()):
                 return
-            self.start_scheduled = True
-            self._host.hass.async_create_task(self.start_in_run())
+            self.start_task = self._host.hass.async_create_task(self.start_in_run())
             return
         # Threshold already hit (or LCD Off) but not yet RUNNING.
         if not self.accumulator.pending:
@@ -377,10 +379,31 @@ class BurnoffController:
 
     async def start_in_run(self) -> None:
         """Start max-power burn-off without shutting down afterwards."""
+        claimed = False
         try:
-            await self._host.async_start_burnoff(shutdown_after=False)
+            async with self.lock:
+                if self.start_scheduled or self.active:
+                    return
+                self.start_scheduled = True
+                claimed = True
+            try:
+                await self._host.async_start_burnoff(shutdown_after=False)
+            finally:
+                if claimed:
+                    await self._clear_start_scheduled()
         finally:
+            # Drop the handle only while this task still owns it.
+            if self.start_task is asyncio.current_task():
+                self.start_task = None
+
+    async def _clear_start_scheduled(self) -> None:
+        """Drop the in-run claim. A cancelled task still clears it."""
+        try:
+            async with self.lock:
+                self.start_scheduled = False
+        except asyncio.CancelledError:
             self.start_scheduled = False
+            raise
 
     def _parse_ends_at(self, ends_at: Any) -> datetime | None:
         """Parse a stored ends_at value into an aware UTC datetime."""
@@ -813,3 +836,14 @@ class BurnoffController:
             task.cancel()
             with suppress(asyncio.CancelledError, Exception):
                 await task
+
+    async def stop_in_run_start_task(self) -> None:
+        """Cancel the queued in-run start without changing persisted cycle state."""
+        task = self.start_task
+        if task is not None and not task.done():
+            task.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await task
+        # A task cancelled before it starts never runs its own cleanup.
+        if self.start_task is task:
+            self.start_task = None
