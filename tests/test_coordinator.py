@@ -4276,11 +4276,7 @@ class TestAsyncShutdown:
         assert tasks[0].cancelled()
         assert coordinator._burnoff.start_task is None
         assert coordinator._burnoff.start_scheduled is False
-        warning_messages = [
-            str(call.args[0])
-            for call in coordinator._logger.warning.call_args_list
-            if call.args
-        ]
+        warning_messages = [str(call.args[0]) for call in coordinator._logger.warning.call_args_list if call.args]
         assert not any("Cannot start burn-off" in message for message in warning_messages)
 
 
