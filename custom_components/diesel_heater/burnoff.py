@@ -817,8 +817,8 @@ class BurnoffController:
             with suppress(asyncio.CancelledError, Exception):
                 await task
 
-    async def cancel_start_task(self) -> None:
-        """Cancel a queued in-run start without changing persisted cycle state."""
+    async def stop_start_task(self) -> None:
+        """Cancel the queued in-run start task without changing persisted cycle state."""
         task = self.start_task
         self.start_task = None
         if task is not None and not task.done():
