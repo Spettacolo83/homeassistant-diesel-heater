@@ -106,6 +106,7 @@ class BurnoffController:
         self.ha_power_off = False
         # At most one in-run async_start_burnoff task at a time.
         self.start_scheduled = False
+        self.start_task: asyncio.Task[None] | None = None
         # Entity fields only. Listeners are not ready while the host is constructed.
         self._seed_data()
 
@@ -367,7 +368,7 @@ class BurnoffController:
             if self.start_scheduled:
                 return
             self.start_scheduled = True
-            self._host.hass.async_create_task(self.start_in_run())
+            self.start_task = self._host.hass.async_create_task(self.start_in_run())
             return
         # Threshold already hit (or LCD Off) but not yet RUNNING.
         if not self.accumulator.pending:
@@ -381,6 +382,8 @@ class BurnoffController:
             await self._host.async_start_burnoff(shutdown_after=False)
         finally:
             self.start_scheduled = False
+            if self.start_task is asyncio.current_task():
+                self.start_task = None
 
     def _parse_ends_at(self, ends_at: Any) -> datetime | None:
         """Parse a stored ends_at value into an aware UTC datetime."""
@@ -809,6 +812,15 @@ class BurnoffController:
         self.cancel_event.set()
         task = self.task
         self.task = None
+        if task is not None and not task.done():
+            task.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await task
+
+    async def cancel_start_task(self) -> None:
+        """Cancel a queued in-run start without changing persisted cycle state."""
+        task = self.start_task
+        self.start_task = None
         if task is not None and not task.done():
             task.cancel()
             with suppress(asyncio.CancelledError, Exception):
