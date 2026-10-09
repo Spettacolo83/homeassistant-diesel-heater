@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
@@ -24,6 +25,8 @@ from custom_components.diesel_heater.const import (
 
 from .test_coordinator import (
     _enable_burnoff,
+    _enable_in_run,
+    _set_heating,
     create_mock_coordinator,
 )
 
@@ -224,3 +227,97 @@ async def test_restore_without_snapshot_succeeds_during_cooldown():
     coordinator._burnoff.cycle.saved_mode = None
 
     assert await coordinator._burnoff.restore_saved_mode() is True
+
+
+@pytest.mark.asyncio
+async def test_concurrent_in_run_starts_schedule_once():
+    """Two overlapping start_in_run calls share one async_start_burnoff."""
+    coordinator = create_mock_coordinator()
+    entered = 0
+    release = asyncio.Event()
+    started = asyncio.Event()
+
+    async def _start(*, shutdown_after: bool = True) -> None:
+        nonlocal entered
+        entered += 1
+        assert shutdown_after is False
+        started.set()
+        await release.wait()
+
+    coordinator.async_start_burnoff = _start
+    controller = coordinator._burnoff
+    first = asyncio.create_task(controller.start_in_run())
+    second = asyncio.create_task(controller.start_in_run())
+
+    await started.wait()
+    await asyncio.sleep(0)
+    assert entered == 1
+    assert controller.start_scheduled is True
+
+    release.set()
+    await asyncio.gather(first, second)
+    assert entered == 1
+    assert controller.start_scheduled is False
+
+
+@pytest.mark.asyncio
+async def test_maybe_start_in_run_skips_while_start_is_claimed():
+    """A later status tick does not queue another start once the claim is held."""
+    coordinator = create_mock_coordinator()
+    _enable_in_run(coordinator, cycles=1)
+    _set_heating(coordinator)
+    coordinator.data["running_mode"] = RUNNING_MODE_LEVEL
+    coordinator._burnoff.accumulator.cycles = 1
+
+    entered = 0
+    release = asyncio.Event()
+
+    async def _start(*, shutdown_after: bool = True) -> None:
+        nonlocal entered
+        entered += 1
+        await release.wait()
+
+    coordinator.async_start_burnoff = _start
+    tasks: list[asyncio.Task[None]] = []
+
+    def _create_task(coro, *args, **kwargs):
+        task = asyncio.create_task(coro)
+        tasks.append(task)
+        return task
+
+    coordinator.hass.async_create_task = _create_task
+    coordinator._burnoff.maybe_start_in_run()
+    await asyncio.sleep(0)
+    assert entered == 1
+    assert coordinator._burnoff.start_scheduled is True
+
+    coordinator._burnoff.maybe_start_in_run()
+    await asyncio.sleep(0)
+    assert len(tasks) == 1
+    assert entered == 1
+
+    release.set()
+    await asyncio.gather(*tasks)
+    assert coordinator._burnoff.start_scheduled is False
+
+
+@pytest.mark.asyncio
+async def test_start_in_run_clears_claim_so_a_later_start_can_run():
+    """Finishing a start drops the claim so the next in-run start can proceed."""
+    coordinator = create_mock_coordinator()
+    entered = 0
+
+    async def _start(*, shutdown_after: bool = True) -> None:
+        nonlocal entered
+        entered += 1
+
+    coordinator.async_start_burnoff = _start
+    controller = coordinator._burnoff
+
+    await controller.start_in_run()
+    assert entered == 1
+    assert controller.start_scheduled is False
+
+    await controller.start_in_run()
+    assert entered == 2
+    assert controller.start_scheduled is False

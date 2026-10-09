@@ -3464,8 +3464,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """Shutdown coordinator."""
         self._logger.debug("Shutting down Vevor Heater coordinator")
 
-        # Stop the burn-off wait task; in-progress state is already persisted
+        # Stop the burn-off wait task; in-progress state is already persisted.
+        # Also cancel a queued in-run start so it cannot warn after unload.
         await self._burnoff.stop_wait_task()
+        await self._burnoff.stop_in_run_start_task()
 
         # Clean up external sensor listener
         if self._auto_offset_unsub:

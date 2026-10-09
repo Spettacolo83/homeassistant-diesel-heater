@@ -4247,6 +4247,64 @@ class TestAsyncShutdown:
 
         coordinator._cleanup_connection.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_consecutive_maybe_start_reserves_one_task_shutdown_cancels_it(self):
+        """Two status updates reserve one in-run start, and unload cancels that task."""
+        coordinator = create_mock_coordinator()
+        _enable_in_run(coordinator, cycles=1)
+        _set_heating(coordinator)
+        coordinator.data["running_mode"] = RUNNING_MODE_LEVEL
+        coordinator._burnoff.accumulator.cycles = 1
+        coordinator._auto_offset_unsub = None
+        coordinator._cleanup_connection = AsyncMock()
+        tasks = _install_task_runner(coordinator)
+
+        coordinator._burnoff.maybe_start_in_run()
+        coordinator._burnoff.maybe_start_in_run()
+
+        assert len(tasks) == 1
+        reserved = coordinator._burnoff.start_task
+        assert reserved is tasks[0]
+        assert not reserved.done()
+
+        await coordinator.async_shutdown()
+
+        assert reserved.cancelled()
+        assert coordinator._burnoff.start_task is None
+
+    @pytest.mark.asyncio
+    async def test_shutdown_cancels_in_progress_start_without_warning(self):
+        """Unload cancels a start already inside start() before it can warn."""
+        coordinator = create_mock_coordinator()
+        _enable_in_run(coordinator, cycles=1)
+        _set_heating(coordinator)
+        coordinator.data["running_mode"] = RUNNING_MODE_LEVEL
+        coordinator._burnoff.accumulator.cycles = 1
+        coordinator._auto_offset_unsub = None
+        coordinator._cleanup_connection = AsyncMock()
+
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def _blocked_start(*, shutdown_after: bool = True) -> None:
+            entered.set()
+            await release.wait()
+
+        coordinator._burnoff.start = _blocked_start
+        tasks = _install_task_runner(coordinator)
+
+        coordinator._burnoff.maybe_start_in_run()
+        await entered.wait()
+
+        await coordinator.async_shutdown()
+
+        assert len(tasks) == 1
+        assert tasks[0].cancelled()
+        assert coordinator._burnoff.start_task is None
+        assert coordinator._burnoff.start_scheduled is False
+        warning_messages = [str(call.args[0]) for call in coordinator._logger.warning.call_args_list if call.args]
+        assert not any("Cannot start burn-off" in message for message in warning_messages)
+
 
 # ---------------------------------------------------------------------------
 # Tests for set_xxx method failure paths (lines 1475, 1507, 1522, etc.)
