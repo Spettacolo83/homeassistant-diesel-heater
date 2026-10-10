@@ -2432,16 +2432,6 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     except Exception as sync_err:
                         self._logger.debug("Auto time sync failed (non-critical): %s", sync_err)
 
-                # CRITICAL FIX: For Hcalory MVP2 status queries (command=1),
-                # the heater broadcasts status automatically every ~2 seconds.
-                # Do NOT send query command - just wait for automatic notifications.
-                # Ref: Wireshark analysis from issue #34
-                if command == 1:
-                    self._logger.info(
-                        "✅ MVP2 authenticated - waiting for automatic status broadcasts "
-                        "(no query needed, heater transmits every ~2s)"
-                    )
-                    return True
             else:
                 self._logger.warning("⚠️ MVP2 authentication failed after retries, but continuing anyway")
                 # Continue anyway - some devices might not require it
