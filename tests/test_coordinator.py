@@ -3103,6 +3103,32 @@ class TestSendCommand:
         assert result is True
 
     @pytest.mark.asyncio
+    async def test_hcalory_mvp2_status_query_is_sent_after_authentication(self):
+        """Hcalory MVP2 status refresh uses the protocol-native 0A0A frame."""
+        from diesel_heater_ble import ProtocolHcalory
+
+        coordinator = create_mock_coordinator()
+        coordinator._protocol = ProtocolHcalory()
+        coordinator._protocol_mode = 7
+        coordinator._time_synced_this_session = True
+        coordinator._client = MagicMock()
+        coordinator._client.is_connected = True
+        coordinator._characteristic = "char"
+        coordinator._async_password_handshake = AsyncMock(return_value=True)
+
+        async def mock_write(packet):
+            coordinator._notification_data = bytearray((0x00, 0x01))
+
+        coordinator._write_gatt = AsyncMock(side_effect=mock_write)
+
+        result = await coordinator._send_command(1, 0, timeout=0.2)
+
+        assert result is True
+        coordinator._write_gatt.assert_awaited_once()
+        packet = coordinator._write_gatt.await_args.args[0]
+        assert packet[7:9] == bytearray((0x0A, 0x0A))
+
+    @pytest.mark.asyncio
     async def test_send_command_exception_cleans_up(self):
         """Test _send_command cleans up connection on exception."""
         coordinator = create_mock_coordinator()
