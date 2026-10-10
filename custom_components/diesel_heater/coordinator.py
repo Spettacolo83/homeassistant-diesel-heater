@@ -224,6 +224,15 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._consecutive_failures = 0  # Track consecutive update failures
         self._time_synced_this_session = False  # Track if time was synced after connection
         self._max_stale_cycles = 3  # Keep last values for this many failed cycles
+        # Kernel BT auto-recovery: when the BlueZ driver stalls GATT (seen on
+        # Raspberry Pi BCM43438 with some Vevor/BYD heaters), only a kernel-level
+        # HCI reset gets the next poll through. Trigger it automatically after
+        # `_internal_recovery_threshold` consecutive silent failures, with a
+        # cooldown to prevent thrashing. User can still call the
+        # diesel_heater.recover_bluetooth service manually.
+        self._last_internal_recovery_at: float = 0.0
+        self._internal_recovery_threshold = 2
+        self._internal_recovery_cooldown_s = 60.0
         self._last_valid_data: dict[str, Any] = {}  # Cache of last valid sensor readings
         self._heater_uses_fahrenheit: bool = False  # Detected from heater response
         self._force_temp_unit: str = force_temp_unit
@@ -1278,6 +1287,92 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     self._consecutive_failures,
                     err
                 )
+
+        # Auto-recover BT adapter at kernel level when the stall is persistent.
+        # Fires once per cooldown window regardless of total failure count.
+        if self._should_auto_recover():
+            self._last_internal_recovery_at = time.time()
+            self.hass.async_create_task(self._async_recover_internally())
+
+    def _should_auto_recover(self) -> bool:
+        """Decide whether to trigger an in-process kernel BT recovery now.
+
+        True iff the stall has persisted for at least `_internal_recovery_threshold`
+        consecutive update failures AND we haven't already recovered within
+        `_internal_recovery_cooldown_s`. The cooldown prevents a tight loop
+        if the kernel reset itself doesn't bring the device back.
+        """
+        if self._consecutive_failures < self._internal_recovery_threshold:
+            return False
+        if time.time() - self._last_internal_recovery_at < self._internal_recovery_cooldown_s:
+            return False
+        return True
+
+    async def _async_recover_internally(self) -> bool:
+        """Reset BT adapter at kernel level and drop our stale BLE client.
+
+        Mirrors the diesel_heater.recover_bluetooth service but runs inline
+        from the coordinator when a silent-stall is detected. Returns True
+        iff at least one HCI adapter reported successful recovery.
+        """
+        try:
+            from bluetooth_adapters import get_adapters as _get_adapters
+            from bluetooth_auto_recovery import recover_adapter
+        except ImportError as err:
+            self._logger.warning(
+                "bluetooth_auto_recovery unavailable; cannot auto-recover BT: %s",
+                err,
+            )
+            return False
+
+        recovered_any = False
+        try:
+            adapters_mgr = _get_adapters()
+            await adapters_mgr.refresh()
+            adapters = adapters_mgr.adapters
+        except Exception as err:  # pragma: no cover - defensive
+            self._logger.warning(
+                "Could not enumerate Bluetooth adapters for auto-recovery: %s", err
+            )
+            return False
+
+        for adapter_name, details in adapters.items():
+            if not adapter_name.startswith("hci"):
+                continue
+            try:
+                hci_idx = int(adapter_name[3:])
+            except ValueError:
+                continue
+            mac = (details.get("address") or "").upper()
+            self._logger.info(
+                "⚡ Auto-recovering BT adapter %s (mac=%s) after %d consecutive failures",
+                adapter_name,
+                mac,
+                self._consecutive_failures,
+            )
+            try:
+                ok = await recover_adapter(hci_idx, mac, True)
+                if ok:
+                    recovered_any = True
+            except Exception as err:
+                self._logger.exception(
+                    "Adapter recovery raised for %s: %s", adapter_name, err
+                )
+
+        # Drop our stale BleakClient so the next poll opens a fresh connection
+        # against the just-reset HCI stack.
+        await self._cleanup_connection()
+
+        if recovered_any:
+            self.hass.bus.async_fire(
+                f"{DOMAIN}_bluetooth_recovered",
+                {
+                    "source": "coordinator_auto_recovery",
+                    "address": self.address,
+                    "consecutive_failures": self._consecutive_failures,
+                },
+            )
+        return recovered_any
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Update data from the heater."""

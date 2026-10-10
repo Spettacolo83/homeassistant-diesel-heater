@@ -157,6 +157,9 @@ def create_mock_coordinator() -> VevorHeaterCoordinator:
     coordinator._last_valid_data = {}
     coordinator._consecutive_failures = 0
     coordinator._max_stale_cycles = 3
+    coordinator._last_internal_recovery_at = 0.0
+    coordinator._internal_recovery_threshold = 2
+    coordinator._internal_recovery_cooldown_s = 60.0
     coordinator._is_abba_device = False
     coordinator._is_hcalory_device = False
     coordinator._is_heatgenie_device = False
