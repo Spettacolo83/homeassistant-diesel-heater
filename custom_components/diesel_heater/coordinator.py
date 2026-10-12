@@ -2150,7 +2150,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         Per @Xev analysis:
         - Timeout: 0.3s (Android app completes in ~1.5s, so 0.3s per attempt is reasonable)
         - Retry: Up to max_retries attempts if timeout or auth_byte != 0x01
-        - Auth byte check: Byte 15 should be 0x01 for successful authentication
+        - Result byte check: Byte 17 is 0x01 for successful authentication
         """
         if not (self._protocol and
                 hasattr(self._protocol, 'needs_password_handshake') and
@@ -2173,15 +2173,15 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
                 # Wait for handshake response 0B0C (header 0x0003)
                 # Format: 00-03-00-01-00-01-00-0B-0C-00-00-06-01-[password]-[auth]-[checksum]
-                # Auth byte (position 15): 0x00 = unauthenticated, 0x01 = authenticated
+                # Result byte (position 17): 0x01 = authenticated, 0x02 = failed
                 iterations = int(handshake_timeout / 0.05)  # Check every 50ms
                 handshake_received = False
                 auth_byte = None
 
                 for i in range(iterations):
                     await asyncio.sleep(0.05)
-                    # Beta.32: Need at least 17 bytes (0-16) to read auth byte at position 16
-                    if self._notification_data and len(self._notification_data) >= 17:
+                    # Need at least 18 bytes (0-17) to read the result byte.
+                    if self._notification_data and len(self._notification_data) >= 18:
                         # Check for response header 0x0003 and command 0x0B0C
                         # Format: 00 03 00 01 00 01 00 0b 0c 00 00 06 01 [password] [authenticated] [checksum]
                         header = (self._notification_data[0] << 8) | self._notification_data[1]
@@ -2189,9 +2189,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                         cmd = (self._notification_data[7] << 8) | self._notification_data[8]
 
                         if header == 0x0003 and cmd == 0x0B0C:
-                            # Parse authentication status (@Xev discovery, issue #34)
-                            # Beta.32 fix: Auth byte is at position 16 (after 4 password bytes at 12-15)
-                            auth_byte = self._notification_data[16] if len(self._notification_data) > 16 else 0xFF
+                            # The Hcalory app parses four PIN digits at 13-16 and
+                            # the authentication result at byte 17.
+                            auth_byte = self._notification_data[17]
                             auth_status = "authenticated ✅" if auth_byte == 0x01 else "unauthenticated ❌" if auth_byte == 0x00 else f"unknown (0x{auth_byte:02X})"
 
                             self._logger.info(
