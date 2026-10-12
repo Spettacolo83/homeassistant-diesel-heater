@@ -3132,6 +3132,49 @@ class TestSendCommand:
         assert packet[7:9] == bytearray((0x0A, 0x0A))
 
     @pytest.mark.asyncio
+    async def test_hcalory_mvp2_password_handshake_reads_result_byte(self):
+        """MVP2 authentication succeeds when the APK-defined result is success."""
+        from diesel_heater_ble import ProtocolHcalory
+
+        coordinator = create_mock_coordinator()
+        coordinator._protocol = ProtocolHcalory()
+
+        async def mock_write(packet):
+            coordinator._notification_data = bytearray.fromhex(
+                "000300010001000B0C0000060101020304011E"
+            )
+
+        coordinator._write_gatt = AsyncMock(side_effect=mock_write)
+
+        with patch("custom_components.diesel_heater.coordinator.asyncio.sleep", AsyncMock()):
+            result = await coordinator._async_password_handshake(max_retries=1)
+
+        assert result is True
+        assert coordinator._protocol.needs_password_handshake is False
+
+    @pytest.mark.asyncio
+    async def test_hcalory_mvp2_password_handshake_rejects_failed_result(self):
+        """MVP2 authentication does not mistake a PIN digit for a result code."""
+        from diesel_heater_ble import ProtocolHcalory
+
+        coordinator = create_mock_coordinator()
+        coordinator._protocol = ProtocolHcalory()
+        coordinator._passkey = 1231
+
+        async def mock_write(packet):
+            coordinator._notification_data = bytearray.fromhex(
+                "000300010001000B0C0000060101020301021C"
+            )
+
+        coordinator._write_gatt = AsyncMock(side_effect=mock_write)
+
+        with patch("custom_components.diesel_heater.coordinator.asyncio.sleep", AsyncMock()):
+            result = await coordinator._async_password_handshake(max_retries=1)
+
+        assert result is False
+        assert coordinator._protocol.needs_password_handshake is True
+
+    @pytest.mark.asyncio
     async def test_send_command_exception_cleans_up(self):
         """Test _send_command cleans up connection on exception."""
         coordinator = create_mock_coordinator()
