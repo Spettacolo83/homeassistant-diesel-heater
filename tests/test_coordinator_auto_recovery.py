@@ -366,3 +366,47 @@ class TestSendCommandTimeoutWrapper:
         # — proving that a hung _send_command does produce a failure signal
         # rather than blocking forever.
         assert c._handle_connection_failure.called
+
+    def test_hung_ensure_connected_increments_failure_counter(self):
+        """A `_ensure_connected` that never returns must also produce a failure.
+
+        The whole motivation for beta.16: beta.15 wrapped `_send_command` with
+        wait_for, but the live stall on 2026-10-13 was in bleak `connect()`
+        which hangs BEFORE the status poll — so the beta.15 wrapper never got
+        a chance to fire.
+        """
+        from custom_components.diesel_heater import coordinator as coord_module
+
+        _install_bt_stubs({"hci0": {"address": "AA:AA:AA:AA:AA:AA"}})
+        c = create_mock_coordinator()
+        c._consecutive_failures = 0
+        c._client = None  # forces the connect branch
+
+        async def _hang(*a, **kw):
+            await asyncio.sleep(60)
+
+        c._ensure_connected = AsyncMock(side_effect=_hang)
+        c._check_daily_reset = AsyncMock()
+        c._check_daily_runtime_reset = AsyncMock()
+        c._handle_connection_failure = MagicMock(
+            wraps=lambda err: setattr(c, "_consecutive_failures", c._consecutive_failures + 1)
+        )
+
+        orig_wait_for = asyncio.wait_for
+
+        async def _fast_wait_for(aw, timeout):
+            return await orig_wait_for(aw, timeout=0.05)
+
+        with patch.object(coord_module.asyncio, "wait_for", side_effect=_fast_wait_for):
+            try:
+                self._run(c._async_update_data())
+            except Exception:
+                pass  # UpdateFailed is expected
+
+        assert c._handle_connection_failure.called
+        # The error passed must be a TimeoutError (the connect wrap converts
+        # the hang into one), so downstream can log the right root cause.
+        err_arg = c._handle_connection_failure.call_args.args[0]
+        assert isinstance(err_arg, asyncio.TimeoutError), (
+            f"expected TimeoutError, got {type(err_arg).__name__}"
+        )

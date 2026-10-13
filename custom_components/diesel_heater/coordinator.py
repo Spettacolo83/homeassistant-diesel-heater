@@ -1424,7 +1424,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         if not self._client or not self._client.is_connected:
             try:
-                await self._ensure_connected()
+                # Outer timeout: bleak's `connect()` has no default and
+                # hangs forever when the kernel BT adapter is wedged. Without
+                # this cap, _async_update_data awaits indefinitely, the
+                # DataUpdateCoordinator never re-enters, _consecutive_failures
+                # stays at 0, and the beta.14/15 auto-recovery hook never
+                # fires. Observed live on 2026-10-13 against @Spettacolo83's
+                # BCM43438 after the first poll wedges the GATT subscription.
+                await asyncio.wait_for(self._ensure_connected(), timeout=20.0)
                 # Beta.34: Auto-sync time on successful connection (@Wheemer, issue #38)
                 # This was previously only done for Hcalory MVP2, now extended to all protocols
                 if not self._time_synced_this_session and not getattr(self, "_is_cronus_device", False):
@@ -1436,6 +1443,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                         self._logger.info("✅ Auto time sync completed")
                     except Exception as sync_err:
                         self._logger.debug("Auto time sync failed (non-critical): %s", sync_err)
+            except asyncio.TimeoutError as err:
+                self._logger.debug(
+                    "bleak connect() hung — treating as connection failure "
+                    "so the recovery threshold can advance"
+                )
+                self._handle_connection_failure(err)
+                raise UpdateFailed("Connect timeout — kernel BT likely wedged")
             except Exception as err:
                 self._handle_connection_failure(err)
                 raise UpdateFailed(f"Failed to connect: {err}")
