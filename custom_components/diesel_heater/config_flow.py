@@ -15,24 +15,26 @@ from homeassistant.helpers import selector
 
 from .const import (
     CONF_AUTO_OFFSET_MAX,
+    CONF_CRONUS_HEATER_MODEL,
     CONF_EXTERNAL_TEMP_SENSOR,
     CONF_FORCE_TEMP_UNIT,
-    CONF_CRONUS_HEATER_MODEL,
-    CRONUS_HEATER_MODEL_OPTIONS,
-    DEFAULT_CRONUS_HEATER_MODEL,
     CONF_NEO_PASSWORD,
     CONF_PIN,
     CONF_PRESET_AWAY_TEMP,
     CONF_PRESET_COMFORT_TEMP,
+    CRONUS_HEATER_MODEL_OPTIONS,
     DEFAULT_AUTO_OFFSET_MAX,
+    DEFAULT_CRONUS_HEATER_MODEL,
     DEFAULT_FORCE_TEMP_UNIT,
+    DEFAULT_HCALORY_PIN,
     DEFAULT_NEO_PASSWORD,
     DEFAULT_PIN,
     DEFAULT_PRESET_AWAY_TEMP,
     DEFAULT_PRESET_COMFORT_TEMP,
     DOMAIN,
-    HEATGENIE_SERVICE_UUID,
     FORCE_TEMP_UNIT_OPTIONS,
+    HCALORY_MVP2_SERVICE_UUID,
+    HEATGENIE_SERVICE_UUID,
     MAX_AUTO_OFFSET_MAX,
     MAX_NEO_PASSWORD,
     MAX_PIN,
@@ -52,6 +54,14 @@ def _is_heatgenie_device(discovery_info: BluetoothServiceInfoBleak) -> bool:
         return False
     name = (discovery_info.name or "").upper()
     return "BOYGU" in name or bool(HEATGENIE_NAME_PATTERN.fullmatch(name))
+
+
+def _default_pin_for_discovery(discovery_info: BluetoothServiceInfoBleak) -> int:
+    """Return the APK-defined default PIN for a discovered controller."""
+    service_uuids = {uuid.lower() for uuid in discovery_info.service_uuids}
+    if HCALORY_MVP2_SERVICE_UUID.lower() in service_uuids:
+        return DEFAULT_HCALORY_PIN
+    return DEFAULT_PIN
 
 
 HEATER_NAME_PREFIXES = (
@@ -110,13 +120,14 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Confirm discovery."""
         assert self._discovery_info is not None
+        default_pin = _default_pin_for_discovery(self._discovery_info)
 
         if user_input is not None:
             return self.async_create_entry(
                 title=f"Vevor Heater {self._discovery_info.address[-5:].replace(':', '')}",
                 data={
                     CONF_ADDRESS: self._discovery_info.address,
-                    CONF_PIN: user_input.get(CONF_PIN, DEFAULT_PIN),
+                    CONF_PIN: user_input.get(CONF_PIN, default_pin),
                     CONF_NEO_PASSWORD: user_input.get(CONF_NEO_PASSWORD, DEFAULT_NEO_PASSWORD),
                 },
             )
@@ -128,7 +139,7 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema({
                 vol.Optional(
                     CONF_PIN,
-                    default=DEFAULT_PIN
+                    default=default_pin,
                 ): vol.All(
                     vol.Coerce(int),
                     vol.Range(min=MIN_PIN, max=MAX_PIN),

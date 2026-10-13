@@ -42,6 +42,9 @@ modulo 256. Confirmed control commands are:
 | MVP2 status request | `0A 0A` | Raw current-time payload |
 | PIN update | `0A 0C` | Four PIN digits |
 
+The Hcalory app defaults MVP2 controller authentication to `0000`. The integration
+stores PINs numerically, so enter that factory value as `0`.
+
 The app and implementation both use direct levels `1` through `10`. Older
 claims that Hcalory universally exposes only six levels are incorrect. The
 integration does not advertise ventilation or altitude-control packets as

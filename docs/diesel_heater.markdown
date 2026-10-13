@@ -79,7 +79,7 @@ After setup, you can configure these options:
 
 | Option | Description |
 |--------|-------------|
-| PIN Code | 4-digit PIN for heater authentication (default: 1234) |
+| PIN Code | Heater authentication PIN (usually 1234; Hcalory MVP2 factory 0000 is entered as 0) |
 | Temperature Offset | Manual calibration offset for the temperature sensor (-20 to +20°C) |
 | Away Preset Temperature | Temperature for Away preset (default: 8°C) |
 | Comfort Preset Temperature | Temperature for Comfort preset (default: 21°C) |
@@ -272,7 +272,7 @@ Disabling `switch.*_automatic_burnoff` during a cycle restores the previous mode
 
 ### Commands not responding
 
-1. Verify the correct PIN is configured (default: 1234)
+1. Verify the correct PIN is configured (usually 1234; Hcalory MVP2 factory 0000 is entered as 0)
 2. Check that no other device (phone app) is connected to the heater
 3. Enable debug logging:
 

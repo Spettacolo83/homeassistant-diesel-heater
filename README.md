@@ -246,7 +246,7 @@ Before adding the integration, you need to find your heater's Bluetooth MAC addr
 2. Click **"+ Add Integration"**
 3. Search for **"Diesel Heater"**
 4. The integration will auto-discover nearby heaters, or you can enter the MAC address manually
-5. Enter your heater's **PIN** (default: `1234`, change if you set a custom PIN via the Vevor app)
+5. Enter your heater's **PIN** (usually `1234`; Hcalory MVP2 factory `0000` is entered as `0`)
 6. Click **"Submit"**
 
 ### Integration Options

@@ -200,6 +200,30 @@ class TestConfirmStep:
         assert result["data"][CONF_ADDRESS] == MOCK_ADDRESS
         assert result["data"][CONF_PIN] == DEFAULT_PIN
 
+    async def test_hcalory_discovery_uses_app_default_pin(self):
+        flow = VevorHeaterConfigFlow()
+        flow._discovery_info = _make_ble_discovery(
+            name="Heater5816",
+            service_uuids=[HCALORY_MVP2_SERVICE_UUID],
+        )
+
+        result = await flow.async_step_confirm(user_input={})
+
+        assert result["type"] == "create_entry"
+        assert result["data"][CONF_PIN] == 0
+
+    async def test_hcalory_discovery_preserves_explicit_pin(self):
+        flow = VevorHeaterConfigFlow()
+        flow._discovery_info = _make_ble_discovery(
+            name="Heater5816",
+            service_uuids=[HCALORY_MVP2_SERVICE_UUID],
+        )
+
+        result = await flow.async_step_confirm(user_input={CONF_PIN: 1234})
+
+        assert result["type"] == "create_entry"
+        assert result["data"][CONF_PIN] == 1234
+
     async def test_creates_entry_with_custom_pin(self):
         flow = VevorHeaterConfigFlow()
         flow._discovery_info = _make_ble_discovery()
