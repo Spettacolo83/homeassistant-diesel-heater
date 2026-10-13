@@ -1308,12 +1308,48 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             return False
         return True
 
-    async def _async_recover_internally(self) -> bool:
-        """Reset BT adapter at kernel level and drop our stale BLE client.
+    def _resolve_local_hci_for_heater(
+        self, adapters: dict
+    ) -> tuple[int, str] | None:
+        """Return (hci_idx, mac) of the LOCAL adapter serving this heater, if any.
 
-        Mirrors the diesel_heater.recover_bluetooth service but runs inline
-        from the coordinator when a silent-stall is detected. Returns True
-        iff at least one HCI adapter reported successful recovery.
+        If HA last saw this heater via a local HCI adapter, return that one.
+        If the last-seen scanner is remote (ESPHome proxy) or unknown, return
+        None — auto-recovery MUST NOT touch unrelated local adapters just to
+        chase a remote-advertised device (issue #104).
+        """
+        try:
+            info = bluetooth.async_last_service_info(
+                self.hass, self.address, connectable=True
+            )
+        except Exception as err:  # pragma: no cover - defensive
+            self._logger.debug("async_last_service_info failed: %s", err)
+            return None
+        if info is None or not getattr(info, "source", None):
+            return None
+
+        source = info.source.upper()
+        for name, details in adapters.items():
+            if not name.startswith("hci"):
+                continue
+            adapter_mac = (details.get("address") or "").upper()
+            if adapter_mac and adapter_mac == source:
+                try:
+                    return int(name[3:]), adapter_mac
+                except ValueError:
+                    return None
+        return None
+
+    async def _async_recover_internally(self) -> bool:
+        """Reset the one local BT adapter serving this heater, then drop our
+        stale BLE client. Returns True iff that adapter reported recovery.
+
+        Scope is intentionally narrow (one adapter, not all `hci*`): a single
+        heater's stall must not reset unrelated BLE integrations' adapters
+        (sensors, locks, trackers). See issue #104. When the heater's
+        last-seen scanner is a remote ESPHome Bluetooth proxy, or when we
+        cannot determine the adapter at all, we skip the kernel reset and
+        only clean up our own BleakClient.
         """
         try:
             from bluetooth_adapters import get_adapters as _get_adapters
@@ -1325,7 +1361,6 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             )
             return False
 
-        recovered_any = False
         try:
             adapters_mgr = _get_adapters()
             await adapters_mgr.refresh()
@@ -1336,43 +1371,49 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             )
             return False
 
-        for adapter_name, details in adapters.items():
-            if not adapter_name.startswith("hci"):
-                continue
-            try:
-                hci_idx = int(adapter_name[3:])
-            except ValueError:
-                continue
-            mac = (details.get("address") or "").upper()
+        target = self._resolve_local_hci_for_heater(adapters)
+        if target is None:
             self._logger.info(
-                "⚡ Auto-recovering BT adapter %s (mac=%s) after %d consecutive failures",
-                adapter_name,
-                mac,
-                self._consecutive_failures,
+                "Skipping kernel BT recovery for %s: no local HCI adapter is "
+                "serving it (likely remote proxy or no recent advertisement)",
+                self.address,
             )
-            try:
-                ok = await recover_adapter(hci_idx, mac, True)
-                if ok:
-                    recovered_any = True
-            except Exception as err:
-                self._logger.exception(
-                    "Adapter recovery raised for %s: %s", adapter_name, err
-                )
+            await self._cleanup_connection()
+            return False
+
+        hci_idx, mac = target
+        self._logger.info(
+            "⚡ Auto-recovering BT adapter hci%d (mac=%s) after %d consecutive "
+            "failures on heater %s",
+            hci_idx,
+            mac,
+            self._consecutive_failures,
+            self.address,
+        )
+        recovered = False
+        try:
+            recovered = bool(await recover_adapter(hci_idx, mac, True))
+        except Exception as err:
+            self._logger.exception(
+                "Adapter recovery raised for hci%d (%s): %s", hci_idx, mac, err
+            )
 
         # Drop our stale BleakClient so the next poll opens a fresh connection
         # against the just-reset HCI stack.
         await self._cleanup_connection()
 
-        if recovered_any:
+        if recovered:
             self.hass.bus.async_fire(
                 f"{DOMAIN}_bluetooth_recovered",
                 {
                     "source": "coordinator_auto_recovery",
                     "address": self.address,
+                    "adapter": f"hci{hci_idx}",
+                    "adapter_mac": mac,
                     "consecutive_failures": self._consecutive_failures,
                 },
             )
-        return recovered_any
+        return recovered
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Update data from the heater."""
@@ -1403,16 +1444,33 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             if getattr(self, "_is_cronus_device", False):
                 return await self._async_update_cronus_data()
 
-            # Request status with retries (up to 3 attempts)
+            # Request status with retries (up to 3 attempts).
+            # Hard outer timeout per attempt because the kernel BT stack can
+            # hang indefinitely inside bleak's write_gatt_char when the
+            # adapter is wedged — bleak itself has no default write timeout.
+            # Without this wrapper, _async_update_data would await forever
+            # and _consecutive_failures would never reach the auto-recovery
+            # threshold (see issue #104 context and bt-recovery notes).
             max_retries = 3
             status = False
             for attempt in range(max_retries):
-                status = await self._send_command(1, 0)
+                try:
+                    status = await asyncio.wait_for(
+                        self._send_command(1, 0),
+                        timeout=15.0,
+                    )
+                except asyncio.TimeoutError:
+                    self._logger.debug(
+                        "Status request hard-timeout (attempt %d/%d) — bleak "
+                        "write likely hung on wedged adapter",
+                        attempt + 1, max_retries,
+                    )
+                    status = False
                 if status:
                     break
                 if attempt < max_retries - 1:
                     self._logger.debug(
-                        "Status request timed out (attempt %d/%d), retrying...",
+                        "Status request failed (attempt %d/%d), retrying...",
                         attempt + 1, max_retries
                     )
                     await asyncio.sleep(1.0)
