@@ -43,7 +43,7 @@ class VevorTimeSyncButton(CoordinatorEntity[VevorHeaterCoordinator], ButtonEntit
 
     _attr_has_entity_name = True
     _attr_name = "Sync Time"
-    _attr_icon = "mdi:clock-sync"
+    _attr_icon = "mdi:timer-sync"
     _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(self, coordinator: VevorHeaterCoordinator) -> None:

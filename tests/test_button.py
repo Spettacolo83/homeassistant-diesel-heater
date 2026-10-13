@@ -203,7 +203,7 @@ class TestButtonAttributes:
         coordinator = create_mock_coordinator()
         button = VevorTimeSyncButton(coordinator)
 
-        assert button._attr_icon == "mdi:clock-sync"
+        assert button._attr_icon == "mdi:timer-sync"
 
     def test_reset_fuel_icon(self):
         """Test reset fuel button icon."""
