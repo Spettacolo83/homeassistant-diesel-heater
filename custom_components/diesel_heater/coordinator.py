@@ -167,6 +167,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._characteristic = None
         self._active_char_uuid: str | None = None  # Track which UUID variant is active
         self._notification_data: bytearray | None = None
+        self._neo_run_settings_received = False
         # Get passkey from config, default to 1234 (factory default for most heaters)
         self._passkey = config_entry.data.get(CONF_PIN, DEFAULT_PIN)
         self._neo_password = config_entry.data.get(CONF_NEO_PASSWORD, DEFAULT_NEO_PASSWORD)
@@ -1667,18 +1668,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                         )
                     break
 
-            # Second, check for ABBA/HeaterCC device (service fff0)
+            # Second, identify the APK-verified ABBA/HeaterCC layout. FFF0 is
+            # shared with other controller families, so it is transport
+            # evidence only until the characteristic directions are known.
             if not self._is_hcalory_device:
                 for service in self._client.services:
                     if service.uuid.lower() == ABBA_SERVICE_UUID.lower():
-                        self._logger.info("🔍 Detected ABBA/HeaterCC heater (service fff0)")
-                        self._is_abba_device = True
-                        self._protocol_mode = 5  # ABBA protocol
-                        self._protocol = self._protocols[5]
-
-                        # Log all characteristics in this service for debugging
                         char_list = [f"{c.uuid} (props: {c.properties})" for c in service.characteristics]
-                        self._logger.info("📋 ABBA service characteristics: %s", char_list)
+                        self._logger.info("📋 FFF0 service characteristics: %s", char_list)
 
                         # Find both characteristics before assigning direction.
                         fff1_char = None
@@ -1689,28 +1686,38 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                             elif char.uuid.lower() == DZ06_NEO_NOTIFY_UUID.lower():
                                 fff2_char = char
 
-                        if (
-                            fff1_char and fff2_char
+                        legacy_abba = (
+                            fff1_char
+                            and fff2_char
+                            and ("notify" in fff1_char.properties or "indicate" in fff1_char.properties)
+                            and ("write" in fff2_char.properties or "write-without-response" in fff2_char.properties)
+                        )
+                        split_neo = (
+                            fff1_char
+                            and fff2_char
                             and ("write" in fff1_char.properties or "write-without-response" in fff1_char.properties)
-                            and "notify" in fff2_char.properties
-                        ):
+                            and ("notify" in fff2_char.properties or "indicate" in fff2_char.properties)
+                        )
+
+                        if split_neo:
+                            self._is_abba_device = True
                             self._logger.info("Detected DZ06 split FFF0 layout: FFF1=write, FFF2=notify")
                             self._characteristic = fff2_char
                             self._active_char_uuid = fff2_char.uuid
                             self._abba_write_char = fff1_char
-                        else:
+                        elif legacy_abba:
+                            self._logger.info("Detected ABBA/HeaterCC legacy FFF0 layout")
+                            self._is_abba_device = True
+                            self._protocol_mode = 5
+                            self._protocol = self._protocols[5]
                             self._characteristic = fff1_char
-                            self._active_char_uuid = fff1_char.uuid if fff1_char else None
+                            self._active_char_uuid = fff1_char.uuid
                             self._abba_write_char = fff2_char
-
-                        # Warning if write characteristic not found
-                        if not self._abba_write_char:
-                            self._logger.warning(
-                                "⚠️ ABBA device but fff2 write characteristic not found! "
-                                "Will try writing to fff1 as fallback."
+                        else:
+                            self._logger.info(
+                                "FFF0 layout does not match ABBA/HeaterCC; "
+                                "continuing protocol detection"
                             )
-                            # Fall back to using fff1 for writing if fff2 not available
-                            self._abba_write_char = self._characteristic
                         break
 
             # HeatGenie uses the Environmental Sensing service only with
@@ -1839,9 +1846,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     # Continue anyway - will retry in _send_command if needed
 
             if self.is_dz06_neo:
-                if not await self._send_dz06_neo_auth():
+                if not await self._send_dz06_neo_run_settings():
                     await self._cleanup_connection()
-                    raise BleakError("DZ06 Neo authorization failed")
+                    raise BleakError("DZ06 Neo startup settings read failed")
             elif self._is_cronus_device:
                 self._logger.debug("Cronus ready; polling record cache")
             else:
@@ -1860,6 +1867,23 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """Handle notification from heater."""
         if self.is_dz06_neo:
             self._notification_data = bytearray(data)
+            # WindMachineActivity.readSetData() sends 29 0D FF during startup.
+            # Its A5 response provides the initial run type, target, and altitude
+            # before the app sends an A5 09 status/control packet.
+            if (
+                len(data) >= 8
+                and data[0] == 0xA5
+                and data[1] == len(data) - 2
+            ):
+                run_type = data[4] or 1
+                self.data.update(
+                    {
+                        "neo_run_type": run_type,
+                        "set_temp": float(data[5]),
+                        "altitude": int.from_bytes(data[6:8], "big"),
+                    }
+                )
+                self._neo_run_settings_received = True
             if len(data) == 24 and data[:2] == bytearray((0x5C, 0x16)):
                 minimum, maximum = data[4], data[5]
                 if minimum <= maximum:
@@ -2491,19 +2515,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._notification_data = None
         return False
 
-    async def _send_dz06_neo_auth(self) -> bool:
-        """Read Neo configuration using its configured connection password."""
+    async def _send_dz06_neo_run_settings(self) -> bool:
+        """Read Neo startup settings using the app's 0xFF command."""
         now = dt_util.now()
         timestamp = int(now.timestamp()) + int((now.utcoffset() or timedelta()).total_seconds())
-        packet = bytearray((0x29, 0x0D, 0x5C, 0))
+        packet = bytearray((0x29, 0x0D, 0xFF, 0))
         packet.extend(timestamp.to_bytes(4, "big"))
-        try:
-            password = int(self._neo_password)
-        except (TypeError, ValueError):
-            return False
-        if not 0 <= password <= 0x7FFFFFFF:
-            return False
-        packet.extend(password.to_bytes(4, "big"))
+        packet.extend((0, 0, 0, 0))
         packet.append(1)
         crc = 0xFFFF
         for value in packet:
@@ -2512,12 +2530,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 crc = (crc >> 1) ^ 0xA001 if crc & 1 else crc >> 1
         packet.extend(crc.to_bytes(2, "big"))
         self._notification_data = None
+        self._neo_run_settings_received = False
         await self._write_gatt(packet)
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             await asyncio.sleep(0.1)
-            response = self._notification_data
-            if response and len(response) == 24 and response[:2] == bytearray((0x5C, 0x16)):
+            if self._neo_run_settings_received:
                 return True
         return False
 

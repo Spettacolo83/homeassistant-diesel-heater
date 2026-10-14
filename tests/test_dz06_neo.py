@@ -31,6 +31,13 @@ def neo_config_response(minimum: int = 8, maximum: int = 36) -> bytearray:
     return frame
 
 
+def neo_run_settings_response(
+    raw_state: int = 0, run_type: int = 2, target: int = 30, altitude: int = 1500
+) -> bytearray:
+    """Build the 0xA5 startup response parsed by the Neo app."""
+    return bytearray((0xA5, 0x06, 0x00, raw_state, run_type, target)) + altitude.to_bytes(2, "big")
+
+
 def coordinator_for_layout(neo: bool) -> VevorHeaterCoordinator:
     coordinator = VevorHeaterCoordinator.__new__(VevorHeaterCoordinator)
     coordinator._protocol_mode = 0
@@ -45,6 +52,7 @@ def coordinator_for_layout(neo: bool) -> VevorHeaterCoordinator:
     coordinator.config_entry = SimpleNamespace(data={})
     coordinator._burnoff = BurnoffController(coordinator)
     coordinator._notification_data = None
+    coordinator._neo_run_settings_received = False
     coordinator._neo_password = 100000000
     coordinator._logger = MagicMock()
     coordinator.async_request_refresh = AsyncMock()
@@ -141,32 +149,37 @@ async def test_unsupported_neo_command_fails_closed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_auth_succeeds_only_after_5c16() -> None:
+async def test_startup_run_settings_matches_app_sequence() -> None:
     coordinator = coordinator_for_layout(True)
     coordinator._write_gatt = AsyncMock(
         side_effect=lambda packet: coordinator._notification_callback(
-            FFF2, neo_config_response()
+            FFF2, neo_run_settings_response()
         )
     )
-    assert await coordinator._send_dz06_neo_auth() is True
-    assert coordinator._write_gatt.await_args.args[0][8:12] == bytearray.fromhex("05f5e100")
+    assert await coordinator._send_dz06_neo_run_settings() is True
+    packet = coordinator._write_gatt.await_args.args[0]
+    assert packet[:4] == bytearray.fromhex("290dff00")
+    assert packet[8:13] == bytearray.fromhex("0000000001")
+    assert coordinator.data["neo_run_type"] == 2
+    assert coordinator.data["set_temp"] == 30.0
+    assert coordinator.data["altitude"] == 1500
 
 
 @pytest.mark.asyncio
-async def test_auth_uses_configured_neo_connection_password() -> None:
+async def test_startup_run_settings_does_not_include_a_password() -> None:
     coordinator = coordinator_for_layout(True)
     coordinator._neo_password = 12345678
     coordinator._write_gatt = AsyncMock(
         side_effect=lambda packet: coordinator._notification_callback(
-            FFF2, neo_config_response()
+            FFF2, neo_run_settings_response()
         )
     )
-    assert await coordinator._send_dz06_neo_auth() is True
-    assert coordinator._write_gatt.await_args.args[0][8:12] == bytearray.fromhex("00bc614e")
+    assert await coordinator._send_dz06_neo_run_settings() is True
+    assert coordinator._write_gatt.await_args.args[0][8:12] == bytearray.fromhex("00000000")
 
 
 @pytest.mark.asyncio
-async def test_auth_without_5c16_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_startup_run_settings_requires_an_a5_response(monkeypatch: pytest.MonkeyPatch) -> None:
     coordinator = coordinator_for_layout(True)
     coordinator._write_gatt = AsyncMock(
         side_effect=lambda packet: coordinator._notification_callback(
@@ -176,7 +189,7 @@ async def test_auth_without_5c16_fails_closed(monkeypatch: pytest.MonkeyPatch) -
     clock = iter((0, 11))
     fake_time = SimpleNamespace(monotonic=lambda: next(clock, 11.0))
     monkeypatch.setattr(coordinator_module, "time", fake_time)
-    assert await coordinator._send_dz06_neo_auth() is False
+    assert await coordinator._send_dz06_neo_run_settings() is False
 
 
 @pytest.mark.asyncio

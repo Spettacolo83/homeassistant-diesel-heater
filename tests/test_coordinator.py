@@ -3562,8 +3562,8 @@ class TestEnsureConnected:
         assert coordinator._abba_write_char == mock_write_char
 
     @pytest.mark.asyncio
-    async def test_abba_fallback_write_char(self):
-        """Test ABBA falls back to fff1 if fff2 not available."""
+    async def test_fff0_fff1_controller_is_not_forced_to_abba(self):
+        """FFF0/FFF1 alone remains available for AA-family protocol detection."""
         from custom_components.diesel_heater.const import (
             ABBA_SERVICE_UUID,
             ABBA_NOTIFY_UUID,
@@ -3580,17 +3580,18 @@ class TestEnsureConnected:
         coordinator._characteristic = None
         coordinator._active_char_uuid = None
 
-        # Mock BLE client with ABBA service but NO write characteristic
+        # AA55/AA66 controllers can expose a combined FFF1 notify/write
+        # characteristic. That transport is not the HeaterCC FFF1/FFF2 pair.
         mock_client = MagicMock()
         mock_client.is_connected = True
 
-        mock_notify_char = MagicMock()
-        mock_notify_char.uuid = ABBA_NOTIFY_UUID
-        mock_notify_char.properties = ["notify", "write"]  # fff1 has write too
+        mock_char = MagicMock()
+        mock_char.uuid = ABBA_NOTIFY_UUID
+        mock_char.properties = ["notify", "write"]
 
         mock_service = MagicMock()
         mock_service.uuid = ABBA_SERVICE_UUID
-        mock_service.characteristics = [mock_notify_char]  # Only fff1
+        mock_service.characteristics = [mock_char]
 
         mock_client.services = [mock_service]
         mock_client.start_notify = AsyncMock()
@@ -3602,9 +3603,52 @@ class TestEnsureConnected:
         ):
             await coordinator._ensure_connected()
 
-        # Should fall back to using notify char for writing
-        assert coordinator._abba_write_char == mock_notify_char
-        coordinator._logger.warning.assert_called()
+        assert coordinator._is_abba_device is False
+        assert coordinator._protocol_mode != 5
+        assert coordinator._characteristic == mock_char
+        assert coordinator._active_char_uuid == ABBA_NOTIFY_UUID
+        mock_client.start_notify.assert_awaited_once_with(ABBA_NOTIFY_UUID, coordinator._notification_callback)
+
+    @pytest.mark.asyncio
+    async def test_shared_fff0_without_abba_direction_is_not_forced_to_abba(self):
+        """Shared FFF0 transport must not select ABBA without its app layout."""
+        from custom_components.diesel_heater.const import (
+            ABBA_NOTIFY_UUID,
+            ABBA_SERVICE_UUID,
+            ABBA_WRITE_UUID,
+        )
+
+        coordinator = create_mock_coordinator()
+        coordinator._client = None
+        coordinator._ble_device = MagicMock()
+        coordinator._ble_device.address = "AA:BB:CC:DD:EE:FF"
+        coordinator._cleanup_connection = AsyncMock()
+        coordinator._send_wake_up_ping = AsyncMock()
+
+        mock_client = MagicMock()
+        mock_client.is_connected = True
+        mock_client.start_notify = AsyncMock()
+
+        mock_fff1 = MagicMock()
+        mock_fff1.uuid = ABBA_NOTIFY_UUID
+        mock_fff1.properties = ["write"]
+        mock_fff2 = MagicMock()
+        mock_fff2.uuid = ABBA_WRITE_UUID
+        mock_fff2.properties = ["write"]
+        mock_service = MagicMock()
+        mock_service.uuid = ABBA_SERVICE_UUID
+        mock_service.characteristics = [mock_fff1, mock_fff2]
+        mock_client.services = [mock_service]
+
+        with patch(
+            "custom_components.diesel_heater.coordinator.establish_connection",
+            new_callable=AsyncMock,
+            return_value=mock_client,
+        ):
+            await coordinator._ensure_connected()
+
+        assert coordinator._is_abba_device is False
+        assert coordinator._protocol_mode != 5
 
     @pytest.mark.asyncio
     async def test_vevor_service_discovery(self):
