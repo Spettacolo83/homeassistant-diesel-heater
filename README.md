@@ -299,7 +299,7 @@ The common and extended entity tables below are scoped by this matrix. A control
 | Number | `number.diesel_heater_burnoff_duration` | Burn-off duration in minutes (1-30, default 10) *(Config)* |
 | Number | `number.diesel_heater_burnoff_after_cycles` | In-run burn-off after N controller heat cycles (0 = off) *(Config)* |
 | Number | `number.diesel_heater_burnoff_after_hours` | In-run burn-off after N RUNNING hours (0 = off) *(Config)* |
-| Button | Sync Time, Reset Estimated Fuel Remaining | Clock sync and local fuel-estimate reset *(Config)* |
+| Button | Sync Time, Reset Estimated Fuel Remaining | Sync Time is available only for AA55/AA66, Hcalory MVP2, and HeatGenie; fuel reset is local *(Config)* |
 | Button | `button.diesel_heater_power_off_now` | Skip burn-off and power off immediately |
 | Button | `button.diesel_heater_run_burnoff` | Run max-power burn-off without shutting down *(Config)* |
 | Sensor | Case Temperature, Error Code, Running Step/Mode, Set Level | Air-heater status fields |

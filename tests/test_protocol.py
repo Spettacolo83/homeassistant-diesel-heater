@@ -2242,6 +2242,15 @@ def test_heatgenie_raw_run_mode_packets_match_the_app() -> None:
     assert protocol.build_command(2, 2, 0).hex() == "aa00660000023923"
 
 
+def test_heatgenie_time_sync_packet_matches_the_app_frame() -> None:
+    """Clock synchronization retains the app-defined weekday/hour/minute layout."""
+    protocol = ProtocolHeatGenie()
+    argument = (2 << 11) | (8 << 6) | 15
+
+    assert protocol.build_command(10, argument, 0) == protocol.build_time_sync(2, 8, 15)
+    assert protocol.build_command(10, argument, 0).hex() == "aa006603480f35bb"
+
+
 def test_heatgenie_status_preserves_raw_app_run_mode() -> None:
     protocol = ProtocolHeatGenie()
     frame = bytearray(50)

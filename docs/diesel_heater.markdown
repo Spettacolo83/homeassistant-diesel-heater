@@ -198,7 +198,7 @@ Additional sensors for specific protocols:
 
 | Button | Description |
 |--------|-------------|
-| Sync Time | Synchronize heater clock with Home Assistant (not Cronus) |
+| Sync Time | Available only for AA55/AA66, Hcalory MVP2, and HeatGenie controllers with an app-backed clock command |
 | Reset Estimated Fuel Remaining | Reset local fuel tracking after refueling (not Cronus) |
 | Power Off Now | Skip burn-off and power off immediately |
 | Run Burn-off | Run max-power burn-off without shutting down |

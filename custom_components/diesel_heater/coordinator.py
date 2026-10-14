@@ -214,6 +214,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._cronus_transaction_lock = asyncio.Lock()
         self._v21_handshake_sent = False  # Track if Sunster V2.1 handshake was sent
         self._is_hcalory_device = False  # True if using Hcalory MVP1/MVP2 protocol
+        self._hcalory_mvp2_device = False  # Confirmed by the BD39 GATT service
         self._hcalory_write_char = None  # Hcalory devices use separate write characteristic
         # Hcalory returns set_value=None when heater is OFF (@Xev's discovery, issue #34)
         # Remember last known values to restore when heater turns off
@@ -222,7 +223,6 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._connection_attempts = 0
         self._last_connection_attempt = 0.0
         self._consecutive_failures = 0  # Track consecutive update failures
-        self._time_synced_this_session = False  # Track if time was synced after connection
         self._max_stale_cycles = 3  # Keep last values for this many failed cycles
         # Kernel BT auto-recovery: when the BlueZ driver stalls GATT (seen on
         # Raspberry Pi BCM43438 with some Vevor/BYD heaters), only a kernel-level
@@ -309,6 +309,15 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     def protocol_mode(self) -> int:
         """Return the detected BLE protocol mode (0=unknown, 1-7=detected)."""
         return self._protocol_mode
+
+    @property
+    def supports_time_sync(self) -> bool:
+        """Return whether this controller has an app-backed clock-write command."""
+        if self.is_dz06_neo:
+            return False
+        if self._protocol_mode in (1, 2, 3, 4, 8):
+            return True
+        return self._protocol_mode == 7 and self._hcalory_mvp2_device
 
     @property
     def cronus_fuel_profile(self) -> dict[str, object] | None:
@@ -1432,17 +1441,6 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 # fires. Observed live on 2026-10-13 against @Spettacolo83's
                 # BCM43438 after the first poll wedges the GATT subscription.
                 await asyncio.wait_for(self._ensure_connected(), timeout=20.0)
-                # Beta.34: Auto-sync time on successful connection (@Wheemer, issue #38)
-                # This was previously only done for Hcalory MVP2, now extended to all protocols
-                if not self._time_synced_this_session and not getattr(self, "_is_cronus_device", False):
-                    try:
-                        self._logger.debug("Auto-syncing time after connection...")
-                        await asyncio.sleep(0.5)  # Give heater time to initialize
-                        await self.async_sync_time()
-                        self._time_synced_this_session = True
-                        self._logger.info("✅ Auto time sync completed")
-                    except Exception as sync_err:
-                        self._logger.debug("Auto time sync failed (non-critical): %s", sync_err)
             except asyncio.TimeoutError as err:
                 self._logger.debug(
                     "bleak connect() hung — treating as connection failure "
@@ -1620,6 +1618,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._is_abba_device = False
             self._abba_write_char = None
             self._is_hcalory_device = False
+            self._hcalory_mvp2_device = False
             self._hcalory_write_char = None
             self._is_heatgenie_device = False
             self._heatgenie_write_char = None
@@ -1635,6 +1634,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 if service.uuid.lower() == HCALORY_MVP2_SERVICE_UUID.lower():
                     self._logger.info("🔍 Detected Hcalory MVP2 heater (service bd39)")
                     self._is_hcalory_device = True
+                    self._hcalory_mvp2_device = True
                     self._protocol_mode = 7  # Hcalory protocol
                     self._protocol = self._protocols[7]
                     # Set MVP2 flag on the protocol
@@ -2207,8 +2207,6 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     self._protocol.reset_password_state()
                 # Reset V2.1 handshake state on reconnect
                 self._v21_handshake_sent = False
-                # Reset time sync flag to trigger auto-sync on next connection
-                self._time_synced_this_session = False
 
     async def _async_password_handshake(self, max_retries: int = 3) -> bool:
         """Send password handshake with retry logic (@Xev optimizations, issue #34).
@@ -2588,18 +2586,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             # Use optimized handshake with retry (@Xev: 0.3s timeout, 3 retries)
             auth_success = await self._async_password_handshake(max_retries=3)
 
-            if auth_success:
-                # Auto-sync time on reconnect (feature request from @Wheemer, issue #38)
-                # Wait briefly to let heater initialize after handshake (fix for #38: 1hr offset bug)
-                if not self._time_synced_this_session:
-                    try:
-                        await asyncio.sleep(0.5)  # Give heater time to initialize
-                        await self.async_sync_time()
-                        self._time_synced_this_session = True
-                    except Exception as sync_err:
-                        self._logger.debug("Auto time sync failed (non-critical): %s", sync_err)
-
-            else:
+            if not auth_success:
                 self._logger.warning("⚠️ MVP2 authentication failed after retries, but continuing anyway")
                 # Continue anyway - some devices might not require it
 
@@ -3263,35 +3250,31 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if success:
             await self.async_request_refresh()
 
-    async def async_sync_time(self) -> None:
-        """Sync heater time with Home Assistant time (cmd 10).
+    async def async_sync_time(self) -> bool:
+        """Synchronize time only through a protocol's app-backed command."""
+        if not self.supports_time_sync:
+            self._logger.debug(
+                "Time sync is not supported by protocol mode %d",
+                self._protocol_mode,
+            )
+            return False
 
-        AAXX/CBFF protocols: Time sent as 60 * hours + minutes
-        Hcalory MVP2: Time sent as HH, MM, SS, DOW bytes in query packet
-        """
-        if self.is_dz06_neo:
-            self._logger.info("DZ06 Neo: skipping legacy heater time-sync command")
-            return
-        # Beta.29 fix: Use dt_util.now() for correct local timezone (issue #38)
-        # datetime.now() uses UTC in Docker containers → 5hr offset for EST users
         now = dt_util.now()
 
-        # Beta.31 fix: Hcalory uses HH,MM,SS,DOW format in query packet (@Xev, issue #34)
         if self._protocol_mode == 7:
-            # For Hcalory MVP2, set custom timestamp for next query command
             self._protocol.set_query_timestamp(now)
+            try:
+                success = await self._send_command(10, 0)
+            finally:
+                self._protocol.set_query_timestamp(None)
         elif self._protocol_mode == 8:
             time_value = (now.weekday() << 11) | (now.hour << 6) | now.minute
             success = await self._send_command(10, time_value)
             self._logger.info(
-                "Syncing Hcalory time to %02d:%02d:%02d DOW=%d",
-                now.hour, now.minute, now.second, now.isoweekday()
+                "Syncing HeatGenie time to %02d:%02d DOW=%d",
+                now.hour, now.minute, now.weekday()
             )
-            success = await self._send_command(10, 0)  # argument ignored for Hcalory
-            # Reset custom timestamp after use
-            self._protocol.set_query_timestamp(None)
         else:
-            # AAXX/CBFF: time_value = 60 * hour + minute
             time_value = 60 * now.hour + now.minute
             self._logger.info("Syncing heater time to %02d:%02d (value=%d)", now.hour, now.minute, time_value)
             success = await self._send_command(10, time_value)
@@ -3300,6 +3283,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._logger.info("✅ Time sync successful")
         else:
             self._logger.warning("❌ Time sync failed")
+
+        return success
 
     async def async_set_heater_offset(self, offset: int) -> None:
         """Set temperature offset on the heater (cmd 20).

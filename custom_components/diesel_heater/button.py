@@ -26,12 +26,15 @@ async def async_setup_entry(
             async_add_entities([VevorResetFuelLevelButton(coordinator)])
         return
 
-    async_add_entities([
-        VevorTimeSyncButton(coordinator),
+    entities = [
         VevorResetFuelLevelButton(coordinator),
         VevorPowerOffNowButton(coordinator),
         VevorRunBurnoffButton(coordinator),
-    ])
+    ]
+    if coordinator.supports_time_sync:
+        entities.insert(0, VevorTimeSyncButton(coordinator))
+
+    async_add_entities(entities)
 
 
 class VevorTimeSyncButton(CoordinatorEntity[VevorHeaterCoordinator], ButtonEntity):
@@ -60,7 +63,10 @@ class VevorTimeSyncButton(CoordinatorEntity[VevorHeaterCoordinator], ButtonEntit
     @property
     def available(self) -> bool:
         """Return if entity is available."""
-        return self.coordinator.data.get("connected", False)
+        return (
+            self.coordinator.supports_time_sync
+            and self.coordinator.data.get("connected", False)
+        )
 
     async def async_press(self) -> None:
         """Handle the button press."""

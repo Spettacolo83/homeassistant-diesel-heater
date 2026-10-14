@@ -162,6 +162,7 @@ def create_mock_coordinator() -> VevorHeaterCoordinator:
     coordinator._internal_recovery_cooldown_s = 60.0
     coordinator._is_abba_device = False
     coordinator._is_hcalory_device = False
+    coordinator._hcalory_mvp2_device = False
     coordinator._is_heatgenie_device = False
     coordinator._heatgenie_write_char = None
     coordinator._v21_handshake_sent = False
@@ -1485,6 +1486,7 @@ class TestAsyncCommands:
     async def test_async_sync_time(self):
         """Test async_sync_time sends time sync command."""
         coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 1
         coordinator._send_command = AsyncMock(return_value=True)
 
         await coordinator.async_sync_time()
@@ -4510,6 +4512,7 @@ class TestSetMethodFailures:
     async def test_sync_time_failure(self):
         """Test async_sync_time logs warning on failure."""
         coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 1
         coordinator._send_command = AsyncMock(return_value=False)
 
         await coordinator.async_sync_time()
@@ -6135,3 +6138,61 @@ class TestCronusTransactionSafety:
 
         coordinator._async_write_cronus_record.assert_awaited_once_with("power", b"\x01\x01")
         coordinator.async_request_refresh.assert_awaited_once()
+
+class TestTimeSync:
+    """Exercise only app-backed time synchronization paths."""
+
+    @pytest.mark.parametrize("protocol_mode", (0, 5, 6, 9))
+    @pytest.mark.asyncio
+    async def test_async_sync_time_rejects_unsupported_protocols(self, protocol_mode):
+        """No generic time command is sent to unsupported controller families."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = protocol_mode
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        assert await coordinator.async_sync_time() is False
+        coordinator._send_command.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_async_sync_time_rejects_hcalory_mvp1(self):
+        """MVP1 has no app-backed clock-write command."""
+        from diesel_heater_ble import ProtocolHcalory
+
+        coordinator = create_mock_coordinator()
+        protocol = ProtocolHcalory()
+        protocol.set_mvp_version(False)
+        coordinator._protocol_mode = 7
+        coordinator._protocol = protocol
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        assert await coordinator.async_sync_time() is False
+        coordinator._send_command.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_async_sync_time_uses_hcalory_mvp2_query(self):
+        """MVP2 sends its app-defined timestamped query and clears it afterward."""
+        from diesel_heater_ble import ProtocolHcalory
+
+        coordinator = create_mock_coordinator()
+        protocol = ProtocolHcalory()
+        protocol.set_query_timestamp = MagicMock()
+        coordinator._protocol_mode = 7
+        coordinator._protocol = protocol
+        coordinator._hcalory_mvp2_device = True
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        assert await coordinator.async_sync_time() is True
+        coordinator._send_command.assert_awaited_once_with(10, 0)
+        assert protocol.set_query_timestamp.call_count == 2
+        assert protocol.set_query_timestamp.call_args == call(None)
+
+    @pytest.mark.asyncio
+    async def test_async_sync_time_uses_heatgenie_clock_frame(self):
+        """HeatGenie receives its own weekday/hour/minute command exactly once."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 8
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        assert await coordinator.async_sync_time() is True
+        coordinator._send_command.assert_awaited_once()
+        assert coordinator._send_command.await_args.args[0] == 10

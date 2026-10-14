@@ -31,6 +31,7 @@ def create_mock_coordinator() -> MagicMock:
     coordinator.async_run_burnoff = AsyncMock()
     coordinator.protocol_mode = 0
     coordinator.has_cronus_fuel_estimate = False
+    coordinator.supports_time_sync = True
     coordinator.data = {
         "connected": True,
     }
@@ -112,6 +113,14 @@ class TestButtonAvailability:
 
         assert button.available is False
 
+    def test_not_available_when_protocol_has_no_time_sync(self):
+        """Unsupported controller families do not expose a usable time button."""
+        coordinator = create_mock_coordinator()
+        coordinator.supports_time_sync = False
+        button = VevorTimeSyncButton(coordinator)
+
+        assert button.available is False
+
 
 # ---------------------------------------------------------------------------
 # Async setup entry tests
@@ -141,6 +150,18 @@ class TestAsyncSetupEntry:
         async_add_entities.assert_called_once()
         call_args = async_add_entities.call_args[0][0]
         assert len(call_args) == 4
+
+    @pytest.mark.asyncio
+    async def test_async_setup_entry_omits_unsupported_time_sync(self):
+        """Unsupported controller families receive no Sync Time entity."""
+        coordinator = create_mock_coordinator()
+        coordinator.supports_time_sync = False
+        async_add_entities = MagicMock()
+
+        await async_setup_entry(MagicMock(), MagicMock(runtime_data=coordinator), async_add_entities)
+
+        entities = async_add_entities.call_args[0][0]
+        assert not any(isinstance(entity, VevorTimeSyncButton) for entity in entities)
 
 
 # ---------------------------------------------------------------------------
