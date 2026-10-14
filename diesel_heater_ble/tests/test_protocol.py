@@ -5,6 +5,7 @@ Each protocol class is tested with hand-crafted bytearray data that
 exercises the parser and command builder.
 """
 from __future__ import annotations
+from datetime import datetime
 
 import pytest
 
@@ -1720,6 +1721,57 @@ class TestProtocolCBFF:
     def test_build_handshake_complete_packet(self):
         """The APK sends the PIN as little-endian base-100 bytes."""
         assert self.proto.build_handshake(1234).hex() == "feaa00000b000600220ce7"
+
+    def test_v21_handshake_response_requires_authenticated_result(self):
+        """The app accepts only 86/00 with result byte 01 as a handshake."""
+        self.proto.set_device_sn("E466E5BC086D")
+        raw_success = self.proto._build_feaa(0x86, 0x00, b"\x01")
+        raw_rejected = self.proto._build_feaa(0x86, 0x00, b"\x02")
+
+        success = self.proto._encrypt_cbff(raw_success, "E466E5BC086D")
+        rejected = self.proto._encrypt_cbff(raw_rejected, "E466E5BC086D")
+
+        assert self.proto.v21_handshake_result(success) is True
+        assert self.proto.v21_handshake_result(rejected) is False
+
+    def test_v21_time_sync_uses_settings_write(self):
+        """The app syncs V2.1 time through the 03/01 settings payload."""
+        status = bytearray(47)
+        status[17] = 1
+        status[20] = 2
+        status[34:43] = bytes(range(9))
+        self.proto._remember_v21_settings(status)
+
+        packet = self.proto.build_v21_time_sync(datetime(2026, 10, 14, 9, 30))
+
+        assert packet is not None
+        assert packet[6:8] == bytes((0x03, 0x01))
+        assert packet[8:21] == bytes((2, 1, 58, 130, 0, 1, 2, 3, 4, 5, 6, 7, 8))
+
+    def test_v21_time_sync_converts_unit_capability_markers(self):
+        """The 03/01 unit bytes use the app's capability conversion."""
+        status = bytearray(47)
+        status[17] = 0xF1
+        status[20] = 0xF2
+        self.proto._remember_v21_settings(status)
+
+        packet = self.proto.build_v21_time_sync(datetime(2026, 10, 14, 0, 0))
+
+        assert packet is not None
+        assert packet[8:10] == bytes((128, 129))
+
+    def test_v21_time_sync_accepts_only_settings_ack(self):
+        """A successful 03/01 write is acknowledged as encrypted 83/01."""
+        self.proto.set_device_sn("E466E5BC086D")
+        settings_ack = self.proto._encrypt_cbff(
+            self.proto._build_feaa(0x83, 0x01, b"\x01"), "E466E5BC086D"
+        )
+        status_ack = self.proto._encrypt_cbff(
+            self.proto._build_feaa(0x80, 0x00), "E466E5BC086D"
+        )
+
+        assert self.proto.is_v21_settings_response(settings_ack) is True
+        assert self.proto.is_v21_settings_response(status_ack) is False
 
     def test_feaa_status_encrypted_matches_btsnoop(self):
         """Encrypted status query must match @BradleyDeLar btsnoop capture."""

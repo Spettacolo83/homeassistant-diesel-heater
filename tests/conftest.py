@@ -59,7 +59,9 @@ class _HAStubFinder:
 sys.meta_path.insert(0, _HAStubFinder())
 
 # Ensure custom_components is importable
-sys.path.insert(0, str(Path(__file__).parent.parent))
+ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "diesel_heater_ble" / "src"))
 
 
 # ---------------------------------------------------------------------------
