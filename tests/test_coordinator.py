@@ -78,6 +78,15 @@ def create_mock_coordinator() -> VevorHeaterCoordinator:
         side_effect=lambda coro, name=None, eager_start=True: asyncio.create_task(coro)
     )
 
+    def create_task(coro, name=None, eager_start=False):
+        """Schedule in async tests and close intentionally skipped sync work."""
+        try:
+            return asyncio.get_running_loop().create_task(coro, name=name)
+        except RuntimeError:
+            coro.close()
+            return MagicMock()
+
+    hass.async_create_task = MagicMock(side_effect=create_task)
     entry = MagicMock()
     entry.data = {"address": "AA:BB:CC:DD:EE:FF"}
     entry.options = {}
@@ -2887,7 +2896,11 @@ class TestExternalTempCallback:
         coordinator = create_mock_coordinator()
         coordinator._async_calculate_auto_offset = AsyncMock()
         mock_task = MagicMock()
-        coordinator.hass.async_create_task = MagicMock(return_value=mock_task)
+        def close_task(coro):
+            coro.close()
+            return mock_task
+
+        coordinator.hass.async_create_task = MagicMock(side_effect=close_task)
 
         event = MagicMock()
         coordinator._async_external_temp_changed(event)
