@@ -240,6 +240,7 @@ class TestAA66TemperatureUnitOverride:
         coordinator = VevorHeaterCoordinator(hass, ble_device, entry)
 
         assert coordinator._protocols[4]._temperature_unit_override == 0
+        assert coordinator._time_synced_this_session is False
 
 
 # ---------------------------------------------------------------------------
@@ -819,6 +820,29 @@ class TestNotificationCallback:
         await coordinator._wait_for_v21_handshake()
         assert coordinator._v21_handshake_authenticated is True
 
+    @pytest.mark.asyncio
+    async def test_non_feaa_initial_status_does_not_auto_sync_time(self):
+        """Only CBFF performs an automatic post-connect time sync."""
+        coordinator = create_mock_coordinator()
+        client = MagicMock()
+        client.is_connected = True
+        coordinator._client = None
+        coordinator._protocol_mode = 1
+        coordinator._protocol = coordinator._protocols[1]
+        coordinator._check_daily_reset = AsyncMock()
+        coordinator._check_daily_runtime_reset = AsyncMock()
+        coordinator._ensure_connected = AsyncMock(
+            side_effect=lambda: setattr(coordinator, "_client", client)
+        )
+        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator._save_valid_data = MagicMock()
+        coordinator._update_fuel_tracking = MagicMock()
+        coordinator._update_runtime_tracking = MagicMock()
+        coordinator.async_sync_time = AsyncMock()
+
+        await coordinator._async_update_data()
+
+        coordinator.async_sync_time.assert_not_awaited()
     @pytest.mark.asyncio
     async def test_feaa_initial_status_does_not_auto_sync_time(self):
         """FEAA must not receive AA55-style automatic command 10."""
