@@ -1118,6 +1118,11 @@ class ProtocolCBFF(HeaterProtocol):
         """Return True if V2.1 encrypted mode is enabled."""
         return self._v21_mode
 
+    @property
+    def supports_auto_start_stop(self) -> bool:
+        """Return whether the last status exposes a writable auto-stop setting."""
+        return self._v21_settings is not None and self._v21_settings[-1] != 0xFF
+
     def build_handshake(self, passkey: int) -> bytearray:
         """Build V2.1 handshake/authentication command.
 
@@ -1196,9 +1201,14 @@ class ProtocolCBFF(HeaterProtocol):
                 payload = bytes([self.FEAA_MODE_TEMPERATURE, param, 0xFF, 0xFF])
             packet = self._build_feaa(cmd_1=0x01, cmd_2=0x01, payload=payload)
 
-        # Config commands (10-21): not implemented for FEAA protocol
-        # @Xev (issue #45): FEAA uses its own settings command (cmd1=0x03),
-        # not AA55-style config commands. Log and return status query.
+        elif command == 18 and self.supports_auto_start_stop:
+            payload = bytearray(self._v21_settings)
+            payload[-1] = 1 if argument else 0
+            packet = self._build_feaa(cmd_1=0x03, cmd_2=0x01, payload=payload)
+
+        # Config commands (10-21): not implemented for FEAA protocol.
+        # FEAA uses its own settings command (cmd1=0x03), so unsupported
+        # commands fall back to a status query.
         elif 10 <= command <= 21:
             import logging
             logging.getLogger(__name__).warning(
@@ -1590,8 +1600,10 @@ class ProtocolCBFF(HeaterProtocol):
         if wifi != 255:
             parsed["wifi_enabled"] = (wifi == 1)
 
-        # Byte 42: auto start/stop
-        parsed["auto_start_stop"] = (_u8_to_number(data[42]) == 1)
+        # Byte 42: auto start/stop (255=not supported)
+        auto_start_stop = _u8_to_number(data[42])
+        if auto_start_stop != 255:
+            parsed["auto_start_stop"] = (auto_start_stop == 1)
 
         # Byte 43: heater_mode
         parsed["heater_mode"] = _u8_to_number(data[43])

@@ -1469,6 +1469,13 @@ class TestProtocolCBFF:
         result = self.proto.parse(data)
         assert result["auto_start_stop"] is True
 
+    def test_parse_auto_start_stop_255_omitted(self):
+        """A 255 capability marker means auto start/stop is unsupported."""
+        data = _make_cbff_data(auto_start_stop=255)
+        result = self.proto.parse(data)
+        assert "auto_start_stop" not in result
+        assert self.proto.supports_auto_start_stop is False
+
     def test_parse_remain_run_time(self):
         data = _make_cbff_data(remain_run_time=120)
         result = self.proto.parse(data)
@@ -1827,11 +1834,44 @@ class TestProtocolCBFF:
 
     def test_feaa_config_commands_return_status_query(self):
         """FEAA config commands (10-21) return FEAA status query."""
-        for cmd in (10, 14, 18, 21):
+        for cmd in (10, 14, 21):
             pkt = self.proto.build_command(cmd, 0, 1234)
             assert pkt[0:2] == bytes([0xFE, 0xAA])
             assert pkt[6] == 0x00  # cmd_1 = status
             assert pkt[7] == 0x00  # cmd_2 = read
+    def test_feaa_auto_start_stop_uses_native_settings_write(self):
+        """CBFF carries the app's retained settings into the 03/01 write."""
+        self.proto.parse(
+            _make_cbff_data(
+                temp_unit=0xF1,
+                altitude_unit=0xF2,
+                heater_offset=-2,
+                language=3,
+                tank_volume=5,
+                pump_byte=7,
+                backlight=40,
+                startup_temp_diff=4,
+                shutdown_temp_diff=6,
+                wifi=1,
+                auto_start_stop=0,
+            )
+        )
+
+        pkt = self.proto.build_command(18, 1, 1234)
+
+        assert self.proto.supports_auto_start_stop is True
+        assert pkt[6:8] == bytes((0x03, 0x01))
+        assert pkt[8:21] == bytes((128, 129, 0, 0, 254, 3, 5, 7, 40, 4, 6, 1, 1))
+        assert pkt[-1] == sum(pkt[:-1]) & 0xFF
+
+    def test_feaa_auto_start_stop_without_capability_is_not_a_write(self):
+        """An unsupported FEAA setting must not be guessed or written."""
+        self.proto.parse(_make_cbff_data(auto_start_stop=255))
+
+        pkt = self.proto.build_command(18, 1, 1234)
+
+        assert pkt[6:8] == bytes((0x00, 0x00))
+
 
     def test_feaa_update_last_state_level(self):
         """Parsing level mode updates _last_mode and _last_param."""

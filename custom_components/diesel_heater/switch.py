@@ -181,8 +181,12 @@ class VevorAutoStartStopSwitch(CoordinatorEntity[VevorHeaterCoordinator], Switch
         """
         if not self.coordinator.data.get("connected", False):
             return False
-        # Only show as available in Temperature mode
-        return self.coordinator.data.get("running_mode") == RUNNING_MODE_TEMPERATURE
+        # The native app exposes this setting only in temperature mode, and
+        # FEAA uses 255 to report that the controller does not implement it.
+        return (
+            self.coordinator.data.get("running_mode") == RUNNING_MODE_TEMPERATURE
+            and self.coordinator.data.get("auto_start_stop") is not None
+        )
 
     @property
     def is_on(self) -> bool | None:

@@ -3367,6 +3367,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         when it drops 2°C below the target.
         """
         self._logger.info("Setting Auto Start/Stop to %s", "enabled" if enabled else "disabled")
+        if (
+            self._protocol_mode == 6
+            and isinstance(self._protocol, ProtocolCBFF)
+            and not self._protocol.supports_auto_start_stop
+        ):
+            self._logger.warning("FEAA auto start/stop is not supported by this controller")
+            return
+
         # Command 18, arg=1 for enabled, arg=0 for disabled
         success = await self._send_command(18, 1 if enabled else 0)
         if success:

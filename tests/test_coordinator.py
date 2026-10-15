@@ -1617,6 +1617,19 @@ class TestAsyncCommands:
         await coordinator.async_set_auto_start_stop(True)
 
         coordinator._send_command.assert_called_once()
+    @pytest.mark.asyncio
+    async def test_async_set_auto_start_stop_skips_unsupported_cbff(self):
+        """CBFF capability markers must prevent a no-op settings command."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 6
+        coordinator._protocol = coordinator._protocols[6]
+        coordinator._protocol._settings_payload = bytes((*([0] * 12), 255))
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        await coordinator.async_set_auto_start_stop(True)
+
+        coordinator._send_command.assert_not_awaited()
+
 
     @pytest.mark.asyncio
     async def test_async_sync_time(self):

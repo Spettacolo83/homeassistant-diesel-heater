@@ -249,9 +249,20 @@ class TestVevorAutoStartStopSwitch:
         coordinator = create_mock_coordinator()
         coordinator.data["connected"] = True
         coordinator.data["running_mode"] = 2  # Temperature mode
+        coordinator.data["auto_start_stop"] = True
         switch = VevorAutoStartStopSwitch(coordinator)
 
         assert switch.available is True
+
+    def test_unavailable_when_auto_start_stop_is_unsupported(self):
+        """Test the control is hidden when the controller reports no capability."""
+        coordinator = create_mock_coordinator()
+        coordinator.data["connected"] = True
+        coordinator.data["running_mode"] = 2
+        coordinator.data["auto_start_stop"] = None
+        switch = VevorAutoStartStopSwitch(coordinator)
+
+        assert switch.available is False
 
     def test_unavailable_in_level_mode(self):
         """Test unavailable when in level mode."""
