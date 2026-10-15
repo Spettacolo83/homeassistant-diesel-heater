@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Pre-release safeguards — run before any `gh release create v*`.
 #
-# Prevents the three emergency classes seen in sessions #64/#86:
+# Prevents the known emergency classes:
 #
 # 1. PyPI pin drift — manifest.json requires `diesel-heater-ble>=X.Y.Z` but
 #    the version actually on PyPI is missing a symbol the integration
@@ -17,6 +17,13 @@
 #    `async_setup_entry` fails. Partial coverage via existing coordinator
 #    tests; this script runs the deterministic manifest + PyPI + lint
 #    checks that would already have blocked the known classes.
+#
+# 4. Monorepo bundled-src incompleteness — the `diesel_heater_ble/src/`
+#    tree is missing one of the modules the integration imports, so a
+#    local `python -m build` from this repo produces a wheel that is
+#    missing __init__.py or const.py or protocol.py and silently uploads
+#    broken to PyPI. Caused the 0.3.7 publish on 2026-10-15. Covered by
+#    the new [4/4] step below.
 #
 # Fail loudly: `set -euo pipefail`. Any non-zero exit MUST block the
 # release pipeline.
@@ -34,7 +41,7 @@ echo
 # 1. Manifest safeguards (pytest reproduces HA startup validators)
 # ---------------------------------------------------------------------------
 
-echo "[1/3] manifest safeguards (local_name validator + requirement pin)..."
+echo "[1/4] manifest safeguards (local_name validator + requirement pin)..."
 python3 -m pytest "$REPO_ROOT/tests/test_manifest.py" -q --tb=short
 echo "    OK"
 echo
@@ -49,7 +56,7 @@ echo
 # symbol in bundled src/ without a PyPI publish" class of bug.
 # ---------------------------------------------------------------------------
 
-echo "[2/3] PyPI pin consistency (install pinned diesel-heater-ble from index + verify imports)..."
+echo "[2/4] PyPI pin consistency (install pinned diesel-heater-ble from index + verify imports)..."
 
 PIN=$(python3 -c "
 import json
@@ -142,10 +149,139 @@ echo
 # 3. Full protocol + library import suite against the bundled source
 # ---------------------------------------------------------------------------
 
-echo "[3/3] full protocol + library tests..."
+echo "[3/4] full protocol + library tests..."
 cd "$REPO_ROOT"
 python3 -m pytest tests/test_protocol.py tests/test_library_import.py tests/test_manifest.py diesel_heater_ble/tests/ --tb=short -q
 echo "    OK"
+echo
+
+# ---------------------------------------------------------------------------
+# 4. Monorepo-built wheel is complete
+#
+# Builds the diesel-heater-ble wheel from the bundled src/ tree, inspects
+# its contents, installs it into an isolated venv, and imports every
+# `diesel_heater_ble.<name>` the integration references. If any Python
+# module in src/ is missing (as happened on 2026-10-15 when __init__.py
+# and const.py were never committed), the wheel is incomplete and this
+# step fails — before the broken wheel can be `twine upload`-ed.
+# ---------------------------------------------------------------------------
+
+echo "[4/4] bundled-library wheel completeness (prevents 0.3.7-class incident)..."
+
+LIB_DIR="$REPO_ROOT/diesel_heater_ble"
+LIB_VER=$(python3 -c "
+import re, pathlib
+toml = pathlib.Path('$LIB_DIR/pyproject.toml').read_text()
+m = re.search(r'^version = \"([^\"]+)\"', toml, re.M)
+print(m.group(1) if m else '')
+")
+
+if [ -z "$LIB_VER" ]; then
+    echo "ERROR: could not extract library version from pyproject.toml"
+    exit 1
+fi
+
+WHEEL_TMP=$(mktemp -d)
+# Note: NOT trapping — the outer trap at line ~85 already cleans /tmp/*
+
+# Build in a copy so we don't pollute the repo's dist/ dir
+cp -r "$LIB_DIR" "$WHEEL_TMP/build-src"
+cd "$WHEEL_TMP/build-src"
+rm -rf dist/ build/ src/diesel_heater_ble.egg-info 2>/dev/null || true
+
+python3 -m venv "$WHEEL_TMP/buildenv"
+# shellcheck disable=SC1091
+source "$WHEEL_TMP/buildenv/bin/activate"
+pip install -q --upgrade pip build
+python3 -m build --wheel --outdir "$WHEEL_TMP/dist" 2>&1 | tail -3
+deactivate
+
+WHEEL=$(ls "$WHEEL_TMP/dist"/*.whl 2>/dev/null | head -1)
+if [ -z "$WHEEL" ]; then
+    echo "ERROR: build did not produce a wheel"
+    exit 1
+fi
+echo "    built wheel: $(basename "$WHEEL")"
+
+# Required files inside the wheel — if any is missing, the publish will be
+# as broken as 2026-10-15's 0.3.7.
+python3 - "$WHEEL" <<'PYEOF'
+import sys, zipfile
+
+wheel_path = sys.argv[1]
+# Must-have Python modules at package root
+REQUIRED = ["__init__.py", "const.py", "protocol.py"]
+
+with zipfile.ZipFile(wheel_path) as zf:
+    names = zf.namelist()
+
+missing = []
+for mod in REQUIRED:
+    if not any(n.endswith(f"diesel_heater_ble/{mod}") for n in names):
+        missing.append(mod)
+
+if missing:
+    print(f"    FAILURES:")
+    for m in missing:
+        print(f"      diesel_heater_ble/{m}: not present in wheel")
+    print()
+    print("    This is the 2026-10-15 0.3.7-class incident: the monorepo src/")
+    print("    tree is missing one of the modules. A `twine upload` of this")
+    print("    wheel would ship a package without the required module.")
+    print()
+    print("    Fix: commit the missing file(s) back to")
+    print(f"      $REPO_ROOT/diesel_heater_ble/src/diesel_heater_ble/")
+    print("    then re-run this script.")
+    sys.exit(1)
+
+print(f"    wheel contains all {len(REQUIRED)} required modules - OK")
+PYEOF
+
+# Also: install the built wheel into a venv and verify every top-level
+# symbol from the published __all__ actually imports. Catches the case
+# where files exist but, say, __init__.py doesn't re-export a symbol
+# that the integration imports from the package root.
+python3 -m venv "$WHEEL_TMP/testenv"
+# shellcheck disable=SC1091
+source "$WHEEL_TMP/testenv/bin/activate"
+pip install -q "$WHEEL"
+
+python3 - "$INTEGRATION_PATH" <<'PYEOF'
+import ast
+import importlib
+import pathlib
+import sys
+
+INTEGRATION = pathlib.Path(sys.argv[1])
+missing: list[tuple[str, str, str]] = []
+for py_file in sorted(INTEGRATION.rglob("*.py")):
+    source = py_file.read_text()
+    try:
+        tree = ast.parse(source, filename=str(py_file))
+    except SyntaxError:
+        continue
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("diesel_heater_ble"):
+            try:
+                mod = importlib.import_module(node.module)
+            except ImportError as e:
+                missing.append((py_file.name, node.module, f"module not importable: {e}"))
+                continue
+            for alias in node.names:
+                if alias.name == "*":
+                    continue
+                if not hasattr(mod, alias.name):
+                    missing.append((py_file.name, f"{node.module}.{alias.name}", "symbol not re-exported by built wheel"))
+
+if missing:
+    print("    FAILURES against built-from-monorepo wheel:")
+    for src, sym, reason in missing:
+        print(f"      {src} -> {sym}: {reason}")
+    sys.exit(1)
+print("    all integration imports resolve against the built-from-monorepo wheel - OK")
+PYEOF
+
+deactivate
 echo
 
 echo "=== all pre-release checks passed ==="
