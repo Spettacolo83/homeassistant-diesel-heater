@@ -1096,6 +1096,7 @@ class ProtocolCBFF(HeaterProtocol):
         # a single command sets both, so we need to remember the last values)
         self._last_mode: int = self._DEFAULT_MODE
         self._last_param: int = self._DEFAULT_PARAM
+        self._v21_settings: bytes | None = None
 
     def set_device_sn(self, sn: str) -> None:
         """Set the device serial number (BLE MAC without colons, uppercased).
@@ -1272,6 +1273,7 @@ class ProtocolCBFF(HeaterProtocol):
         parsed = self._parse_cbff_fields(data)
         if not self._is_data_suspect(parsed):
             self._update_last_state(parsed)
+            self._remember_v21_settings(data)
             return parsed
 
         # Raw data looks wrong — try decryption if device_sn is available
@@ -1281,6 +1283,7 @@ class ProtocolCBFF(HeaterProtocol):
             if not self._is_data_suspect(parsed_dec):
                 parsed_dec["_cbff_decrypted"] = True
                 self._update_last_state(parsed_dec)
+                self._remember_v21_settings(decrypted)
                 return parsed_dec
 
         # Neither raw nor decrypted data is valid
@@ -1308,6 +1311,100 @@ class ProtocolCBFF(HeaterProtocol):
             return self._has_valid_feaa_packet(decrypted)
 
         return False
+
+    def v21_handshake_result(self, data: bytearray) -> bool | None:
+        """Return the APK-defined V2.1 handshake result, if this is one.
+
+        Sunster V2.1 replies to the encrypted 06/00 handshake with
+        86/00. Payload byte 0 is 01 only when the PIN is accepted.
+        """
+        packet = self._decode_feaa_packet(data)
+        if packet is None or packet[6] != 0x86 or packet[7] != 0x00:
+            return None
+        return len(packet) > 8 and packet[8] == 0x01
+
+    def is_v21_status_response(self, data: bytearray) -> bool:
+        """Return whether a packet is the V2.1 response to 00/00."""
+        packet = self._decode_feaa_packet(data)
+        return packet is not None and packet[6] == 0x80 and packet[7] == 0x00
+
+    def _decode_feaa_packet(self, data: bytearray) -> bytearray | None:
+        """Return a validated raw FEAA packet from raw or encrypted input."""
+        if self._has_valid_feaa_packet(data):
+            return data
+        if self._device_sn:
+            decrypted = self._decrypt_cbff(data, self._device_sn)
+            if self._has_valid_feaa_packet(decrypted):
+                return decrypted
+        return None
+
+    def build_v21_time_sync(self, now: datetime) -> bytearray | None:
+        """Build the Sunster app's V2.1 03/01 settings time-sync packet.
+
+        The app copies the current controller settings and replaces only the
+        little-endian clock field with 60 * hour + minute + 0x8000.
+        """
+        if self._v21_settings is None:
+            return None
+        current_time = 60 * now.hour + now.minute + 0x8000
+        payload = bytearray(self._v21_settings)
+        payload[2] = current_time & 0xFF
+        payload[3] = current_time >> 8
+        packet = self._build_feaa(cmd_1=0x03, cmd_2=0x01, payload=payload)
+        if self._device_sn:
+            return self._encrypt_cbff(packet, self._device_sn)
+        return packet
+
+    def is_v21_settings_response(self, data: bytearray) -> bool:
+        """Return whether a packet is the V2.1 response to a 03/01 write."""
+        packet = self._decode_feaa_packet(data)
+        return packet is not None and packet[6] == 0x83 and packet[7] == 0x01
+
+    def _remember_v21_settings(self, data: bytearray) -> None:
+        """Store the status fields the app echoes in a 03/01 settings write."""
+        if len(data) < 43:
+            return
+        self._v21_settings = bytes(
+            (
+                self._v21_altitude_unit_setting(data[20]),
+                self._v21_temp_unit_setting(data[17]),
+                0,
+                0,
+                data[34],
+                data[35],
+                data[36],
+                data[37],
+                data[38],
+                data[39],
+                data[40],
+                data[41],
+                data[42],
+            )
+        )
+
+    @staticmethod
+    def _v21_temp_unit_setting(value: int) -> int:
+        """Mirror the APK's temp-unit capability conversion for 03/01."""
+        capability, unit = value >> 4, value & 0x0F
+        if capability != 0x0F:
+            return unit
+        if unit == 0:
+            return 128
+        if unit == 1:
+            return 129
+        return 255
+
+    @staticmethod
+    def _v21_altitude_unit_setting(value: int) -> int:
+        """Mirror the APK's altitude-unit capability conversion for 03/01."""
+        capability, unit = value >> 4, value & 0x0F
+        if capability != 0x0F:
+            return unit
+        if unit in (0, 2):
+            return 128
+        if unit in (1, 3):
+            return 129
+        return 255
 
     @staticmethod
     def _has_valid_feaa_packet(data: bytearray) -> bool:

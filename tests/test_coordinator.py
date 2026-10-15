@@ -166,6 +166,10 @@ def create_mock_coordinator() -> VevorHeaterCoordinator:
     coordinator._is_heatgenie_device = False
     coordinator._heatgenie_write_char = None
     coordinator._v21_handshake_sent = False
+    coordinator._v21_handshake_event = asyncio.Event()
+    coordinator._v21_handshake_authenticated = None
+    coordinator._feaa_command_lock = asyncio.Lock()
+    coordinator._time_synced_this_session = False
     coordinator._hcalory_write_char = None
     coordinator._connection_attempts = 0
     coordinator._last_connection_attempt = 0.0
@@ -798,6 +802,138 @@ class TestNotificationCallback:
         assert hasattr(coordinator, '_notification_callback')
         assert callable(coordinator._notification_callback)
 
+    @pytest.mark.asyncio
+    async def test_v21_handshake_ack_is_required_before_status(self):
+        """The APK's 86/00 success response completes the V2.1 handshake."""
+        coordinator = create_mock_coordinator()
+        protocol = coordinator._protocols[6]
+        protocol.set_device_sn("AABBCCDDEEFF")
+        coordinator._protocol = protocol
+        coordinator._protocol_mode = 6
+        coordinator._v21_handshake_sent = True
+
+        raw_ack = protocol._build_feaa(0x86, 0x00, b"\x01")
+        encrypted_ack = protocol._encrypt_cbff(raw_ack, "AABBCCDDEEFF")
+        coordinator._notification_callback(0, encrypted_ack)
+
+        await coordinator._wait_for_v21_handshake()
+        assert coordinator._v21_handshake_authenticated is True
+
+    @pytest.mark.asyncio
+    async def test_feaa_initial_status_does_not_auto_sync_time(self):
+        """FEAA must not receive AA55-style automatic command 10."""
+        coordinator = create_mock_coordinator()
+        client = MagicMock()
+        client.is_connected = True
+        coordinator._client = None
+        coordinator._protocol_mode = 6
+        coordinator._protocol = coordinator._protocols[6]
+        coordinator._check_daily_reset = AsyncMock()
+        coordinator._check_daily_runtime_reset = AsyncMock()
+        coordinator._ensure_connected = AsyncMock(
+            side_effect=lambda: setattr(coordinator, "_client", client)
+        )
+        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator._save_valid_data = MagicMock()
+        coordinator._update_fuel_tracking = MagicMock()
+        coordinator._update_runtime_tracking = MagicMock()
+
+        await coordinator._async_update_data()
+
+        coordinator._ensure_connected.assert_awaited_once()
+        coordinator._send_command.assert_awaited_once_with(1, 0)
+
+    @pytest.mark.asyncio
+    async def test_feaa_manual_time_sync_uses_settings_write(self):
+        """The Sunster app uses a 03/01 settings write rather than command 10."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 6
+        coordinator._send_v21_time_sync = AsyncMock(return_value=True)
+
+        await coordinator.async_sync_time()
+
+        coordinator._send_v21_time_sync.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_v21_time_sync_waits_for_settings_ack(self):
+        """An encrypted 83/01 acknowledgement completes the settings write."""
+        coordinator = create_mock_coordinator()
+        protocol = coordinator._protocols[6]
+        protocol.set_device_sn("AABBCCDDEEFF")
+        protocol._remember_v21_settings(bytearray(47))
+        coordinator._protocol = protocol
+        coordinator._protocol_mode = 6
+
+        async def acknowledge_settings_write(_packet):
+            raw_ack = protocol._build_feaa(0x83, 0x01, b"\x01")
+            coordinator._notification_callback(
+                0, protocol._encrypt_cbff(raw_ack, "AABBCCDDEEFF")
+            )
+
+        coordinator._write_gatt = AsyncMock(side_effect=acknowledge_settings_write)
+
+        assert await coordinator._send_v21_time_sync(datetime(2026, 10, 14, 9, 30))
+        coordinator._write_gatt.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_v21_fresh_connection_status_precedes_settings_time_sync(self):
+        """A V2.1 reconnect follows the APK's 00/00 then 03/01 sequence."""
+        coordinator = create_mock_coordinator()
+        protocol = coordinator._protocols[6]
+        serial = "AABBCCDDEEFF"
+        protocol.set_device_sn(serial)
+        coordinator._protocol = protocol
+        coordinator._protocol_mode = 6
+
+        client = MagicMock()
+        client.is_connected = True
+        coordinator._client = None
+        coordinator._ensure_connected = AsyncMock(
+            side_effect=lambda: setattr(coordinator, "_client", client)
+        )
+        coordinator._check_daily_reset = AsyncMock()
+        coordinator._check_daily_runtime_reset = AsyncMock()
+        coordinator._save_valid_data = MagicMock()
+        coordinator._update_fuel_tracking = MagicMock()
+        coordinator._update_runtime_tracking = MagicMock()
+        sent_commands = []
+
+        async def respond_to_write(packet):
+            decoded = protocol._decrypt_cbff(packet, serial)
+            sent_commands.append(tuple(decoded[6:8]))
+            if decoded[6:8] == bytearray((0x00, 0x00)):
+                status_payload = bytearray(38)
+                status_payload[3] = 1
+                status_payload[4] = 4
+                status_payload[15] = 120
+                coordinator._notification_callback(
+                    0,
+                    protocol._encrypt_cbff(
+                        protocol._build_feaa(0x80, 0x00, status_payload), serial
+                    ),
+                )
+            elif decoded[6:8] == bytearray((0x03, 0x01)):
+                coordinator._notification_callback(
+                    0,
+                    protocol._encrypt_cbff(
+                        protocol._build_feaa(0x83, 0x01, b"\x01"), serial
+                    ),
+                )
+
+        coordinator._write_gatt = AsyncMock(side_effect=respond_to_write)
+
+        with patch(
+            "custom_components.diesel_heater.coordinator.dt_util.now",
+            return_value=datetime(2026, 10, 14, 9, 30, tzinfo=UTC),
+        ):
+            data = await coordinator._async_update_data()
+
+        assert data["connected"] is True
+        assert sent_commands == [(0x00, 0x00), (0x03, 0x01)]
+        time_sync = protocol._decrypt_cbff(
+            coordinator._write_gatt.await_args_list[1].args[0], serial
+        )
+        assert time_sync[10:12] == bytearray((0x3A, 0x82))
 
 # ---------------------------------------------------------------------------
 # Additional fuel tracking tests

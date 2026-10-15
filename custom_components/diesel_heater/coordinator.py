@@ -214,6 +214,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._cronus_write_event = asyncio.Event()
         self._cronus_transaction_lock = asyncio.Lock()
         self._v21_handshake_sent = False  # Track if Sunster V2.1 handshake was sent
+        self._v21_handshake_event = asyncio.Event()
+        self._v21_handshake_authenticated: bool | None = None
+        self._feaa_command_lock = asyncio.Lock()
         self._is_hcalory_device = False  # True if using Hcalory MVP1/MVP2 protocol
         self._hcalory_mvp2_device = False  # Confirmed by the BD39 GATT service
         self._hcalory_write_char = None  # Hcalory devices use separate write characteristic
@@ -1431,6 +1434,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         # This ensures the daily counters reset at midnight regardless of connection status
         await self._check_daily_reset()
         await self._check_daily_runtime_reset()
+        connected_this_update = False
 
         if not self._client or not self._client.is_connected:
             try:
@@ -1442,6 +1446,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 # fires. Observed live on 2026-10-13 against @Spettacolo83's
                 # BCM43438 after the first poll wedges the GATT subscription.
                 await asyncio.wait_for(self._ensure_connected(), timeout=20.0)
+                connected_this_update = True
             except asyncio.TimeoutError as err:
                 self._logger.debug(
                     "bleak connect() hung — treating as connection failure "
@@ -1528,6 +1533,26 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 # Reset failure counter and save valid data on success
                 self._consecutive_failures = 0
                 self._save_valid_data()
+
+                # Identify the protocol from the first status response before
+                # attempting any optional protocol-specific initialization.
+                # Sunster FEAA uses a distinct 03/01 settings packet, never
+                # the AA55-style command 10 time sync.
+                if (
+                    connected_this_update
+                    and not self._time_synced_this_session
+                    and not getattr(self, "_is_cronus_device", False)
+                ):
+                    self._time_synced_this_session = True
+                    try:
+                        self._logger.debug("Auto-syncing time after initial status...")
+                        if self._protocol_mode == 6:
+                            await self._send_v21_time_sync(dt_util.now())
+                        else:
+                            await self.async_sync_time()
+                        self._logger.info("Auto time sync completed")
+                    except Exception as sync_err:
+                        self._logger.debug("Auto time sync failed (non-critical): %s", sync_err)
 
                 # Update fuel consumption and runtime tracking
                 current_time = time.time()
@@ -1628,6 +1653,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._cronus_records = {}
             self._cronus_pending_id = None
             self._cronus_pending_data = bytearray()
+            self._v21_handshake_event.clear()
+            self._v21_handshake_authenticated = None
             self._cronus_expected_length = 0
 
             # First, check for Hcalory MVP2 device (service bd39)
@@ -1852,7 +1879,15 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             elif self._is_cronus_device:
                 self._logger.debug("Cronus ready; polling record cache")
             else:
-                await self._send_wake_up_ping()
+                # The Sunster app waits for AA77, completes the encrypted
+                # V2.1 handshake, then asks for status. Give an unsolicited
+                # AA77 marker a chance to arrive before our legacy discovery
+                # probe, which is still needed for initially unknown devices.
+                await asyncio.sleep(0.3)
+                if self._protocol_mode != 6:
+                    await self._send_wake_up_ping()
+                if self._protocol_mode == 6:
+                    await self._wait_for_v21_handshake()
 
             self._connection_attempts = 0  # Reset on successful connection
             self._logger.info("Successfully connected to Vevor Heater")
@@ -2036,6 +2071,18 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         self._protocol_mode = protocol.protocol_mode
         self._protocol = protocol
+
+        if isinstance(protocol, ProtocolCBFF):
+            handshake_result = protocol.v21_handshake_result(parse_data)
+            if handshake_result is not None:
+                self._v21_handshake_authenticated = handshake_result
+                self._v21_handshake_event.set()
+                self._notification_data = data
+                if handshake_result:
+                    self._logger.info("Sunster V2.1 handshake authenticated")
+                else:
+                    self._logger.warning("Sunster V2.1 handshake rejected by heater")
+                return
 
         # Parse
         try:
@@ -2231,6 +2278,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     self._protocol.reset_password_state()
                 # Reset V2.1 handshake state on reconnect
                 self._v21_handshake_sent = False
+                self._v21_handshake_event.clear()
+                self._v21_handshake_authenticated = None
+                # Reset time sync flag to trigger auto-sync on next connection
+                self._time_synced_this_session = False
 
     async def _async_password_handshake(self, max_retries: int = 3) -> bool:
         """Send password handshake with retry logic (@Xev optimizations, issue #34).
@@ -2341,22 +2392,33 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             return
 
         self._v21_handshake_sent = True
+        self._v21_handshake_event.clear()
+        self._v21_handshake_authenticated = None
         self._logger.info("🔑 Sending Sunster V2.1 handshake (PIN=%d)...", self._passkey)
         asyncio.create_task(self._send_v21_handshake(handshake_pkt))
 
     async def _send_v21_handshake(self, packet: bytearray) -> None:
         """Send Sunster V2.1 handshake packet asynchronously."""
         try:
-            await asyncio.sleep(0.2)  # Brief delay after AA77 received
             await self._write_gatt(packet)
-            self._v21_handshake_sent = True
             self._logger.info(
-                "✅ Sunster V2.1 handshake sent: %s",
+                "Sunster V2.1 handshake sent; awaiting authenticated reply: %s",
                 packet.hex()
             )
         except Exception as err:
             self._v21_handshake_sent = False
             self._logger.warning("⚠️ V2.1 handshake failed: %s", err)
+
+    async def _wait_for_v21_handshake(self) -> None:
+        """Wait for the APK-defined authenticated V2.1 handshake reply."""
+        if not self._v21_handshake_sent:
+            return
+        try:
+            await asyncio.wait_for(self._v21_handshake_event.wait(), timeout=5.0)
+        except asyncio.TimeoutError as err:
+            raise BleakError("Sunster V2.1 handshake timed out") from err
+        if not self._v21_handshake_authenticated:
+            raise BleakError("Sunster V2.1 handshake was rejected")
 
     async def _write_gatt(self, packet: bytearray) -> None:
         """Write a packet to the appropriate BLE characteristic.
@@ -2538,6 +2600,35 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         return False
 
     async def _send_command(self, command: int, argument: int, timeout: float = 5.0, max_retries: int = 1) -> bool:
+        """Serialize FEAA commands while retaining existing protocol behavior."""
+        if self._protocol_mode == 6:
+            async with self._feaa_command_lock:
+                return await self._send_command_unlocked(
+                    command, argument, timeout, max_retries
+                )
+        return await self._send_command_unlocked(command, argument, timeout, max_retries)
+
+    async def _send_v21_time_sync(self, now: datetime) -> bool:
+        """Send the APK-defined FEAA 03/01 time-settings write."""
+        if not isinstance(self._protocol, ProtocolCBFF):
+            return False
+        packet = self._protocol.build_v21_time_sync(now)
+        if packet is None:
+            self._logger.warning("Sunster V2.1 time sync skipped: no status settings available")
+            return False
+
+        async with self._feaa_command_lock:
+            self._notification_data = None
+            await self._write_gatt(packet)
+            for _ in range(100):
+                await asyncio.sleep(0.05)
+                if self._notification_data:
+                    if self._protocol.is_v21_settings_response(self._notification_data):
+                        return True
+                    self._notification_data = None
+        return False
+
+    async def _send_command_unlocked(self, command: int, argument: int, timeout: float = 5.0, max_retries: int = 1) -> bool:
         """Send command to heater with retry logic (@Xev optimizations, issue #34).
 
         Args:
@@ -2642,6 +2733,19 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 for i in range(iterations):
                     await asyncio.sleep(0.05)
                     if self._notification_data:
+                        if (
+                            self._protocol_mode == 6
+                            and command == 1
+                            and isinstance(self._protocol, ProtocolCBFF)
+                            and not self._protocol.is_v21_status_response(
+                                self._notification_data
+                            )
+                        ):
+                            self._logger.debug(
+                                "Ignoring non-status FEAA notification while waiting for status"
+                            )
+                            self._notification_data = None
+                            continue
                         self._logger.info(
                             "✅ Received response after %.2fs (protocol=%d%s)",
                             i * 0.05, self._protocol_mode,
@@ -3278,6 +3382,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             return False
 
         now = dt_util.now()
+        if self._protocol_mode == 6:
+            success = await self._send_v21_time_sync(now)
+            if success:
+                self._logger.info("Sunster V2.1 time sync successful")
+            else:
+                self._logger.warning("Sunster V2.1 time sync failed")
+            return
 
         if self._protocol_mode == 7:
             self._protocol.set_query_timestamp(now)
