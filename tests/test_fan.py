@@ -32,6 +32,7 @@ def create_mock_coordinator() -> MagicMock:
     coordinator.async_set_level = AsyncMock()
     coordinator.async_add_listener = MagicMock(return_value=MagicMock())
     coordinator.burnoff_active = False
+    coordinator.is_dz06_neo = False
     coordinator.data = {
         "connected": True,
         "running_state": 1,
@@ -421,6 +422,17 @@ class TestCronusFanSetup:
     async def test_does_not_create_generic_fan(self):
         coordinator = create_mock_coordinator()
         coordinator.protocol_mode = 9
+        entry = MagicMock(runtime_data=coordinator)
+        async_add_entities = MagicMock()
+
+        await async_setup_entry(MagicMock(), entry, async_add_entities)
+
+        async_add_entities.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_dz06_neo_does_not_create_generic_level_fan(self):
+        coordinator = create_mock_coordinator()
+        coordinator.is_dz06_neo = True
         entry = MagicMock(runtime_data=coordinator)
         async_add_entities = MagicMock()
 

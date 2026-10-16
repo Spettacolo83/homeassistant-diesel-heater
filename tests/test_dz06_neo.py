@@ -1,5 +1,6 @@
 """Focused tests for the experimentally supported Sunster Neo transport."""
 
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock
 
@@ -14,6 +15,7 @@ from custom_components.diesel_heater.const import (
     RUNNING_STEP_COOLDOWN,
     RUNNING_STEP_RUNNING,
     RUNNING_STEP_STANDBY,
+    RUNNING_STEP_VENTILATION,
 )
 from custom_components.diesel_heater.coordinator import VevorHeaterCoordinator
 
@@ -52,6 +54,7 @@ def coordinator_for_layout(neo: bool) -> VevorHeaterCoordinator:
     coordinator.config_entry = SimpleNamespace(data={})
     coordinator._burnoff = BurnoffController(coordinator)
     coordinator._notification_data = None
+    coordinator._neo_config_received = False
     coordinator._neo_run_settings_received = False
     coordinator._neo_password = 100000000
     coordinator._logger = MagicMock()
@@ -146,6 +149,31 @@ async def test_unsupported_neo_command_fails_closed() -> None:
     coordinator._write_gatt = AsyncMock()
     assert await coordinator._send_command(18, 1) is False
     coordinator._write_gatt.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_configuration_read_matches_apk_password_sequence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    coordinator = coordinator_for_layout(True)
+    coordinator._neo_password = 12345678
+    monkeypatch.setattr(
+        coordinator_module.dt_util,
+        "now",
+        lambda: datetime(2026, 10, 16, 12, 34, 56, tzinfo=timezone(timedelta(hours=-2, minutes=-30))),
+    )
+    coordinator._write_gatt = AsyncMock(
+        side_effect=lambda packet: coordinator._notification_callback(
+            FFF2, neo_config_response()
+        )
+    )
+
+    assert await coordinator._send_dz06_neo_configuration() is True
+    packet = coordinator._write_gatt.await_args.args[0]
+    assert packet == bytearray.fromhex("290d5c006ad219f000bc614e01f8f4")
+    assert coordinator.data["neo_min_target"] == 8
+    assert coordinator.data["neo_max_target"] == 36
+    assert coordinator._neo_config_received is True
 
 
 @pytest.mark.asyncio
@@ -445,3 +473,36 @@ def test_neo_burnoff_snapshot_captures_the_configured_upper_limit() -> None:
     )
 
     assert coordinator.burnoff_protocol_snapshot()["neo_max_target"] == 35
+
+
+def test_5a25_maps_apk_standby_and_wind_states() -> None:
+    coordinator = coordinator_for_layout(True)
+    standby = bytearray(39)
+    standby[:2], standby[3] = b"Z%", 160
+    coordinator._notification_callback(FFF2, standby)
+    assert coordinator.data["running_state"] == RUNNING_STATE_ON
+    assert coordinator.data["running_step"] == RUNNING_STEP_STANDBY
+
+    wind = bytearray(39)
+    wind[:2], wind[3] = b"Z%", 171
+    coordinator._notification_callback(FFF2, wind)
+    assert coordinator.data["running_state"] == RUNNING_STATE_ON
+    assert coordinator.data["running_step"] == RUNNING_STEP_VENTILATION
+
+
+@pytest.mark.asyncio
+async def test_mode_change_uses_apk_control_packet() -> None:
+    coordinator = coordinator_for_layout(True)
+    coordinator.data.update(
+        {"neo_raw_state": 1, "neo_run_type": 1, "set_temp": 30, "altitude": 1500}
+    )
+    response = bytearray(39)
+    response[:2], response[15], response[34] = b"Z%", 30, 2
+    coordinator._write_gatt = AsyncMock(
+        side_effect=lambda packet: coordinator._notification_callback(FFF2, response)
+    )
+
+    assert await coordinator.async_set_mode(RUNNING_MODE_TEMPERATURE) is True
+    assert coordinator._write_gatt.await_args.args[0] == bytearray.fromhex(
+        "a5090151021e05dc0165e6"
+    )

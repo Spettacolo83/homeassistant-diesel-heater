@@ -91,6 +91,7 @@ from .const import (
     RUNNING_STEP_COOLDOWN,
     RUNNING_STEP_RUNNING,
     RUNNING_STEP_STANDBY,
+    RUNNING_STEP_VENTILATION,
     SENSOR_TEMP_MAX,
     SENSOR_TEMP_MIN,
     SERVICE_UUID,
@@ -167,6 +168,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._characteristic = None
         self._active_char_uuid: str | None = None  # Track which UUID variant is active
         self._notification_data: bytearray | None = None
+        self._neo_config_received = False
         self._neo_run_settings_received = False
         # Get passkey from config, default to 1234 (factory default for most heaters)
         self._passkey = config_entry.data.get(CONF_PIN, DEFAULT_PIN)
@@ -1871,6 +1873,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     # Continue anyway - will retry in _send_command if needed
 
             if self.is_dz06_neo:
+                if not await self._send_dz06_neo_configuration():
+                    await self._cleanup_connection()
+                    raise BleakError("DZ06 Neo configuration read failed")
                 if not await self._send_dz06_neo_run_settings():
                     await self._cleanup_connection()
                     raise BleakError("DZ06 Neo startup settings read failed")
@@ -1922,6 +1927,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 if minimum <= maximum:
                     self.data["neo_min_target"] = minimum
                     self.data["neo_max_target"] = maximum
+                self._neo_config_received = True
             if len(data) == 39 and data[:2] == bytearray((0x5A, 0x25)):
                 run_type = data[34]
                 self.data.update({
@@ -1947,6 +1953,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 elif raw_state == 0:
                     self.data["running_state"] = RUNNING_STATE_OFF
                     self.data["running_step"] = RUNNING_STEP_STANDBY
+                elif raw_state == 160:
+                    self.data["running_state"] = RUNNING_STATE_ON
+                    self.data["running_step"] = RUNNING_STEP_STANDBY
+                elif raw_state == 171:
+                    self.data["running_state"] = RUNNING_STATE_ON
+                    self.data["running_step"] = RUNNING_STEP_VENTILATION
                 if run_type == 1:
                     self.data["running_mode"] = RUNNING_MODE_LEVEL
                 elif run_type == 2:
@@ -2571,6 +2583,36 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 await self.async_request_refresh()
                 return True
             self._notification_data = None
+        return False
+
+    async def _send_dz06_neo_configuration(self) -> bool:
+        """Read Neo configuration using the controller's connection password."""
+        now = dt_util.now()
+        timestamp = int(now.timestamp()) + int((now.utcoffset() or timedelta()).total_seconds())
+        packet = bytearray((0x29, 0x0D, 0x5C, 0))
+        packet.extend(timestamp.to_bytes(4, "big"))
+        try:
+            password = int(self._neo_password)
+        except (TypeError, ValueError):
+            return False
+        if not 0 <= password <= 0x7FFFFFFF:
+            return False
+        packet.extend(password.to_bytes(4, "big"))
+        packet.append(1)
+        crc = 0xFFFF
+        for value in packet:
+            crc ^= value
+            for _ in range(8):
+                crc = (crc >> 1) ^ 0xA001 if crc & 1 else crc >> 1
+        packet.extend(crc.to_bytes(2, "big"))
+        self._notification_data = None
+        self._neo_config_received = False
+        await self._write_gatt(packet)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            await asyncio.sleep(0.1)
+            if self._neo_config_received:
+                return True
         return False
 
     async def _send_dz06_neo_run_settings(self) -> bool:
@@ -3328,6 +3370,16 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if self._burnoff.active and not self._burnoff.cycle.applying:
             self._logger.info("Ignoring mode change during burn-off")
             return False
+
+        if self.is_dz06_neo:
+            if mode not in (RUNNING_MODE_LEVEL, RUNNING_MODE_TEMPERATURE):
+                self._logger.warning("DZ06 Neo does not support running mode %d", mode)
+                return False
+            settings = self._neo_control_settings()
+            if settings is None:
+                return False
+            _, target, altitude = settings
+            return await self._async_set_dz06_neo_control(mode, target, altitude)
 
         # Ventilation mode (ABBA only)
         if mode == 3:
