@@ -793,12 +793,8 @@ class ProtocolHeatGenie(HeaterProtocol):
         """Return True for a complete automatic register-area report."""
         if len(data) < 50 or data[0] != cls._FRAME_PREFIX:
             return False
-        frame_length = 8 + 4 * (data[1] + 1) + 2
         return (
-            frame_length >= 50
-            and len(data) >= frame_length
-            and data[7] == cls._STATUS_TYPE
-            and cls.crc16(data[:frame_length]) == 0
+            data[7] == cls._STATUS_TYPE and cls.crc16(data) == 0
         )
 
     @classmethod

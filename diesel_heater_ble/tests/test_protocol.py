@@ -1977,6 +1977,24 @@ class TestProtocolHeatGenie:
         assert parsed["fan_active"]
         assert parsed["glow_plug_active"]
 
+    def test_parses_52_byte_controller_status_frame(self):
+        """Accept the full-notification CRC used by newer HeatGenie controllers."""
+        frame = bytearray.fromhex(
+            "aa09ff06000000f2332572002003d2001c08210000008b0bf87ff87f00000440b"
+            "1145942000000000510000000000000af0c6409"
+        )
+
+        parsed = self.proto.parse(frame)
+
+        assert parsed is not None
+        assert parsed["supply_voltage"] == 11.4
+        assert parsed["cab_temperature"] == 21.0
+        assert parsed["case_temperature"] == 207.6
+        assert parsed["set_level"] == 5
+        assert parsed["set_temp"] == 16
+        assert "intake_temperature" not in parsed
+        assert "outlet_temperature" not in parsed
+
     def test_unsupported_temperatures_are_not_reported(self):
         frame = _make_heatgenie_status()
         frame[24:26] = (32760).to_bytes(2, "little", signed=True)
