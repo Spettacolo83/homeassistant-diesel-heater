@@ -375,10 +375,34 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """Return whether the advertised name matches ThermoConnect Cronus."""
         return "CRONUS" in (self._ble_device.name or "")
 
+    def _advertised_heater_name(self) -> str:
+        """Return the real advertised local name when Home Assistant has it."""
+        address = getattr(self, "address", "").replace(":", "").upper()
+        names = [getattr(self._ble_device, "name", None)]
+        hass = getattr(self, "hass", None)
+        if hass and address:
+            for connectable in (True, False):
+                try:
+                    info = bluetooth.async_last_service_info(
+                        hass, self.address, connectable=connectable
+                    )
+                except Exception:  # pragma: no cover - defensive HA lookup
+                    continue
+                if info is not None:
+                    names.append(getattr(info, "name", None))
+
+        for name in names:
+            name = (name or "").replace("\x00", "").strip()
+            if name and name.replace(":", "").replace("-", "").upper() != address:
+                return name
+        return ""
+
     @property
     def is_warm_drive_controller(self) -> bool:
         """Return whether the controller identifies itself as Warm Drive."""
-        return self._ble_device.name == "Air Heater"
+        if self.config_entry.data.get(CONF_NEO_CONTROLLER_TYPE) in ("air", "water"):
+            return True
+        return self._advertised_heater_name() == "Air Heater"
 
     @property
     def is_dz06_neo(self) -> bool:

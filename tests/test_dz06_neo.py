@@ -9,6 +9,7 @@ from custom_components.diesel_heater import coordinator as coordinator_module
 from custom_components.diesel_heater.burnoff import BurnoffController
 from custom_components.diesel_heater.const import (
     CONF_BURNOFF_ENABLED,
+    CONF_NEO_CONTROLLER_TYPE,
     RUNNING_MODE_TEMPERATURE,
     RUNNING_MODE_VENTILATION,
     RUNNING_STATE_ON,
@@ -76,6 +77,37 @@ def test_direction_associates_writes_with_fff1_and_notifications_with_fff2() -> 
     coordinator = coordinator_for_layout(True)
     assert coordinator._abba_write_char.uuid == FFF1
     assert coordinator._characteristic.uuid == FFF2
+
+
+def test_warm_drive_uses_controller_type_saved_at_discovery() -> None:
+    coordinator = coordinator_for_layout(True, name=None)
+    coordinator.config_entry = SimpleNamespace(
+        data={CONF_NEO_CONTROLLER_TYPE: "air"}
+    )
+
+    assert coordinator.is_warm_drive_controller is True
+
+
+def test_warm_drive_uses_cached_advertisement_when_live_name_is_missing() -> None:
+    coordinator = coordinator_for_layout(True, name=None)
+    coordinator.address = "C8:17:F5:28:E7:9D"
+    coordinator.hass = MagicMock()
+    cached = SimpleNamespace(name="Air Heater")
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(
+            coordinator_module.bluetooth,
+            "async_last_service_info",
+            lambda *_args, **_kwargs: cached,
+        )
+        assert coordinator.is_warm_drive_controller is True
+
+
+def test_warm_drive_ignores_a_mac_address_name() -> None:
+    coordinator = coordinator_for_layout(True, name="C8:17:F5:28:E7:9D")
+    coordinator.address = "C8:17:F5:28:E7:9D"
+
+    assert coordinator.is_warm_drive_controller is False
 
 
 @pytest.mark.parametrize("raw_state, expected", [(1, 1), (2, 1), (4, 1), (5, 1), (0, 0), (7, 0), (8, 0)])
