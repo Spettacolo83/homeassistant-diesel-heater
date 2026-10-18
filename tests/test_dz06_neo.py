@@ -10,6 +10,7 @@ from custom_components.diesel_heater.burnoff import BurnoffController
 from custom_components.diesel_heater.const import (
     CONF_BURNOFF_ENABLED,
     CONF_NEO_CONTROLLER_TYPE,
+    RUNNING_MODE_LEVEL,
     RUNNING_MODE_TEMPERATURE,
     RUNNING_MODE_VENTILATION,
     RUNNING_STATE_ON,
@@ -305,6 +306,55 @@ async def test_status_poll_uses_app_startup_settings() -> None:
     )
     assert await coordinator._send_command(1, 0) is True
     assert coordinator._write_gatt.await_args.args[0] == bytearray.fromhex("a50901000108000101fde2")
+
+
+@pytest.mark.asyncio
+async def test_status_poll_preserves_warm_drive_standby_fields() -> None:
+    coordinator = coordinator_for_layout(True)
+    coordinator._client = SimpleNamespace(is_connected=True)
+    coordinator.data.update({"neo_run_type": 160, "set_temp": 8, "altitude": 1})
+    response = bytearray(39)
+    response[:2] = b"Z%"
+    coordinator._write_gatt = AsyncMock(
+        side_effect=lambda packet: coordinator._notification_callback(FFF2, response)
+    )
+
+    assert await coordinator._send_command(1, 0) is True
+    packet = coordinator._write_gatt.await_args.args[0]
+    assert packet[3:8] == bytearray((0x00, 160, 8, 0, 1))
+
+
+@pytest.mark.asyncio
+async def test_mode_change_uses_native_warm_drive_control() -> None:
+    coordinator = coordinator_for_layout(True)
+    coordinator.data.update(
+        {
+            "set_temp": 17,
+            "neo_run_type": 1,
+            "altitude": 1,
+            "neo_raw_state": 1,
+            "neo_min_target": 8,
+            "neo_max_target": 35,
+        }
+    )
+    response = bytearray(39)
+    response[:2], response[15], response[34] = b"Z%", 17, 2
+    coordinator._write_gatt = AsyncMock(
+        side_effect=lambda packet: coordinator._notification_callback(FFF2, response)
+    )
+
+    assert await coordinator.async_set_mode(RUNNING_MODE_TEMPERATURE) is True
+    packet = coordinator._write_gatt.await_args.args[0]
+    assert packet[3:6] == bytearray((0x51, 2, 17))
+
+
+@pytest.mark.asyncio
+async def test_level_change_does_not_send_a_legacy_gear_command() -> None:
+    coordinator = coordinator_for_layout(True)
+    coordinator._write_gatt = AsyncMock()
+
+    assert await coordinator.async_set_level(2) is False
+    coordinator._write_gatt.assert_not_awaited()
 
 
 @pytest.mark.asyncio

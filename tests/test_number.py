@@ -44,6 +44,7 @@ def create_mock_coordinator(protocol_mode: int = 0) -> MagicMock:
     coordinator.burnoff_after_hours = 0
     coordinator.burnoff_active = False
     coordinator.protocol_mode = protocol_mode
+    coordinator.is_dz06_neo = False
     coordinator._heater_uses_fahrenheit = False
     coordinator.has_cronus_fuel_estimate = False
     coordinator.data = {
@@ -289,6 +290,19 @@ class TestAsyncSetupEntry:
         call_args = async_add_entities.call_args[0][0]
         # Mode 2 includes offset (7 core + offset = 8)
         assert len(call_args) == 8
+
+    @pytest.mark.asyncio
+    async def test_dz06_neo_omits_legacy_level_number(self):
+        coordinator = create_mock_coordinator(protocol_mode=0)
+        coordinator.is_dz06_neo = True
+        async_add_entities = MagicMock()
+
+        await async_setup_entry(
+            MagicMock(), MagicMock(runtime_data=coordinator), async_add_entities
+        )
+
+        entities = async_add_entities.call_args[0][0]
+        assert not any(isinstance(entity, VevorHeaterLevelNumber) for entity in entities)
 
     @pytest.mark.asyncio
     async def test_async_setup_entry_protocol_mode_1(self):

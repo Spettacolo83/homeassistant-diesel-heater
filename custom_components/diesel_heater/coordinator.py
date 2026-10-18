@@ -2656,6 +2656,22 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             return None
         return run_type, target, altitude
 
+    def _neo_status_poll_settings(self) -> tuple[int, int, int] | None:
+        """Return the current app-native fields for a read-only A5/09 poll."""
+        try:
+            run_type = int(self.data.get("neo_run_type", 1))
+            target = int(round(float(self.data.get("set_temp", 8))))
+            if self._heater_uses_fahrenheit:
+                target = int(round((target - 32) * 5 / 9))
+            altitude = int(self.data.get("altitude", 1))
+        except (TypeError, ValueError):
+            return None
+        if not (0 <= run_type <= 0xFF and 0 <= target <= 0xFF):
+            return None
+        if not 0 <= altitude <= 0xFFFF:
+            return None
+        return run_type, target, altitude
+
     async def _async_set_dz06_neo_control(
         self, run_type: int, target: int, altitude: int
     ) -> bool:
@@ -2846,7 +2862,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         if self.is_dz06_neo:
             if command == 1:
-                settings = self._neo_control_settings(use_startup_defaults=True)
+                settings = self._neo_status_poll_settings()
                 if settings is None:
                     return False
                 packet = self._neo_packet(0x00, *settings)
@@ -3337,6 +3353,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._logger.info("Ignoring level change during burn-off")
             return False
 
+        if self.is_dz06_neo:
+            self._logger.warning(
+                "DZ06 Neo has no legacy gear command; use the native mode control"
+            )
+            return False
+
         level = max(1, min(10, level))
         if self._protocol_mode == 5:  # ABBA/HeaterCC uses level up/down button commands
             current_level_raw = self.data.get("set_level")
@@ -3520,6 +3542,17 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if self._burnoff.active and not self._burnoff.cycle.applying:
             self._logger.info("Ignoring mode change during burn-off")
             return False
+
+        if self.is_dz06_neo:
+            if mode not in (RUNNING_MODE_LEVEL, RUNNING_MODE_TEMPERATURE):
+                self._logger.warning("DZ06 Neo supports only Level and Temperature modes")
+                return False
+            settings = self._neo_control_settings()
+            if settings is None:
+                return False
+            _, target, altitude = settings
+            run_type = 1 if mode == RUNNING_MODE_LEVEL else 2
+            return await self._async_set_dz06_neo_control(run_type, target, altitude)
 
         # Ventilation mode (ABBA only)
         if mode == 3:
