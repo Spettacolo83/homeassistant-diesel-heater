@@ -794,7 +794,7 @@ class ProtocolHeatGenie(HeaterProtocol):
         if len(data) < 50 or data[0] != cls._FRAME_PREFIX:
             return False
         base_length = 8 + 4 * (data[1] + 1) + 2
-        if base_length < 50 or data[7] != cls._STATUS_TYPE:
+        if base_length != 50 or data[7] != cls._STATUS_TYPE:
             return False
         # The controller emits either the base register report or the
         # verified two-byte extension, with CRC over the entire report.

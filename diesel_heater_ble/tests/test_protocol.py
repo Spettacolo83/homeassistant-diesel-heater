@@ -2006,6 +2006,20 @@ class TestProtocolHeatGenie:
         assert not self.proto.is_status_frame(frame)
         assert self.proto.parse(frame) is None
 
+    def test_rejects_crc_valid_unverified_status_length(self):
+        """Only the captured 50-byte base and 52-byte extension are supported."""
+        frame = bytearray.fromhex(
+            "aa09ff06000000f2332572002003d2001c08210000008b0bf87ff87f00000440b"
+            "1145942000000000510000000000000af0c6409"
+        )
+        frame[1] = 10
+        frame[-2:-2] = b"\x00\x00"
+        frame[-2:] = self.proto.crc16(frame[:-2]).to_bytes(2, "big")
+
+        assert len(frame) == 54
+        assert not self.proto.is_status_frame(frame)
+        assert self.proto.parse(frame) is None
+
     def test_unsupported_temperatures_are_not_reported(self):
         frame = _make_heatgenie_status()
         frame[24:26] = (32760).to_bytes(2, "little", signed=True)
