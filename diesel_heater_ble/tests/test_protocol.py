@@ -1970,6 +1970,52 @@ class TestProtocolHeatGenie:
         assert self.proto.build_command(4, 68, 0)[:6] == bytearray((0xAA, 0, 0x66, 1, 1, 68))
         assert self.proto.build_time_sync(0, 12, 34)[:6] == bytearray((0xAA, 0, 0x66, 3, 12, 34))
 
+    def test_parses_captured_extended_f2_frame(self):
+        frame = bytearray.fromhex(
+            "aa09ff06000000f2332572002003d2001c08210000008b0bf87ff87f00000"
+            "440b1145942000000000510000000000000af0c6409"
+        )
+
+        parsed = self.proto.parse(frame)
+
+        assert parsed is not None
+        assert parsed["supply_voltage"] == 11.4
+        assert parsed["cab_temperature"] == 21.0
+        assert parsed["set_level"] == 5
+        assert parsed["set_temp"] == 16
+
+    def test_rejects_corrupted_extended_f2_frame(self):
+        frame = bytearray.fromhex(
+            "aa09ff06000000f2332572002003d2001c08210000008b0bf87ff87f00000"
+            "440b1145942000000000510000000000000af0c6409"
+        )
+        frame[20] ^= 0x01
+
+        assert not self.proto.is_status_frame(frame)
+        assert self.proto.parse(frame) is None
+
+    def test_cooldown_reports_power_off(self):
+        frame = _make_heatgenie_status()
+        frame[8] = 4
+        frame[-2:] = self.proto.crc16(frame[:-2]).to_bytes(2, "big")
+
+        parsed = self.proto.parse(frame)
+
+        assert parsed is not None
+        assert parsed["running_state"] == 0
+        assert parsed["running_step"] == 4
+
+    def test_power_state_matches_the_app_state_table(self):
+        for state in range(11):
+            frame = _make_heatgenie_status()
+            frame[8] = state
+            frame[-2:] = self.proto.crc16(frame[:-2]).to_bytes(2, "big")
+
+            parsed = self.proto.parse(frame)
+
+            assert parsed is not None
+            assert parsed["running_state"] == int(state in (1, 2, 3))
+
     def test_parses_independent_temperature_and_component_fields(self):
         parsed = self.proto.parse(_make_heatgenie_status())
         assert parsed is not None

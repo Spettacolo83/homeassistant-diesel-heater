@@ -205,25 +205,29 @@ class VevorHeaterTemperatureNumber(
             }
         )
 
-        # Set unit and range based on heater's native unit and protocol
-        # Beta.41 fix: Per-protocol limits (Hcalory: 0-40°C, AAXX: 8-36°C)
+        # Set unit and range based on the controller's native protocol limits.
         is_hcalory = coordinator.protocol_mode == 7
+        is_heatgenie = coordinator.protocol_mode == 8
         if coordinator._heater_uses_fahrenheit:
             self._attr_native_unit_of_measurement = UnitOfTemperature.FAHRENHEIT
-            self._attr_native_min_value = 32   # 32°F = 0°C (Hcalory F)
-            self._attr_native_max_value = 104  # 104°F = 40°C (Hcalory F)
+            self._attr_native_min_value = 50 if is_heatgenie else 32
+            self._attr_native_max_value = 104
         elif coordinator.protocol_mode == 9:
             self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
             self._attr_native_min_value = 5
             self._attr_native_max_value = 35
         elif is_hcalory:
             self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
-            self._attr_native_min_value = 0   # Hcalory Celsius: 0-40°C
+            self._attr_native_min_value = 0
+            self._attr_native_max_value = 40
+        elif is_heatgenie:
+            self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+            self._attr_native_min_value = 10
             self._attr_native_max_value = 40
         else:
             self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
-            self._attr_native_min_value = MIN_TEMP_CELSIUS   # AAXX: 8°C
-            self._attr_native_max_value = MAX_TEMP_CELSIUS   # AAXX: 36°C
+            self._attr_native_min_value = MIN_TEMP_CELSIUS
+            self._attr_native_max_value = MAX_TEMP_CELSIUS
 
     @property
     def available(self) -> bool:

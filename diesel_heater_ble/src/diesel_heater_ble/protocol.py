@@ -876,7 +876,10 @@ class ProtocolHeatGenie(HeaterProtocol):
 
         parsed: dict[str, Any] = {
             "connected": True,
-            "running_state": 0 if state in (0, 5) else 1,
+            # The app marks only ignition, automatic heat, and manual heat as
+            # powered. Cooldown, faults, pump, ventilation, and start/stop
+            # states are distinct non-powered controller states.
+            "running_state": int(state in (1, 2, 3)),
             "running_step": state,
             "running_mode": running_mode,
             "heatgenie_run_mode": (flags >> 5) & 0x03,

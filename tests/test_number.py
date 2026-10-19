@@ -100,6 +100,21 @@ class TestVevorHeaterLevelNumber:
 
         assert number._attr_native_step == 1
 
+    def test_heatgenie_celsius_limits_match_controller(self):
+        coordinator = create_mock_coordinator(protocol_mode=8)
+        number = VevorHeaterTemperatureNumber(coordinator)
+
+        assert number._attr_native_min_value == 10
+        assert number._attr_native_max_value == 40
+
+    def test_heatgenie_fahrenheit_limits_match_controller(self):
+        coordinator = create_mock_coordinator(protocol_mode=8)
+        coordinator._heater_uses_fahrenheit = True
+        number = VevorHeaterTemperatureNumber(coordinator)
+
+        assert number._attr_native_min_value == 50
+        assert number._attr_native_max_value == 104
+
     def test_unique_id(self):
         """Test unique_id format."""
         coordinator = create_mock_coordinator()

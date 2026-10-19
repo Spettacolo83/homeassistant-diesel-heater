@@ -221,6 +221,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._v21_handshake_event = asyncio.Event()
         self._v21_handshake_authenticated: bool | None = None
         self._feaa_command_lock = asyncio.Lock()
+        self._heatgenie_status_event = asyncio.Event()
+        self._heatgenie_command_lock = asyncio.Lock()
         self._time_synced_this_session = False
         self._is_hcalory_device = False  # True if using Hcalory MVP1/MVP2 protocol
         self._hcalory_mvp2_device = False  # Confirmed by the BD39 GATT service
@@ -1506,36 +1508,42 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             if getattr(self, "_is_cronus_device", False):
                 return await self._async_update_cronus_data()
 
-            # Request status with retries (up to 3 attempts).
-            # Hard outer timeout per attempt because the kernel BT stack can
-            # hang indefinitely inside bleak's write_gatt_char when the
-            # adapter is wedged — bleak itself has no default write timeout.
-            # Without this wrapper, _async_update_data would await forever
-            # and _consecutive_failures would never reach the auto-recovery
-            # threshold (see issue #104 context and bt-recovery notes).
-            max_retries = 3
-            status = False
-            for attempt in range(max_retries):
-                try:
-                    status = await asyncio.wait_for(
-                        self._send_command(1, 0),
-                        timeout=15.0,
-                    )
-                except asyncio.TimeoutError:
-                    self._logger.debug(
-                        "Status request hard-timeout (attempt %d/%d) — bleak "
-                        "write likely hung on wedged adapter",
-                        attempt + 1, max_retries,
-                    )
-                    status = False
-                if status:
-                    break
-                if attempt < max_retries - 1:
-                    self._logger.debug(
-                        "Status request failed (attempt %d/%d), retrying...",
-                        attempt + 1, max_retries
-                    )
-                    await asyncio.sleep(1.0)
+            if self._protocol_mode == 8 and not connected_this_update:
+                # HeatGenie configures periodic F2 reports at connection. The app
+                # consumes those reports; it does not send another 0x65 write for
+                # each refresh.
+                status = await self._await_heatgenie_status()
+            else:
+                # Request status with retries (up to 3 attempts).
+                # Hard outer timeout per attempt because the kernel BT stack can
+                # hang indefinitely inside bleak's write_gatt_char when the
+                # adapter is wedged — bleak itself has no default write timeout.
+                # Without this wrapper, _async_update_data would await forever
+                # and _consecutive_failures would never reach the auto-recovery
+                # threshold (see issue #104 context and bt-recovery notes).
+                max_retries = 3
+                status = False
+                for attempt in range(max_retries):
+                    try:
+                        status = await asyncio.wait_for(
+                            self._send_command(1, 0),
+                            timeout=15.0,
+                        )
+                    except asyncio.TimeoutError:
+                        self._logger.debug(
+                            "Status request hard-timeout (attempt %d/%d) — bleak "
+                            "write likely hung on wedged adapter",
+                            attempt + 1, max_retries,
+                        )
+                        status = False
+                    if status:
+                        break
+                    if attempt < max_retries - 1:
+                        self._logger.debug(
+                            "Status request failed (attempt %d/%d), retrying...",
+                            attempt + 1, max_retries
+                        )
+                        await asyncio.sleep(1.0)
 
             # MVP1 -> MVP2 fallback: If MVP1 query failed (now the default) and
             # protocol is Hcalory with bd39 service, try MVP2 query as fallback.
@@ -2302,6 +2310,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         self._logger.debug("Parsed %s: %s", protocol.name, parsed)
         self._notification_data = data
+        if isinstance(protocol, ProtocolHeatGenie):
+            # A validated F2 report satisfies a passive HeatGenie refresh.
+            self._heatgenie_status_event.set()
 
         # Log protocol change
         if old_mode != self._protocol_mode:
@@ -2313,6 +2324,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         # Soot/pending from this parse, then sync any live cycle with ECU cooldown.
         self._burnoff.observe_status()
         self._burnoff.schedule_abort_if_ecu_stopped()
+        if isinstance(protocol, ProtocolHeatGenie):
+            # HeatGenie reports asynchronously every two seconds. Notify
+            # entities immediately instead of waiting for the 15-second
+            # DataUpdateCoordinator interval.
+            self.async_set_updated_data(self.data)
 
     def _apply_ui_temperature_offset(self) -> None:
         """Apply HA-side UI temperature offset (display only, not sent to heater).
@@ -2574,6 +2590,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
     async def _send_wake_up_ping(self) -> None:
         """Send a wake-up ping to the device to ensure it's responsive."""
+        # HeatGenie starts automatic F2 reporting with its dedicated connection
+        # command. A generic command-1 probe would duplicate that setup write.
+        if self._is_heatgenie_device:
+            return
         try:
             if self._client and (self._characteristic or self._abba_write_char or self._hcalory_write_char or self._heatgenie_write_char):
                 packet = self._build_command_packet(1)
@@ -2797,15 +2817,82 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             if response and len(response) >= 21 and response[0] == 0x5D:
                 return
 
+async def _await_heatgenie_status(self) -> bool:
+        """Wait for the next automatic HeatGenie F2 status report."""
+        self._heatgenie_status_event.clear()
+        return await self._wait_for_heatgenie_status(3.0)
+
+    async def _wait_for_heatgenie_status(self, timeout: float) -> bool:
+        """Wait for a validated HeatGenie F2 status report without clearing it."""
+        try:
+            await asyncio.wait_for(self._heatgenie_status_event.wait(), timeout=timeout)
+        except TimeoutError:
+            self._logger.debug("HeatGenie automatic status report timed out")
+            return False
+        return True
 
     async def _send_command(self, command: int, argument: int, timeout: float = 5.0, max_retries: int = 1) -> bool:
-        """Serialize FEAA commands while retaining existing protocol behavior."""
+        """Serialize protocol-specific commands."""
         if self._protocol_mode == 6:
             async with self._feaa_command_lock:
                 return await self._send_command_unlocked(
                     command, argument, timeout, max_retries
                 )
+        if self._protocol_mode == 8:
+            async with self._heatgenie_command_lock:
+                return await self._send_command_unlocked(
+                    command, argument, timeout, max_retries
+                )
         return await self._send_command_unlocked(command, argument, timeout, max_retries)
+
+    def _heatgenie_command_confirmed(self, command: int, argument: int) -> bool:
+        """Return whether the latest F2 report reflects a HeatGenie command."""
+        if command == 3:
+            return self.data.get("running_state") == int(bool(argument))
+        if command == 2:
+            return self.data.get("heatgenie_run_mode") == argument
+        if command == 4:
+            return self.data.get("set_temp") == argument
+        if command == 5:
+            return self.data.get("set_level") == argument
+        if command == 15:
+            return self.data.get("temp_unit") == argument
+        return True
+
+    async def _send_heatgenie_command(
+        self, command: int, argument: int, timeout: float
+    ) -> bool:
+        """Write one HeatGenie command and confirm it from an F2 report."""
+        packet = self._build_command_packet(command, argument)
+        self._notification_data = None
+        self._heatgenie_status_event.clear()
+        self._logger.info(
+            "Sending HeatGenie command: %s (cmd=%d, arg=%d)",
+            packet.hex(), command, argument,
+        )
+        try:
+            await self._write_gatt(packet)
+        except Exception as err:
+            self._logger.error("HeatGenie command write failed: %s", err)
+            await self._cleanup_connection()
+            return False
+
+        deadline = time.monotonic() + min(timeout, 3.0)
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self._logger.info(
+                    "HeatGenie command was not confirmed by an F2 report "
+                    "(cmd=%d, arg=%d)", command, argument,
+                )
+                return False
+            if not await self._wait_for_heatgenie_status(remaining):
+                return False
+            if self._heatgenie_command_confirmed(command, argument):
+                return True
+            # A report can have been queued immediately before the write.
+            # Keep waiting for the next report rather than sending again.
+            self._heatgenie_status_event.clear()
 
     async def _send_v21_time_sync(self, now: datetime) -> bool:
         """Send the APK-defined FEAA 03/01 time-settings write."""
@@ -2859,6 +2946,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 "Try reloading the integration."
             )
             return False
+
+        if self._protocol_mode == 8:
+            return await self._send_heatgenie_command(command, argument, timeout)
 
         if self.is_dz06_neo:
             if command == 1:
@@ -3186,6 +3276,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             return bool(await self.async_set_temperature(float(cycle.saved_temp))) and mode_ok
         return mode_ok
 
+    async def _refresh_after_control_command(self) -> None:
+        """Refresh after a control write unless the controller reports automatically."""
+        if self._protocol_mode == 8:
+            self._logger.debug("HeatGenie: waiting for the controller's automatic status report")
+            return
+        await self.async_request_refresh()
+
     async def _power_off(self) -> None:
         """Send the real power-off command."""
         # ABBA uses a toggle command (0xA1) for both ON and OFF.
@@ -3210,7 +3307,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             return
         success = await self._send_command(3, 0)
         if success:
-            await self.async_request_refresh()
+            await self._refresh_after_control_command()
         else:
             self._burnoff.ha_power_off = False
 
@@ -3285,7 +3382,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 return
         success = await self._send_command(3, 1)
         if success:
-            await self.async_request_refresh()
+            await self._refresh_after_control_command()
 
     async def async_turn_off(self, *, immediate: bool = False) -> None:
         """Turn heater off.
@@ -3412,7 +3509,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         success = await self._send_command(command, level)
         if success:
-            await self.async_request_refresh()
+            await self._refresh_after_control_command()
             self._logger.info("✅ SET LEVEL SUCCESS: level=%d", level)
         else:
             self._logger.warning("❌ SET LEVEL FAILED: level=%d", level)
@@ -3504,7 +3601,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         success = await self._send_command(4, command_temp)
 
         if success:
-            await self.async_request_refresh()
+            await self._refresh_after_control_command()
             # Log result after refresh
             new_temp = self.data.get("set_temp", "unknown")
             self._logger.info(
@@ -3576,10 +3673,21 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         # Standard modes (0-2)
         mode = max(0, min(2, mode))
+        command_mode = mode
+        if self._protocol_mode == 8:
+            command_mode = {
+                RUNNING_MODE_TEMPERATURE: 0,
+                RUNNING_MODE_LEVEL: 1,
+            }.get(mode)
+            if command_mode is None:
+                self._logger.warning(
+                    "HeatGenie does not expose a controller mapping for mode %d", mode
+                )
+                return False
         self._logger.info("Setting running mode to %d", mode)
-        success = await self._send_command(2, mode)
+        success = await self._send_command(2, command_mode)
         if success:
-            await self.async_request_refresh()
+            await self._refresh_after_control_command()
         return success
 
     async def async_set_auto_start_stop(self, enabled: bool) -> None:
@@ -3707,7 +3815,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self.data["temp_unit"] = value
             self._heater_uses_fahrenheit = use_fahrenheit
             self._logger.info("✅ Temperature unit set to %s", unit_name)
-            await self.async_request_refresh()
+            await self._refresh_after_control_command()
         else:
             self._logger.warning("❌ Failed to set temperature unit")
 
