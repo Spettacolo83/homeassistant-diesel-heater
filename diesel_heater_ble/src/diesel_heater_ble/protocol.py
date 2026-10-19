@@ -56,6 +56,11 @@ from .const import (
     RUNNING_MODE_MANUAL,
     RUNNING_MODE_TEMPERATURE,
     RUNNING_MODE_VENTILATION,
+    RUNNING_STEP_COOLDOWN,
+    RUNNING_STEP_IGNITION,
+    RUNNING_STEP_RUNNING,
+    RUNNING_STEP_STANDBY,
+    RUNNING_STEP_VENTILATION,
     SUNSTER_V21_KEY,
     PROTOCOL_HEADER_FEAA,
 )
@@ -757,6 +762,7 @@ class ProtocolHeatGenie(HeaterProtocol):
     name = "HeatGenie"
 
     _FRAME_PREFIX = 0xAA
+    _COMMAND_ACK = 0x41
     _STATUS_TYPE = 0xF2
     _COMMAND_BUTTON = 0x61
     _COMMAND_AUTO_UPDATE = 0x65
@@ -777,6 +783,18 @@ class ProtocolHeatGenie(HeaterProtocol):
 
     def __init__(self) -> None:
         self._uses_fahrenheit = False
+
+    @classmethod
+    def parse_command_ack(cls, data: bytearray) -> tuple[bool, int] | None:
+        """Decode the app button acknowledgement (AA 00 41 result nonce CRC)."""
+        if (
+            len(data) != 8
+            or data[0] != cls._FRAME_PREFIX
+            or data[2] != cls._COMMAND_ACK
+            or cls.crc16(data) != 0
+        ):
+            return None
+        return data[3] == 0, data[4]
 
     @staticmethod
     def crc16(data: bytes | bytearray) -> int:
@@ -863,6 +881,16 @@ class ProtocolHeatGenie(HeaterProtocol):
 
         registers = data[8:48]
         state = registers[0] & 0x0F
+        running_step = {
+            0: RUNNING_STEP_STANDBY,
+            1: RUNNING_STEP_IGNITION,
+            2: RUNNING_STEP_RUNNING,
+            3: RUNNING_STEP_RUNNING,
+            4: RUNNING_STEP_COOLDOWN,
+            5: RUNNING_STEP_STANDBY,
+            8: RUNNING_STEP_VENTILATION,
+            9: RUNNING_STEP_STANDBY,
+        }.get(state)
         flags = registers[1]
         raw_error = int.from_bytes(registers[20:22], "little")
         temp_unit = 1 if flags & 0x10 else 0
@@ -880,8 +908,11 @@ class ProtocolHeatGenie(HeaterProtocol):
             # powered. Cooldown, faults, pump, ventilation, and start/stop
             # states are distinct non-powered controller states.
             "running_state": int(state in (1, 2, 3)),
-            "running_step": state,
+            "running_step": running_step,
+            "heatgenie_raw_state": state,
             "running_mode": running_mode,
+            "heatgenie_last_button": registers[34],
+            "heatgenie_last_button_nonce": registers[35],
             "heatgenie_run_mode": (flags >> 5) & 0x03,
             "set_level": registers[32],
             "set_temp": registers[33],

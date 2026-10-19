@@ -223,6 +223,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._feaa_command_lock = asyncio.Lock()
         self._heatgenie_status_event = asyncio.Event()
         self._heatgenie_command_lock = asyncio.Lock()
+        self._heatgenie_last_status_at = 0.0
+        self._heatgenie_pending_button: tuple[int, int] | None = None
+        self._heatgenie_acknowledged_button: tuple[int, int] | None = None
         self._time_synced_this_session = False
         self._is_hcalory_device = False  # True if using Hcalory MVP1/MVP2 protocol
         self._hcalory_mvp2_device = False  # Confirmed by the BD39 GATT service
@@ -2211,6 +2214,26 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     self._logger.warning("Sunster V2.1 handshake rejected by heater")
                 return
 
+        # The APK acknowledges button writes separately as AA 00 41 result nonce.
+        # It is not a register-area status report, so handle it before parsing F2.
+        if isinstance(protocol, ProtocolHeatGenie):
+            command_ack = protocol.parse_command_ack(parse_data)
+            if command_ack is not None:
+                succeeded, nonce = command_ack
+                pending_button = self._heatgenie_pending_button
+                if pending_button is not None and nonce == pending_button[1]:
+                    if succeeded:
+                        self._heatgenie_acknowledged_button = pending_button
+                    else:
+                        self._logger.warning(
+                            "HeatGenie rejected button %d with nonce %02X",
+                            pending_button[0],
+                            nonce,
+                        )
+                    self._heatgenie_status_event.set()
+                self._notification_data = data
+                return
+
         # Parse
         try:
             parsed = protocol.parse(parse_data)
@@ -2250,6 +2273,20 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 "Please report this on GitHub Issue #24 with your heater model.",
                 proto_ver, data.hex(),
             )
+
+        if isinstance(protocol, ProtocolHeatGenie):
+            self._heatgenie_last_status_at = time.monotonic()
+            pending_button = self._heatgenie_pending_button
+            if pending_button is not None and (
+                parsed.get("heatgenie_last_button"),
+                parsed.get("heatgenie_last_button_nonce"),
+            ) != pending_button:
+                self._logger.debug(
+                    "Deferring HeatGenie report with stale button echo %s while awaiting %s",
+                    (parsed.get("heatgenie_last_button"), parsed.get("heatgenie_last_button_nonce")),
+                    pending_button,
+                )
+                return
 
         self.data.update(parsed)
 
@@ -2817,10 +2854,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             if response and len(response) >= 21 and response[0] == 0x5D:
                 return
 
-async def _await_heatgenie_status(self) -> bool:
-        """Wait for the next automatic HeatGenie F2 status report."""
+    async def _await_heatgenie_status(self) -> bool:
+        """Return recent HeatGenie status or wait for its next F2 report."""
+        if time.monotonic() - self._heatgenie_last_status_at < 60.0:
+            return True
         self._heatgenie_status_event.clear()
-        return await self._wait_for_heatgenie_status(3.0)
+        return await self._wait_for_heatgenie_status(10.0)
 
     async def _wait_for_heatgenie_status(self, timeout: float) -> bool:
         """Wait for a validated HeatGenie F2 status report without clearing it."""
@@ -2845,8 +2884,21 @@ async def _await_heatgenie_status(self) -> bool:
                 )
         return await self._send_command_unlocked(command, argument, timeout, max_retries)
 
-    def _heatgenie_command_confirmed(self, command: int, argument: int) -> bool:
+    def _heatgenie_command_confirmed(
+        self,
+        command: int,
+        argument: int,
+        expected_button: tuple[int, int] | None,
+    ) -> bool:
         """Return whether the latest F2 report reflects a HeatGenie command."""
+        if expected_button is not None:
+            if self._heatgenie_acknowledged_button == expected_button:
+                return True
+            if (
+                self.data.get("heatgenie_last_button"),
+                self.data.get("heatgenie_last_button_nonce"),
+            ) != expected_button:
+                return False
         if command == 3:
             return self.data.get("running_state") == int(bool(argument))
         if command == 2:
@@ -2866,33 +2918,37 @@ async def _await_heatgenie_status(self) -> bool:
         packet = self._build_command_packet(command, argument)
         self._notification_data = None
         self._heatgenie_status_event.clear()
+        expected_button = (
+            (packet[3], packet[4]) if packet[2] == ProtocolHeatGenie._COMMAND_BUTTON else None
+        )
+        self._heatgenie_pending_button = expected_button
+        self._heatgenie_acknowledged_button = None
         self._logger.info(
             "Sending HeatGenie command: %s (cmd=%d, arg=%d)",
             packet.hex(), command, argument,
         )
         try:
             await self._write_gatt(packet)
+            deadline = time.monotonic() + 10.0
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self._logger.info(
+                        "HeatGenie command was not confirmed by an F2 report "
+                        "(cmd=%d, arg=%d)", command, argument,
+                    )
+                    return False
+                if not await self._wait_for_heatgenie_status(remaining):
+                    return False
+                if self._heatgenie_command_confirmed(command, argument, expected_button):
+                    return True
+                self._heatgenie_status_event.clear()
         except Exception as err:
             self._logger.error("HeatGenie command write failed: %s", err)
             await self._cleanup_connection()
             return False
-
-        deadline = time.monotonic() + min(timeout, 3.0)
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                self._logger.info(
-                    "HeatGenie command was not confirmed by an F2 report "
-                    "(cmd=%d, arg=%d)", command, argument,
-                )
-                return False
-            if not await self._wait_for_heatgenie_status(remaining):
-                return False
-            if self._heatgenie_command_confirmed(command, argument):
-                return True
-            # A report can have been queued immediately before the write.
-            # Keep waiting for the next report rather than sending again.
-            self._heatgenie_status_event.clear()
+        finally:
+            self._heatgenie_pending_button = None
 
     async def _send_v21_time_sync(self, now: datetime) -> bool:
         """Send the APK-defined FEAA 03/01 time-settings write."""

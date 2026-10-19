@@ -195,6 +195,17 @@ class TestRunningStepSensor:
         # running_step 3 should map to a RUNNING_STEP_NAMES entry
         assert value == RUNNING_STEP_NAMES.get(3, "Unknown (3)")
 
+    def test_heatgenie_uses_its_own_app_state_labels(self):
+        coordinator = create_mock_coordinator()
+        coordinator.protocol_mode = 8
+        coordinator.data["heatgenie_raw_state"] = 5
+        sensor = VevorRunningStepSensor(coordinator)
+
+        assert sensor.native_value == "Standby"
+
+        coordinator.data["heatgenie_raw_state"] = 4
+        assert sensor.native_value == "Cooldown"
+
     def test_native_value_unknown_step(self):
         """Test native_value with unknown step code."""
         coordinator = create_mock_coordinator()

@@ -180,6 +180,9 @@ def create_mock_coordinator() -> VevorHeaterCoordinator:
     coordinator._feaa_command_lock = asyncio.Lock()
     coordinator._heatgenie_status_event = asyncio.Event()
     coordinator._heatgenie_command_lock = asyncio.Lock()
+    coordinator._heatgenie_last_status_at = 0.0
+    coordinator._heatgenie_pending_button = None
+    coordinator._heatgenie_acknowledged_button = None
     coordinator._time_synced_this_session = False
     coordinator._hcalory_write_char = None
     coordinator._connection_attempts = 0
@@ -6543,3 +6546,86 @@ class TestTimeSync:
         assert await coordinator.async_sync_time() is True
         coordinator._send_command.assert_awaited_once()
         assert coordinator._send_command.await_args.args[0] == 10
+
+
+class TestHeatGenieDelayedReports:
+    """Regressions for delayed F2 delivery through a Bluetooth proxy."""
+
+    def _frame(self, coordinator, *, state: int, button: int, nonce: int) -> bytearray:
+        protocol = coordinator._protocols[8]
+        frame = bytearray(50)
+        frame[0], frame[1], frame[7] = 0xAA, 9, 0xF2
+        frame[8] = state
+        frame[42], frame[43] = button, nonce
+        frame[-2:] = protocol.crc16(frame[:-2]).to_bytes(2, "big")
+        return frame
+
+    def test_stale_button_echo_does_not_overwrite_pending_command_state(self):
+        coordinator = create_mock_coordinator()
+        coordinator._is_heatgenie_device = True
+        coordinator._heatgenie_pending_button = (2, 0xAE)
+        coordinator.data["running_state"] = 0
+
+        coordinator._parse_response(self._frame(coordinator, state=1, button=1, nonce=0x8D))
+
+        assert coordinator.data["running_state"] == 0
+        assert not coordinator._heatgenie_status_event.is_set()
+
+        coordinator._parse_response(self._frame(coordinator, state=4, button=2, nonce=0xAE))
+
+        assert coordinator.data["running_state"] == 0
+        assert coordinator.data["running_step"] == RUNNING_STEP_COOLDOWN
+        assert coordinator._heatgenie_status_event.is_set()
+
+    def test_button_acknowledgement_confirms_matching_pending_button(self):
+        coordinator = create_mock_coordinator()
+        coordinator._is_heatgenie_device = True
+        coordinator._heatgenie_pending_button = (2, 0xAE)
+        protocol = coordinator._protocols[8]
+        frame = bytearray((0xAA, 0, 0x41, 0, 0xAE, 0, 0, 0))
+        frame[-2:] = protocol.crc16(frame[:-2]).to_bytes(2, "big")
+
+        coordinator._parse_response(frame)
+
+        assert coordinator._heatgenie_acknowledged_button == (2, 0xAE)
+        assert coordinator._heatgenie_status_event.is_set()
+
+    @pytest.mark.asyncio
+    async def test_app_style_button_acknowledgement_completes_command(self):
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 8
+        coordinator._is_heatgenie_device = True
+        coordinator._client = MagicMock(is_connected=True)
+        coordinator._characteristic = MagicMock()
+        coordinator._protocol = coordinator._protocols[8]
+
+        async def write(packet):
+            protocol = coordinator._protocols[8]
+            ack = bytearray((0xAA, 0, 0x41, 0, packet[4], 0, 0, 0))
+            ack[-2:] = protocol.crc16(ack[:-2]).to_bytes(2, "big")
+            coordinator._parse_response(ack)
+
+        coordinator._write_gatt = AsyncMock(side_effect=write)
+
+        assert await coordinator._send_command(3, 0) is True
+        coordinator._write_gatt.assert_awaited_once()
+
+    def test_button_acknowledgement_ignores_unmatched_nonce(self):
+        coordinator = create_mock_coordinator()
+        coordinator._is_heatgenie_device = True
+        coordinator._heatgenie_pending_button = (2, 0xAE)
+        protocol = coordinator._protocols[8]
+        frame = bytearray((0xAA, 0, 0x41, 0, 0x8D, 0, 0, 0))
+        frame[-2:] = protocol.crc16(frame[:-2]).to_bytes(2, "big")
+
+        coordinator._parse_response(frame)
+
+        assert coordinator._heatgenie_acknowledged_button is None
+        assert not coordinator._heatgenie_status_event.is_set()
+
+    @pytest.mark.asyncio
+    async def test_recent_report_satisfies_passive_refresh(self):
+        coordinator = create_mock_coordinator()
+        coordinator._heatgenie_last_status_at = time.monotonic()
+
+        assert await coordinator._await_heatgenie_status()
