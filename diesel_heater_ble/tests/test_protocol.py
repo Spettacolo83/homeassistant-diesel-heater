@@ -1958,13 +1958,15 @@ class TestProtocolHeatGenie:
     def setup_method(self):
         self.proto = ProtocolHeatGenie()
 
-    def test_app_command_frames(self):
+    def test_app_command_frames(self, monkeypatch):
+        monkeypatch.setattr("diesel_heater_ble.protocol.randrange", lambda _: 0)
         assert self.proto.build_command(1, 0, 0)[:6] == bytearray((0xAA, 0, 0x65, 2, 20, 30))
         assert self.proto.build_command(2, 1, 0)[:6] == bytearray((0xAA, 0, 0x66, 0, 0, 1))
-        assert self.proto.build_command(3, 1, 0)[:6] == bytearray((0xAA, 0, 0x61, 1, 0xFF, 0))
+        assert self.proto.build_command(3, 1, 0).hex() == "aa00610100007f7c"
+        assert self.proto.build_command(3, 0, 0).hex() == "aa0061020000262c"
         assert self.proto.build_command(4, 20, 0)[:6] == bytearray((0xAA, 0, 0x66, 1, 0, 20))
         assert self.proto.build_command(5, 6, 0)[:6] == bytearray((0xAA, 0, 0x66, 2, 0, 6))
-        assert self.proto.build_command(15, 1, 0)[:6] == bytearray((0xAA, 0, 0x61, 10, 0xFF, 0))
+        assert self.proto.build_command(15, 1, 0).hex() == "aa00610a00008f8d"
         assert self.proto.build_command(4, 68, 0)[:6] == bytearray((0xAA, 0, 0x66, 1, 1, 68))
         assert self.proto.build_time_sync(0, 12, 34)[:6] == bytearray((0xAA, 0, 0x66, 3, 12, 34))
 

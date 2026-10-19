@@ -19,6 +19,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
+from random import randrange
 from typing import Any
 
 from .const import (
@@ -808,6 +809,10 @@ class ProtocolHeatGenie(HeaterProtocol):
         packet[-2:] = cls.crc16(packet[:-2]).to_bytes(2, "big")
         return packet
 
+    def _button_frame(self, button: int) -> bytearray:
+        """Build a button frame with the app's per-command acknowledgement nonce."""
+        return self._frame(self._COMMAND_BUTTON, button, randrange(255), 0)
+
     def build_command(self, command: int, argument: int, passkey: int) -> bytearray:
         """Translate standard integration commands to verified app frames."""
         del passkey
@@ -817,7 +822,7 @@ class ProtocolHeatGenie(HeaterProtocol):
             return self._frame(self._COMMAND_SHORT_PARAMETER, self._SHORT_RUN_MODE, 0, argument)
         if command == 3:
             button = self._BUTTON_ON if argument else self._BUTTON_OFF
-            return self._frame(self._COMMAND_BUTTON, button, 0xFF, 0)
+            return self._button_frame(button)
         if command == 4:
             return self._frame(
                 self._COMMAND_SHORT_PARAMETER,
@@ -839,7 +844,7 @@ class ProtocolHeatGenie(HeaterProtocol):
             button = (
                 self._BUTTON_SWITCH_TEMP_TO_FAHRENHEIT if self._uses_fahrenheit else self._BUTTON_SWITCH_TEMP_TO_CELSIUS
             )
-            return self._frame(self._COMMAND_BUTTON, button, 0xFF, 0)
+            return self._button_frame(button)
         raise ValueError(f"Unsupported HeatGenie command: {command}")
 
     def build_time_sync(self, weekday: int, hour: int, minute: int) -> bytearray:
