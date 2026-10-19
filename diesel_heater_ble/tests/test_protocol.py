@@ -1995,6 +1995,17 @@ class TestProtocolHeatGenie:
         assert "intake_temperature" not in parsed
         assert "outlet_temperature" not in parsed
 
+    def test_rejects_corrupted_52_byte_controller_status_frame(self):
+        """The extended report must retain its full-frame CRC validation."""
+        frame = bytearray.fromhex(
+            "aa09ff06000000f2332572002003d2001c08210000008b0bf87ff87f00000440b"
+            "1145942000000000510000000000000af0c6409"
+        )
+        frame[20] ^= 0x01
+
+        assert not self.proto.is_status_frame(frame)
+        assert self.proto.parse(frame) is None
+
     def test_unsupported_temperatures_are_not_reported(self):
         frame = _make_heatgenie_status()
         frame[24:26] = (32760).to_bytes(2, "little", signed=True)

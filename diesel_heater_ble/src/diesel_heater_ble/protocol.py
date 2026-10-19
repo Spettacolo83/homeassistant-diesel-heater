@@ -793,9 +793,14 @@ class ProtocolHeatGenie(HeaterProtocol):
         """Return True for a complete automatic register-area report."""
         if len(data) < 50 or data[0] != cls._FRAME_PREFIX:
             return False
-        return (
-            data[7] == cls._STATUS_TYPE and cls.crc16(data) == 0
-        )
+        base_length = 8 + 4 * (data[1] + 1) + 2
+        if base_length < 50 or data[7] != cls._STATUS_TYPE:
+            return False
+        # The controller emits either the base register report or the
+        # verified two-byte extension, with CRC over the entire report.
+        if len(data) not in (base_length, base_length + 2):
+            return False
+        return cls.crc16(data) == 0
 
     @classmethod
     def _frame(cls, command: int, first: int, second: int, third: int) -> bytearray:
