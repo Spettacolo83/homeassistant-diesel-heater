@@ -909,8 +909,8 @@ class TestNotificationCallback:
         coordinator._write_gatt.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_v21_fresh_connection_status_precedes_settings_time_sync(self):
-        """A V2.1 reconnect follows the APK's 00/00 then 03/01 sequence."""
+    async def test_v21_initial_settings_sync_does_not_repeat_after_reconnect(self):
+        """The V2.1 app writes settings once, then only refreshes status on reconnect."""
         coordinator = create_mock_coordinator()
         protocol = coordinator._protocols[6]
         serial = "AABBCCDDEEFF"
@@ -920,6 +920,7 @@ class TestNotificationCallback:
 
         client = MagicMock()
         client.is_connected = True
+        client.disconnect = AsyncMock()
         coordinator._client = None
         coordinator._ensure_connected = AsyncMock(
             side_effect=lambda: setattr(coordinator, "_client", client)
@@ -967,6 +968,18 @@ class TestNotificationCallback:
             coordinator._write_gatt.await_args_list[1].args[0], serial
         )
         assert time_sync[10:12] == bytearray((0x3A, 0x82))
+
+        await coordinator._cleanup_connection()
+        assert coordinator._time_synced_this_session is True
+
+        with patch(
+            "custom_components.diesel_heater.coordinator.dt_util.now",
+            return_value=datetime(2026, 10, 14, 9, 30, tzinfo=UTC),
+        ):
+            data = await coordinator._async_update_data()
+
+        assert data["connected"] is True
+        assert sent_commands == [(0x00, 0x00), (0x03, 0x01), (0x00, 0x00)]
 
 # ---------------------------------------------------------------------------
 # Additional fuel tracking tests

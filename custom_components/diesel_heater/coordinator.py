@@ -2399,8 +2399,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 self._v21_handshake_sent = False
                 self._v21_handshake_event.clear()
                 self._v21_handshake_authenticated = None
-                # Reset time sync flag to trigger auto-sync on next connection
-                self._time_synced_this_session = False
+                # Keep the V2.1 initial settings write one-shot across reconnects.
+                # The Sunster app retains its equivalent first-send guard per device.
 
     async def _async_password_handshake(self, max_retries: int = 3) -> bool:
         """Send password handshake with retry logic (@Xev optimizations, issue #34).
