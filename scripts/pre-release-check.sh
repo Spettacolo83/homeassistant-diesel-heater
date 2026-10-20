@@ -82,13 +82,16 @@ served = Version('$PYPI_VER')
 if served < pin:
     print(f'ERROR: PyPI serves diesel-heater-ble $PYPI_VER but manifest requires >={pin}')
     print('       Publish the new library to PyPI BEFORE releasing the integration')
-    print('       (see memory/pypi-publishing.md).')
+    print('       (see docs/pypi-publishing.md).')
     raise SystemExit(1)
 print(f'    pin={pin} <= PyPI={served} - OK')
 "
 
 TMPDIR=$(mktemp -d)
-trap 'rm -rf "$TMPDIR"' EXIT
+cleanup() {
+    rm -rf "$TMPDIR" "${WHEEL_TMP:-}"
+}
+trap cleanup EXIT
 python3 -m venv "$TMPDIR/venv"
 # shellcheck disable=SC1091
 source "$TMPDIR/venv/bin/activate"
@@ -136,7 +139,7 @@ if missing:
     print("    This is the beta.3/beta.4 class of bug: the integration imports a")
     print("    symbol that doesn't exist in the version of diesel-heater-ble on")
     print("    PyPI. Either downgrade the import, bump the manifest pin, or publish")
-    print("    the new library version first (see memory/pypi-publishing.md).")
+    print("    the new library version first (see docs/pypi-publishing.md).")
     sys.exit(1)
 
 print("    all integration imports resolve against the pinned PyPI package - OK")
@@ -182,7 +185,6 @@ if [ -z "$LIB_VER" ]; then
 fi
 
 WHEEL_TMP=$(mktemp -d)
-# Note: NOT trapping — the outer trap at line ~85 already cleans /tmp/*
 
 # Build in a copy so we don't pollute the repo's dist/ dir
 cp -r "$LIB_DIR" "$WHEEL_TMP/build-src"
