@@ -1193,10 +1193,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         current_level = max(0, min(capacity, current_level))
 
         # Calculate new consumed: capacity - current_level
-        new_consumed = capacity - current_level
+        new_consumed = round(capacity - current_level, 2)
 
-        # Update internal counter
-        self._total_fuel_consumed = new_consumed
+        # Update the counter used to calculate remaining fuel. Lifetime
+        # consumption must remain an accumulating estimate.
+        self._fuel_consumed_since_reset = new_consumed
+        self.data["fuel_consumed_since_reset"] = round(new_consumed, 2)
 
         # Recalculate estimated remaining
         self._update_fuel_remaining()
