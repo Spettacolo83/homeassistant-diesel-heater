@@ -76,6 +76,21 @@ ABBA_WRITE_UUID: Final = "0000fff2-0000-1000-8000-00805f9b34fb"
 
 # Sunster Neo DZ06 split-FFF0 transport.  Unlike legacy ABBA devices,
 # FFF1 is write-capable and FFF2 is notify-capable.
+# Warm Drive reports a distinct warning code table in its 0x5A25 status frame.
+WARM_DRIVE_ERROR_NAMES: Final = {
+    0: "No fault",
+    1: "Supply voltage low",
+    2: "Supply voltage high",
+    3: "Igniter fault",
+    4: "Fuel pump fault",
+    5: "Overheating",
+    6: "Fan motor fault",
+    7: "Wiring fault",
+    8: "Flame-out",
+    9: "Case temperature sensor fault",
+    10: "Ignition failure",
+}
+
 DZ06_NEO_SERVICE_UUID: Final = ABBA_SERVICE_UUID
 DZ06_NEO_WRITE_UUID: Final = ABBA_NOTIFY_UUID
 DZ06_NEO_NOTIFY_UUID: Final = ABBA_WRITE_UUID
@@ -114,6 +129,7 @@ MAX_PIN: Final = 9999
 
 # Sunster Neo uses a separate numeric connection password.
 CONF_NEO_PASSWORD: Final = "neo_password"
+CONF_NEO_CONTROLLER_TYPE: Final = "neo_controller_type"
 DEFAULT_NEO_PASSWORD: Final = 100000000
 MIN_NEO_PASSWORD: Final = 0
 MAX_NEO_PASSWORD: Final = 2147483647

@@ -97,22 +97,34 @@ class VevorHeaterClimate(
         )
         self._attr_unique_id = f"{coordinator.address}_climate"
 
-        # Set temperature unit and range statically based on heater's native unit
-        # Coordinator stores temperatures in native unit (no conversions)
-        if coordinator._heater_uses_fahrenheit:
+        # Use the controller-provided bounds for the split-FFF0 Warm Drive path.
+        # The controller stores Celsius and Warm Drive converts only for display.
+        if coordinator.is_dz06_neo:
+            minimum = int(coordinator.data.get("neo_min_target") or 8)
+            maximum = int(coordinator.data.get("neo_max_target") or 36)
+            self._attr_target_temperature_step = 1.0
+            if coordinator._heater_uses_fahrenheit:
+                self._attr_temperature_unit = UnitOfTemperature.FAHRENHEIT
+                self._attr_min_temp = int((minimum * 9 / 5) + 32)
+                self._attr_max_temp = int((maximum * 9 / 5) + 32)
+            else:
+                self._attr_temperature_unit = UnitOfTemperature.CELSIUS
+                self._attr_min_temp = minimum
+                self._attr_max_temp = maximum
+        elif coordinator._heater_uses_fahrenheit:
             self._attr_temperature_unit = UnitOfTemperature.FAHRENHEIT
-            self._attr_min_temp = 50 if coordinator.protocol_mode == 8 else 32  # 32°F = 0°C
-            self._attr_max_temp = 104  # 104°F = 40°C
-            self._attr_target_temperature_step = 1.0  # 1°F step (72 possible values)
+            self._attr_min_temp = 50 if coordinator.protocol_mode == 8 else 32
+            self._attr_max_temp = 104
+            self._attr_target_temperature_step = 1.0
         elif coordinator.protocol_mode == 9:
             self._attr_temperature_unit = UnitOfTemperature.CELSIUS
             self._attr_min_temp = 5
             self._attr_max_temp = 35
         else:
             self._attr_temperature_unit = UnitOfTemperature.CELSIUS
-            self._attr_min_temp = 10 if coordinator.protocol_mode == 8 else 0  # Hcalory supports 0-40°C, other protocols 8-36°C
-            self._attr_max_temp = 40  # Hcalory supports 0-40°C, other protocols up to 36°C
-            self._attr_target_temperature_step = 1.0  # 1°C step (40 possible values)
+            self._attr_min_temp = 10 if coordinator.protocol_mode == 8 else 0
+            self._attr_max_temp = 40
+            self._attr_target_temperature_step = 1.0
 
     async def async_added_to_hass(self) -> None:
         """Restore the last valid ABBA Celsius target for level-mode status packets."""

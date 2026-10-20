@@ -20,6 +20,7 @@ def create_mock_coordinator() -> MagicMock:
     coordinator._heater_uses_fahrenheit = False
     coordinator.protocol_mode = 0
     coordinator.send_command = AsyncMock(return_value=True)
+    coordinator.is_dz06_neo = False
     coordinator.async_set_temperature = AsyncMock()
     coordinator.async_turn_on = AsyncMock()
     coordinator.async_turn_off = AsyncMock()
@@ -392,6 +393,26 @@ class TestClimateAttributes:
 
         assert climate._attr_max_temp == 40
 
+    def test_dz06_neo_uses_controller_celsius_bounds(self):
+        coordinator = create_mock_coordinator()
+        coordinator.is_dz06_neo = True
+        coordinator.data.update({"neo_min_target": 8, "neo_max_target": 36})
+
+        climate = VevorHeaterClimate(coordinator, create_mock_config_entry())
+
+        assert climate._attr_min_temp == 8
+        assert climate._attr_max_temp == 36
+
+    def test_dz06_neo_converts_controller_bounds_for_fahrenheit_display(self):
+        coordinator = create_mock_coordinator()
+        coordinator.is_dz06_neo = True
+        coordinator._heater_uses_fahrenheit = True
+        coordinator.data.update({"neo_min_target": 8, "neo_max_target": 36})
+
+        climate = VevorHeaterClimate(coordinator, create_mock_config_entry())
+
+        assert climate._attr_min_temp == 46
+        assert climate._attr_max_temp == 96
     def test_target_temperature_step(self):
         """Test target_temperature_step attribute."""
         coordinator = create_mock_coordinator()

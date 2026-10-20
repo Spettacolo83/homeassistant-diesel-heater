@@ -42,6 +42,7 @@ This integration supports heaters whose BLE transport and status protocol match 
 - **Hcalory** MVP1 and MVP2 controllers
 - **HeatGenie/Boygu** register-protocol controllers
 - **Webasto ThermoConnect Cronus** air and water controllers
+- **Warm Drive / MUDIRO** controllers advertising the exact `Air Heater` identity
 
 Brand names and an app installation alone do not establish compatibility. The
 integration verifies the protocol after connecting.
@@ -59,6 +60,7 @@ integration verifies the protocol after connecting.
 | Hcalory MVP1/MVP2 | Hcalory | Separate Hcalory transport variants |
 | HeatGenie / Boygu | Heat Genie | Register protocol with optional probes and component state bits |
 | Webasto Cronus | ThermoConnect | Record protocol for air and water controllers |
+| Warm Drive / MUDIRO | Warm Drive | Exact `Air Heater` identity with verified split FFF0 transport; air and water variants |
 
 See the [protocol reference](protocols/README.md) for the validated transport,
 status, and command behavior for each family.
@@ -79,7 +81,7 @@ After setup, you can configure these options:
 
 | Option | Description |
 |--------|-------------|
-| PIN Code | Heater authentication PIN (usually 1234; Hcalory MVP2 factory 0000 is entered as 0) |
+| Controller code (PIN field) | Numeric controller code (usually 1234; Hcalory MVP2 factory 0000 is entered as 0; Warm Drive factory/master code is 100000000) |
 | Temperature Offset | Manual calibration offset for the temperature sensor (-20 to +20°C) |
 | Away Preset Temperature | Temperature for Away preset (default: 8°C) |
 | Comfort Preset Temperature | Temperature for Comfort preset (default: 21°C) |
@@ -102,6 +104,7 @@ Entities are created based on the detected BLE protocol. Only entities supported
 | Hcalory MVP1/MVP2 | Auto Start/Stop, Temperature Unit, and three-position High Altitude Mode | No altitude sensor, auto-offset, timer, component bits, or intake/outlet probes |
 | HeatGenie / Boygu | Temperature Unit, optional Intake/Outlet Temperature, and Fuel Pump/Fan/Glow Plug state bits | No auto-offset, timer, or controller configuration selects |
 | Webasto Cronus | ThermoConnect Mode, controller-specific temperatures and durations, Continuous Run, and Interlock | Air and water capabilities differ; see the sections below |
+| Warm Drive / MUDIRO | Established air-heater entities plus Motor Speed and Fire Temperature; water controllers also report Hot Water and Water Temperature | Exact `Air Heater` identity and verified split FFF0 transport only; no CO, component-state bits, timer, or time sync |
 
 ### Climate
 
@@ -144,6 +147,8 @@ Additional sensors for specific protocols:
 - **External/Coolant Temperature and Run Duration** (Cronus): ThermoConnect record telemetry
 - **Air Pressure** (Cronus air controllers): controller-reported pressure
 - **Mode** (Cronus water controllers): read-only controller telemetry
+- **Motor Speed and Fire Temperature** (Warm Drive): controller telemetry
+- **Hot Water and Water Temperature** (Warm Drive water controllers): controller telemetry
 
 ### Binary sensors
 
@@ -272,7 +277,7 @@ Disabling `switch.*_automatic_burnoff` during a cycle restores the previous mode
 
 ### Commands not responding
 
-1. Verify the correct PIN is configured (usually 1234; Hcalory MVP2 factory 0000 is entered as 0)
+1. Verify the correct numeric controller code is configured (usually 1234; Hcalory MVP2 factory 0000 is entered as 0; Warm Drive factory/master code is 100000000)
 2. Check that no other device (phone app) is connected to the heater
 3. Enable debug logging:
 

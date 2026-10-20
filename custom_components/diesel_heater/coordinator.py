@@ -48,6 +48,7 @@ from .const import (
     CONF_CRONUS_HEATER_MODEL,
     CRONUS_FUEL_PROFILES,
     CONF_NEO_PASSWORD,
+    CONF_NEO_CONTROLLER_TYPE,
     CONF_PIN,
     CONF_TEMPERATURE_OFFSET,
     CRONUS_NOTIFY_UUID,
@@ -86,11 +87,13 @@ from .const import (
     PROTOCOL_HEADER_AA77,
     RUNNING_MODE_LEVEL,
     RUNNING_MODE_TEMPERATURE,
+    RUNNING_MODE_VENTILATION,
     RUNNING_STATE_OFF,
     RUNNING_STATE_ON,
     RUNNING_STEP_COOLDOWN,
     RUNNING_STEP_RUNNING,
     RUNNING_STEP_STANDBY,
+    RUNNING_STEP_VENTILATION,
     SENSOR_TEMP_MAX,
     SENSOR_TEMP_MIN,
     SERVICE_UUID,
@@ -167,6 +170,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._characteristic = None
         self._active_char_uuid: str | None = None  # Track which UUID variant is active
         self._notification_data: bytearray | None = None
+        self._neo_config_received = False
         self._neo_run_settings_received = False
         # Get passkey from config, default to 1234 (factory default for most heaters)
         self._passkey = config_entry.data.get(CONF_PIN, DEFAULT_PIN)
@@ -279,6 +283,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             "fuel_consumed_since_reset": 0.0,
             "last_refueled": None,  # ISO timestamp of last refuel reset
             "neo_raw_state": None,  # Set only after a confirmed DZ06 Bluetooth status frame
+            "neo_controller_type": config_entry.data.get(CONF_NEO_CONTROLLER_TYPE),
+            "motor_speed": None,
+            "fire_temperature": None,
             "neo_run_type": None,
             "neo_min_target": None,
             "neo_max_target": None,
@@ -367,6 +374,35 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     def is_cronus_device(self) -> bool:
         """Return whether the advertised name matches ThermoConnect Cronus."""
         return "CRONUS" in (self._ble_device.name or "")
+
+    def _advertised_heater_name(self) -> str:
+        """Return the real advertised local name when Home Assistant has it."""
+        address = getattr(self, "address", "").replace(":", "").upper()
+        names = [getattr(self._ble_device, "name", None)]
+        hass = getattr(self, "hass", None)
+        if hass and address:
+            for connectable in (True, False):
+                try:
+                    info = bluetooth.async_last_service_info(
+                        hass, self.address, connectable=connectable
+                    )
+                except Exception:  # pragma: no cover - defensive HA lookup
+                    continue
+                if info is not None:
+                    names.append(getattr(info, "name", None))
+
+        for name in names:
+            name = (name or "").replace("\x00", "").strip()
+            if name and name.replace(":", "").replace("-", "").upper() != address:
+                return name
+        return ""
+
+    @property
+    def is_warm_drive_controller(self) -> bool:
+        """Return whether the controller identifies itself as Warm Drive."""
+        if self.config_entry.data.get(CONF_NEO_CONTROLLER_TYPE) in ("air", "water"):
+            return True
+        return self._advertised_heater_name() == "Air Heater"
 
     @property
     def is_dz06_neo(self) -> bool:
@@ -665,6 +701,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._last_valid_data = self.data.copy()
             self._consecutive_failures = 0
             return self.data
+
+    def _dz06_neo_display_temperature(self, raw_temperature: int) -> float:
+        """Return a Warm Drive temperature in the app-selected display unit."""
+        if self._heater_uses_fahrenheit:
+            return float(int((raw_temperature * 9 / 5) + 32))
+        return float(raw_temperature)
 
     @callback
     def _async_external_temp_changed(self, event) -> None:
@@ -1257,7 +1299,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         "case_temperature", "cab_temperature", "cab_temperature_raw",
         "supply_voltage", "running_state", "running_step", "running_mode",
         "set_level", "set_temp", "altitude", "error_code",
-        "hourly_fuel_consumption", "co_ppm", "remain_run_time",
+        "hourly_fuel_consumption", "co_ppm", "remain_run_time", "motor_speed",
+        "fire_temperature", "hot_water_temperature", "water_temperature",
     )
 
     def _clear_sensor_values(self) -> None:
@@ -1871,9 +1914,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     # Continue anyway - will retry in _send_command if needed
 
             if self.is_dz06_neo:
+                if not await self._send_dz06_neo_configuration():
+                    await self._cleanup_connection()
+                    raise BleakError("DZ06 Neo configuration read failed")
                 if not await self._send_dz06_neo_run_settings():
                     await self._cleanup_connection()
                     raise BleakError("DZ06 Neo startup settings read failed")
+                if self.is_warm_drive_controller:
+                    await self._send_dz06_neo_board_info()
             elif self._is_cronus_device:
                 self._logger.debug("Cronus ready; polling record cache")
             else:
@@ -1922,13 +1970,39 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 if minimum <= maximum:
                     self.data["neo_min_target"] = minimum
                     self.data["neo_max_target"] = maximum
+                if self.is_warm_drive_controller:
+                    self.data["neo_controller_type"] = (
+                        "air" if data[2] == 1 else "water"
+                    )
+                self._neo_config_received = True
+            if len(data) >= 21 and data[0] == 0x5D:
+                if data[17] in (1, 2):
+                    self._heater_uses_fahrenheit = data[17] == 2
             if len(data) == 39 and data[:2] == bytearray((0x5A, 0x25)):
+                if not self.is_warm_drive_controller:
+                    self._handle_legacy_dz06_neo_status(data)
+                    return
                 run_type = data[34]
+                fire_temperature = self._dz06_neo_display_temperature(
+                    int.from_bytes(data[18:20], "big", signed=True)
+                )
+                hot_water_temperature = self._dz06_neo_display_temperature(
+                    int.from_bytes(data[20:22], "big", signed=True)
+                )
+                water_temperature = self._dz06_neo_display_temperature(
+                    int.from_bytes(data[22:24], "big", signed=True)
+                )
                 self.data.update({
                     "connected": True,
-                    "supply_voltage": data[6] / 10.0,
-                    "set_temp": float(data[15]),
-                    "cab_temperature": float(data[35]),
+                    "supply_voltage": int.from_bytes(data[5:7], "big") / 10.0,
+                    "error_code": (data[4] - 1) if data[4] > 1 else data[4],
+                    "set_level": data[16],
+                    "motor_speed": int.from_bytes(data[7:9], "big"),
+                    "fire_temperature": fire_temperature,
+                    "hot_water_temperature": hot_water_temperature,
+                    "water_temperature": water_temperature,
+                    "set_temp": self._dz06_neo_display_temperature(data[15]),
+                    "cab_temperature": self._dz06_neo_display_temperature(data[35]),
                     "altitude": int.from_bytes(data[32:34], "big"),
                     "neo_run_type": run_type,
                 })
@@ -1944,9 +2018,16 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 elif raw_state in (6, 7, 8):
                     self.data["running_state"] = RUNNING_STATE_OFF
                     self.data["running_step"] = RUNNING_STEP_COOLDOWN
-                elif raw_state == 0:
+                elif raw_state in (0, 160):
                     self.data["running_state"] = RUNNING_STATE_OFF
                     self.data["running_step"] = RUNNING_STEP_STANDBY
+                elif raw_state == 170:
+                    self.data["running_state"] = RUNNING_STATE_ON
+                    self.data["running_step"] = RUNNING_STEP_RUNNING
+                elif raw_state == 171:
+                    self.data["running_state"] = RUNNING_STATE_ON
+                    self.data["running_step"] = RUNNING_STEP_VENTILATION
+                    self.data["running_mode"] = RUNNING_MODE_VENTILATION
                 if run_type == 1:
                     self.data["running_mode"] = RUNNING_MODE_LEVEL
                 elif run_type == 2:
@@ -1968,6 +2049,46 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._parse_response(data)
         except Exception as err:
             self._logger.error("Error parsing notification: %s", err)
+
+    def _handle_legacy_dz06_neo_status(self, data: bytearray) -> None:
+        """Parse only fields verified for the non-Warm-Drive DZ06 path."""
+        run_type = data[34]
+        self.data.update(
+            {
+                "connected": True,
+                "supply_voltage": data[6] / 10.0,
+                "set_temp": float(data[15]),
+                "cab_temperature": float(data[35]),
+                "altitude": int.from_bytes(data[32:34], "big"),
+                "neo_run_type": run_type,
+            }
+        )
+        raw_state = data[3]
+        self.data["neo_raw_state"] = raw_state
+        if raw_state == 1:
+            self.data["running_state"] = RUNNING_STATE_ON
+            self.data["running_step"] = None
+        elif raw_state in (2, 3, 4, 5):
+            self.data["running_state"] = RUNNING_STATE_ON
+            self.data["running_step"] = RUNNING_STEP_RUNNING
+        elif raw_state in (6, 7, 8):
+            self.data["running_state"] = RUNNING_STATE_OFF
+            self.data["running_step"] = RUNNING_STEP_COOLDOWN
+        elif raw_state == 0:
+            self.data["running_state"] = RUNNING_STATE_OFF
+            self.data["running_step"] = RUNNING_STEP_STANDBY
+        elif raw_state == 160:
+            self.data["running_state"] = RUNNING_STATE_ON
+            self.data["running_step"] = RUNNING_STEP_STANDBY
+        elif raw_state == 171:
+            self.data["running_state"] = RUNNING_STATE_ON
+            self.data["running_step"] = RUNNING_STEP_VENTILATION
+        if run_type == 1:
+            self.data["running_mode"] = RUNNING_MODE_LEVEL
+        elif run_type == 2:
+            self.data["running_mode"] = RUNNING_MODE_TEMPERATURE
+        self._burnoff.observe_status()
+        self._burnoff.schedule_abort_if_ecu_stopped()
 
     def _detect_protocol(
         self, data: bytearray, header: int
@@ -2514,6 +2635,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         try:
             run_type = int(run_type)
             target = int(round(float(target)))
+            if self._heater_uses_fahrenheit:
+                target = int(round((target - 32) * 5 / 9))
             altitude = int(altitude)
         except (TypeError, ValueError):
             return None
@@ -2530,6 +2653,22 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             or not minimum <= target <= maximum
             or not 0 <= altitude <= 0xFFFF
         ):
+            return None
+        return run_type, target, altitude
+
+    def _neo_status_poll_settings(self) -> tuple[int, int, int] | None:
+        """Return the current app-native fields for a read-only A5/09 poll."""
+        try:
+            run_type = int(self.data.get("neo_run_type", 1))
+            target = int(round(float(self.data.get("set_temp", 8))))
+            if self._heater_uses_fahrenheit:
+                target = int(round((target - 32) * 5 / 9))
+            altitude = int(self.data.get("altitude", 1))
+        except (TypeError, ValueError):
+            return None
+        if not (0 <= run_type <= 0xFF and 0 <= target <= 0xFF):
+            return None
+        if not 0 <= altitude <= 0xFFFF:
             return None
         return run_type, target, altitude
 
@@ -2597,6 +2736,68 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 return True
         return False
 
+    async def _send_dz06_neo_configuration(self) -> bool:
+        """Read Neo configuration using its configured connection password."""
+        now = dt_util.now()
+        timestamp = int(now.timestamp()) + int((now.utcoffset() or timedelta()).total_seconds())
+        packet = bytearray((0x29, 0x0D, 0x5C, 0))
+        packet.extend(timestamp.to_bytes(4, "big"))
+        try:
+            password = int(self._neo_password)
+        except (TypeError, ValueError):
+            return False
+        if not 0 <= password <= 0x7FFFFFFF:
+            return False
+        packet.extend(password.to_bytes(4, "big"))
+        packet.append(1)
+        crc = 0xFFFF
+        for value in packet:
+            crc ^= value
+            for _ in range(8):
+                crc = (crc >> 1) ^ 0xA001 if crc & 1 else crc >> 1
+        packet.extend(crc.to_bytes(2, "big"))
+        self._notification_data = None
+        self._neo_config_received = False
+        await self._write_gatt(packet)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            await asyncio.sleep(0.1)
+            if self._neo_config_received:
+                return True
+        return False
+
+    async def _send_dz06_neo_board_info(self) -> None:
+        """Read the unit metadata through Warm Drive's 0x5D command."""
+        now = dt_util.now()
+        timestamp = int(now.timestamp()) + int((now.utcoffset() or timedelta()).total_seconds())
+        packet = bytearray((0x29, 0x0D, 0x5D, 0))
+        packet.extend(timestamp.to_bytes(4, "big"))
+        try:
+            password = int(self._neo_password)
+        except (TypeError, ValueError):
+            return
+        packet.extend(password.to_bytes(4, "big"))
+        packet.append(1)
+        crc = 0xFFFF
+        for value in packet:
+            crc ^= value
+            for _ in range(8):
+                crc = (crc >> 1) ^ 0xA001 if crc & 1 else crc >> 1
+        packet.extend(crc.to_bytes(2, "big"))
+        self._notification_data = None
+        try:
+            await self._write_gatt(packet)
+        except Exception as err:
+            self._logger.debug("DZ06 Neo board-info read failed: %s", err)
+            return
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            await asyncio.sleep(0.1)
+            response = self._notification_data
+            if response and len(response) >= 21 and response[0] == 0x5D:
+                return
+
+
     async def _send_command(self, command: int, argument: int, timeout: float = 5.0, max_retries: int = 1) -> bool:
         """Serialize FEAA commands while retaining existing protocol behavior."""
         if self._protocol_mode == 6:
@@ -2661,7 +2862,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         if self.is_dz06_neo:
             if command == 1:
-                settings = self._neo_control_settings(use_startup_defaults=True)
+                settings = self._neo_status_poll_settings()
                 if settings is None:
                     return False
                 packet = self._neo_packet(0x00, *settings)
@@ -3152,6 +3353,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._logger.info("Ignoring level change during burn-off")
             return False
 
+        if self.is_dz06_neo:
+            self._logger.warning(
+                "DZ06 Neo has no legacy gear command; use the native mode control"
+            )
+            return False
+
         level = max(1, min(10, level))
         if self._protocol_mode == 5:  # ABBA/HeaterCC uses level up/down button commands
             current_level_raw = self.data.get("set_level")
@@ -3260,8 +3467,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 maximum = int(maximum) if maximum is not None else 36
             except (TypeError, ValueError):
                 return False
-            temperature = max(minimum, min(maximum, temperature))
-            unit_str = "°C"
+            raw_temperature = (
+                (temperature - 32) * 5 / 9
+                if self._heater_uses_fahrenheit
+                else temperature
+            )
+            command_temp = int(round(max(minimum, min(maximum, raw_temperature))))
+            temperature = self._dz06_neo_display_temperature(command_temp)
+            unit_str = "F" if self._heater_uses_fahrenheit else "C"
         elif self._heater_uses_fahrenheit:
             temperature = max(32, min(104, temperature))
             unit_str = "°F"
@@ -3278,7 +3491,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         )
 
         # Convert to int for command (protocols expect integer temperatures)
-        command_temp = int(round(temperature))
+        if not self.is_dz06_neo:
+            command_temp = int(round(temperature))
         if self.is_dz06_neo:
             settings = self._neo_control_settings()
             if settings is None:
@@ -3328,6 +3542,17 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if self._burnoff.active and not self._burnoff.cycle.applying:
             self._logger.info("Ignoring mode change during burn-off")
             return False
+
+        if self.is_dz06_neo:
+            if mode not in (RUNNING_MODE_LEVEL, RUNNING_MODE_TEMPERATURE):
+                self._logger.warning("DZ06 Neo supports only Level and Temperature modes")
+                return False
+            settings = self._neo_control_settings()
+            if settings is None:
+                return False
+            _, target, altitude = settings
+            run_type = 1 if mode == RUNNING_MODE_LEVEL else 2
+            return await self._async_set_dz06_neo_control(run_type, target, altitude)
 
         # Ventilation mode (ABBA only)
         if mode == 3:

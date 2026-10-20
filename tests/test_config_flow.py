@@ -19,6 +19,8 @@ from custom_components.diesel_heater.const import (
     CONF_BURNOFF_ENABLED,
     CONF_CRONUS_HEATER_MODEL,
     CONF_EXTERNAL_TEMP_SENSOR,
+    CONF_NEO_CONTROLLER_TYPE,
+    CONF_NEO_PASSWORD,
     CONF_PIN,
     CONF_PRESET_AWAY_TEMP,
     CONF_PRESET_COMFORT_TEMP,
@@ -81,6 +83,23 @@ class TestBluetoothDiscovery:
 
         with pytest.raises(_AbortFlow, match="already_configured"):
             await flow.async_step_bluetooth(discovery)
+
+    async def test_warm_drive_discovery_requires_exact_app_name(self):
+        flow = VevorHeaterConfigFlow()
+
+        result = await flow.async_step_bluetooth(
+            _make_ble_discovery(name="Air Heater", service_uuids=[])
+        )
+
+        assert result["type"] == "form"
+        assert result["step_id"] == "confirm"
+
+        result = await flow.async_step_bluetooth(
+            _make_ble_discovery(name="Air Heater Pro", service_uuids=[])
+        )
+
+        assert result["type"] == "abort"
+        assert result["reason"] == "not_supported"
 
     async def test_heatgenie_discovery_requires_app_identity_and_service(self):
         flow = VevorHeaterConfigFlow()
@@ -223,6 +242,31 @@ class TestConfirmStep:
 
         assert result["type"] == "create_entry"
         assert result["data"][CONF_PIN] == 1234
+
+    async def test_warm_drive_discovery_uses_factory_controller_code(self):
+        flow = VevorHeaterConfigFlow()
+        flow._discovery_info = _make_ble_discovery(
+            name="Air Heater",
+            manufacturer_data={0xFFFF: b"\x00\x00\x00\x00\x01" + b"\x00" * 11},
+        )
+
+        result = await flow.async_step_confirm(user_input={})
+
+        assert result["type"] == "create_entry"
+        assert result["data"][CONF_NEO_PASSWORD] == 100000000
+        assert result["data"][CONF_NEO_CONTROLLER_TYPE] == "air"
+
+    async def test_warm_drive_discovery_records_water_controller_type(self):
+        flow = VevorHeaterConfigFlow()
+        flow._discovery_info = _make_ble_discovery(
+            name="Air Heater",
+            manufacturer_data={0xFFFF: b"\x00\x00\x00\x00\x02" + b"\x00" * 11},
+        )
+
+        result = await flow.async_step_confirm(user_input={})
+
+        assert result["type"] == "create_entry"
+        assert result["data"][CONF_NEO_CONTROLLER_TYPE] == "water"
 
     async def test_creates_entry_with_custom_pin(self):
         flow = VevorHeaterConfigFlow()
@@ -460,6 +504,19 @@ class TestUserStep:
         assert result["step_id"] == "user"
         # The device should still be in _discovered_devices (not added again)
         assert len(flow._discovered_devices) == 1
+
+    async def test_select_warm_drive_device_uses_confirm_step_default(self):
+        """A selected Warm Drive device must retain the factory controller-code default."""
+        flow = VevorHeaterConfigFlow()
+        flow._discovered_devices[MOCK_ADDRESS] = _make_ble_discovery(name="Air Heater")
+
+        result = await flow.async_step_user(user_input={CONF_ADDRESS: MOCK_ADDRESS})
+
+        assert result["type"] == "form"
+        assert result["step_id"] == "confirm"
+        result = await flow.async_step_confirm(user_input={})
+        assert result["data"][CONF_NEO_PASSWORD] == 100000000
+
 
     async def test_select_device_creates_entry(self):
         flow = VevorHeaterConfigFlow()

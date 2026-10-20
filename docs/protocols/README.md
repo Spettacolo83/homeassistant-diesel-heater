@@ -18,6 +18,8 @@ shared UUIDs require the characteristic directions and a valid status frame.
 | 8 | HeatGenie / Boygu | `AA` register report with `F2` status type | [HeatGenie](HEATGENIE.md) |
 | 9 | Webasto Cronus | ThermoConnect record protocol | [Cronus](CRONUS.md) |
 
+Warm Drive is a separately identified split-FFF0 controller profile, documented in [Warm Drive](WARM_DRIVE.md). It is not assigned a generic numeric protocol mode because it is selected by its exact identity and verified transport.
+
 The experimental DZ06 Neo controller is documented separately in
 [DZ06 Sunster Neo](../DZ06_SUNSTER_NEO.md). It is a single verified controller,
 not a claim about every FFF0 device.
@@ -30,6 +32,7 @@ not a claim about every FFF0 device.
 | ABBA legacy | FFF0 | FFF1 notify and FFF2 write; `AB BA` status validates the protocol |
 | CBFF / Sunster V2.1 | FFF0 | Verified session plus CBFF/FEAA protocol; `AA77` starts encrypted V2.1 handling |
 | Hcalory MVP1 | FFF0 | FFF2 write and FFF1 notify, then Hcalory packet validation |
+| Warm Drive / MUDIRO | FFF0 | Exact `Air Heater` identity, FFF1 write and FFF2 notify, then the app-defined 5C16/5A25 exchange |
 | Hcalory MVP2 | BD39 | BDF7 write and BDF8 notify, then Hcalory packet validation |
 | HeatGenie / Boygu | 181A | One notify/indicate and one write characteristic, plus supported name identity and a valid `F2` report |
 | Webasto Cronus | Proprietary | `4229d528-33d0-4aa7-9af1-00b03fc128f9` notify and `2ed964d9-1371-45ee-a84b-1d134d5ce7b7` write, plus a Cronus name |

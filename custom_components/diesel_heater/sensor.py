@@ -26,9 +26,11 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from . import VevorHeaterConfigEntry
 from .const import (
     DOMAIN,
+    WARM_DRIVE_ERROR_NAMES,
     ERROR_NAMES,
     RUNNING_MODE_NAMES,
     RUNNING_STEP_NAMES,
+    CONF_NEO_CONTROLLER_TYPE,
 )
 from .coordinator import VevorHeaterCoordinator
 
@@ -115,6 +117,33 @@ async def async_setup_entry(
             VevorRemainingRunTimeSensor(coordinator),
             VevorStartupTempDiffSensor(coordinator),
             VevorShutdownTempDiffSensor(coordinator),
+        ])
+
+    if coordinator.is_warm_drive_controller:
+        entities.append(VevorMotorSpeedSensor(coordinator))
+    if coordinator.is_warm_drive_controller:
+        entities.append(
+            VevorAuxTemperatureSensor(
+                coordinator, "fire_temperature", "Fire Temperature"
+            )
+        )
+
+    if (
+        coordinator.is_warm_drive_controller
+        and (
+            (
+                coordinator.data.get("neo_controller_type")
+                or entry.data.get(CONF_NEO_CONTROLLER_TYPE)
+            ) == "water"
+        )
+    ):
+        entities.extend([
+            VevorAuxTemperatureSensor(
+                coordinator, "hot_water_temperature", "Hot Water Temperature"
+            ),
+            VevorAuxTemperatureSensor(
+                coordinator, "water_temperature", "Water Temperature"
+            ),
         ])
 
     # A HeatGenie frame omits each probe that the controller marks unsupported.
@@ -432,6 +461,23 @@ class VevorAltitudeSensor(VevorSensorBase):
         return self.coordinator.data.get("altitude")
 
 
+class VevorMotorSpeedSensor(VevorSensorBase):
+    """Motor speed reported by the DZ06 Neo status frame."""
+
+    _attr_native_unit_of_measurement = "rpm"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the motor speed sensor."""
+        super().__init__(coordinator, "motor_speed", "Motor Speed")
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the motor speed in RPM."""
+        return self.coordinator.data.get("motor_speed")
+
+
 class VevorErrorCodeSensor(VevorSensorBase):
     """Error code sensor."""
 
@@ -446,7 +492,10 @@ class VevorErrorCodeSensor(VevorSensorBase):
     def native_value(self) -> str | None:
         """Return the state."""
         error = self.coordinator.data.get("error_code", 0)
-        return ERROR_NAMES.get(error, f"Unknown error ({error})")
+        names = WARM_DRIVE_ERROR_NAMES if (
+            self.coordinator.is_warm_drive_controller
+        ) else ERROR_NAMES
+        return names.get(error, f"Unknown error ({error})")
 
 
 # Fuel consumption sensors

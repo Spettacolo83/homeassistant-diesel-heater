@@ -12,7 +12,7 @@
 
 > This is a maintained fork of the original [homeassistant-vevor-heater](https://github.com/MSDATDE/homeassistant-vevor-heater) by [@MSDATDE](https://github.com/MSDATDE), enhanced with HACS 2.0+ compatibility, multi-brand support, and additional improvements.
 
-Control supported diesel air and water heaters from Home Assistant via Bluetooth. The integration supports AirHeaterBLE (AA55/AA66), AirHeaterCC (ABBA), Sunster (CBFF), Hcalory (MVP1/MVP2), HeatGenie/Boygu, and Webasto ThermoConnect Cronus controllers.
+Control supported diesel air and water heaters from Home Assistant via Bluetooth. The integration supports AirHeaterBLE (AA55/AA66), AirHeaterCC (ABBA), Sunster (CBFF), Hcalory (MVP1/MVP2), HeatGenie/Boygu, Warm Drive/MUDIRO, and Webasto ThermoConnect Cronus controllers.
 
 ## Features
 
@@ -27,7 +27,7 @@ Control supported diesel air and water heaters from Home Assistant via Bluetooth
 - 🔌 **Bluetooth LE** - Direct local connection, no cloud required
 - ⚡ **Real-time Updates** - 30-second polling interval
 - 💾 **Data Persistence** - Fuel consumption data saved across restarts
-- 🌐 **Multi-Protocol Support** - Nine controller protocols across six app families
+- 🌐 **Multi-Protocol Support** - Protocol-specific coverage for the supported controller families
 - 🛠️ **Conditional Controls** - Configuration, calibration, timers, and unit settings are created only when supported by the active protocol
 - 🛠️ **Configuration Settings** - AirHeaterBLE-like settings:
   - Language, Temperature Unit, Altitude Unit
@@ -68,13 +68,14 @@ This integration supports **multiple protocols** and has been tested with variou
 | Hcalory MVP1/MVP2 | 95% | Hcalory | Hcalory controller variants, including HBU1S |
 | HeatGenie / Boygu | 95% | Heat Genie | Register protocol with optional probes and component state bits |
 | Webasto Cronus | 95% | ThermoConnect | Record protocol for air and water controllers |
+| Warm Drive / MUDIRO | APK-backed | Warm Drive | Exact `Air Heater` identity; air and water variants |
 
-ABBA, CBFF, and Hcalory protocols are used by various heater brands. If you own a heater that uses one of these protocols, please check the [Issues](https://github.com/Spettacolo83/homeassistant-diesel-heater/issues), beta test, and report any problems.
+ABBA, CBFF, and Hcalory protocols are used by various heater brands. Warm Drive support is intentionally narrower: it applies only to controllers advertising the exact `Air Heater` identity and using the verified split FFF0 transport. If you own a heater that uses one of these families, please check the [Issues](https://github.com/Spettacolo83/homeassistant-diesel-heater/issues), beta test, and report any problems.
 
 ### Bluetooth Service UUIDs
 
 - **FFE0** Service: `0000ffe0-0000-1000-8000-00805f9b34fb` (AA55/AA66 heaters)
-- **FFF0** Service: `0000fff0-0000-1000-8000-00805f9b34fb` (ABBA/HeaterCC, CBFF/Sunster, Hcalory MVP1)
+- **FFF0** Service: `0000fff0-0000-1000-8000-00805f9b34fb` (ABBA/HeaterCC, CBFF/Sunster, Hcalory MVP1, Warm Drive)
 - **BD39** Service: `0000bd39-0000-1000-8000-00805f9b34fb` (Hcalory MVP2 heaters like HBU1S)
 - **181A** Service: `0000181a-0000-1000-8000-00805f9b34fb` (HeatGenie/Boygu; characteristic direction is verified after connecting)
 - **Cronus** characteristics: notify `4229d528-33d0-4aa7-9af1-00b03fc128f9`, write `2ed964d9-1371-45ee-a84b-1d134d5ce7b7`
@@ -88,6 +89,7 @@ ABBA, CBFF, and Hcalory protocols are used by various heater brands. If you own 
 - Hcalory HBU1S and similar models
 - HeatGenie/Boygu controllers
 - Webasto ThermoConnect Cronus Smart controllers
+- MUDIRO M-5S EVO-H and controllers using the Warm Drive app with the verified `Air Heater` identity
 - Generic heaters whose BLE transport and status protocol match a supported family
 
 ## Screenshots
@@ -127,11 +129,10 @@ Full control over your heater including temperature, level, and mode selection:
 
 ### Heater Not Found / Connection Issues
 
-**1. Unpair from your phone first!**
-> The most common issue! If the heater is paired with the Vevor app on your phone, Home Assistant cannot connect.
-- Open your phone's Bluetooth settings
-- Find the heater device and **forget/unpair** it
-- Close the Vevor app completely
+**1. Disconnect the controller app first!**
+> Close or disconnect the mobile controller app if it is actively connected. Controller behavior varies: do not remove a system Bluetooth pairing unless that controller's app or manual specifically requires it.
+- Close the app completely
+- Wait for the controller to resume advertising
 - Try adding the integration again
 
 **2. Bluetooth Proxy Connection Limits**
@@ -246,14 +247,14 @@ Before adding the integration, you need to find your heater's Bluetooth MAC addr
 2. Click **"+ Add Integration"**
 3. Search for **"Diesel Heater"**
 4. The integration will auto-discover nearby heaters, or you can enter the MAC address manually
-5. Enter your heater's **PIN** (usually `1234`; Hcalory MVP2 factory `0000` is entered as `0`)
+5. Enter your heater's **controller code** (usually 1234; Hcalory MVP2 factory 0000 is entered as 0; Warm Drive factory code is 100000000)
 6. Click **"Submit"**
 
 ### Integration Options
 
 After setup, go to the integration's **Configure** button to access these options:
 
-- **PIN**: Change the heater connection PIN
+- **Controller code (PIN field)**: Change the numeric controller code used by the active controller. Warm Drive factory/master code is 100000000.
 - **Preset Away Temperature**: Target temperature for Away preset (default: 8°C)
 - **Preset Comfort Temperature**: Target temperature for Comfort preset (default: 21°C)
 - **External Temperature Sensor**: Select an external HA temperature sensor for auto offset adjustment
@@ -275,8 +276,9 @@ The common and extended entity tables below are scoped by this matrix. A control
 | ABBA / HeaterCC | Baseline, Auto Start/Stop, Temperature Unit, Altitude Unit, High Altitude, and ventilation when the controller supports it | Level changes are relative controller steps; no timer, component bits, or intake/outlet probes |
 | CBFF / Sunster | Baseline, extended telemetry, Language, Pump Type, Tank Volume, Auto Start/Stop, Temperature Unit, Altitude Unit, and CBFF diagnostics | No component bits or intake/outlet probes |
 | Hcalory MVP1/MVP2 | Baseline except Altitude, plus Auto Start/Stop, Temperature Unit, and the three-position High Altitude Mode select | No auto-offset, timer, component bits, or intake/outlet probes |
-| HeatGenie / Boygu | Baseline, Temperature Unit, optional Intake/Outlet Temperature, and Fuel Pump/Fan/Glow Plug binary sensors | No auto-offset, timer, or controller configuration selects |
 | Webasto Cronus | ThermoConnect Mode, controller-specific temperatures and durations, Continuous Run, and Interlock | Air and water capabilities differ; see the Cronus section below |
+| HeatGenie / Boygu | Baseline, Temperature Unit, optional Intake/Outlet Temperature, and Fuel Pump/Fan/Glow Plug binary sensors | No auto-offset, timer, or controller configuration selects |
+| Warm Drive / MUDIRO | Established air-heater baseline, Motor Speed, and Fire Temperature; water controllers additionally report Hot Water and Water Temperature | Exact `Air Heater` identity and verified split FFF0 transport only; no CO, component-state bits, timer, or time-sync entity |
 
 #### Shared Entities
 
@@ -288,7 +290,7 @@ The common and extended entity tables below are scoped by this matrix. A control
 | Sensor | Interior Temperature, Supply Voltage, Protocol | Controller telemetry and detected protocol |
 | Binary Sensor | Active, Connected | Heater activity and BLE connection *(Diagnostic)* |
 
-#### Established Air-Heater Entities (AA55, AA66, ABBA, CBFF, Hcalory, HeatGenie)
+#### Established Air-Heater Entities (AA55, AA66, ABBA, CBFF, Hcalory, HeatGenie, Warm Drive)
 
 | Platform | Entity | Description |
 |----------|--------|-------------|
@@ -310,6 +312,13 @@ The common and extended entity tables below are scoped by this matrix. A control
 | Binary Sensor | Problem | Controller error condition *(Diagnostic)* |
 | Binary Sensor | Burn-off Active | Whether a max-power burn-off cycle is running *(Diagnostic)* |
 | Binary Sensor | Burn-off Pending | Next RUNNING start will run in-run burn-off *(Diagnostic)* |
+
+#### Warm Drive / MUDIRO Telemetry
+
+| Platform | Entity | Description |
+|----------|--------|-------------|
+| Sensor | Motor Speed, Fire Temperature | Controller-reported telemetry for every verified Warm Drive controller |
+| Sensor | Hot Water Temperature, Water Temperature | Created only for a Warm Drive controller identified as water type |
 
 #### HeatGenie-only Telemetry
 

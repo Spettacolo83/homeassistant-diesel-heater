@@ -33,6 +33,7 @@ from custom_components.diesel_heater.sensor import (
     VevorHardwareVersionSensor,
     VevorSoftwareVersionSensor,
     VevorRemainingRunTimeSensor,
+    VevorMotorSpeedSensor,
     VevorStartupTempDiffSensor,
     VevorShutdownTempDiffSensor,
     VevorBurnoffRemainingSensor,
@@ -43,6 +44,7 @@ from custom_components.diesel_heater.sensor import (
     async_setup_entry,
 )
 from custom_components.diesel_heater.const import (
+    CONF_NEO_CONTROLLER_TYPE,
     ERROR_NAMES,
     RUNNING_MODE_NAMES,
     RUNNING_STEP_NAMES,
@@ -58,6 +60,8 @@ def create_mock_coordinator(protocol_mode: int = 0) -> MagicMock:
     coordinator.last_update_success = True
     coordinator.protocol_mode = protocol_mode
     coordinator.has_cronus_fuel_estimate = False
+    coordinator.is_dz06_neo = False
+    coordinator.is_warm_drive_controller = False
     coordinator.data = {
         "connected": True,
         "running_state": 1,
@@ -267,6 +271,15 @@ class TestErrorCodeSensor:
         value = sensor.native_value
         assert "E01" in value or value == ERROR_NAMES.get(1, "E01: Unknown Error")
 
+    def test_native_value_uses_warm_drive_fault_names(self):
+        """Warm Drive faults use the names decoded by its app."""
+        coordinator = create_mock_coordinator()
+
+        coordinator.is_warm_drive_controller = True
+        coordinator.data["error_code"] = 6
+
+        assert VevorErrorCodeSensor(coordinator).native_value == "Fan motor fault"
+
 
 # ---------------------------------------------------------------------------
 # Fuel consumption sensor tests
@@ -416,6 +429,63 @@ class TestAsyncSetupEntry:
         assert len(call_args) == 22
 
     @pytest.mark.asyncio
+    async def test_async_setup_entry_adds_warm_drive_motor_speed(self):
+        """The explicit Warm Drive motor-speed field survives initial offline setup."""
+        coordinator = create_mock_coordinator(protocol_mode=0)
+        coordinator.is_warm_drive_controller = True
+        async_add_entities = MagicMock()
+
+        await async_setup_entry(MagicMock(), MagicMock(runtime_data=coordinator), async_add_entities)
+
+        assert any(
+            isinstance(entity, VevorMotorSpeedSensor)
+            for entity in async_add_entities.call_args[0][0]
+        )
+
+
+    @pytest.mark.asyncio
+    async def test_async_setup_entry_adds_warm_drive_water_temperatures(self):
+        coordinator = create_mock_coordinator(protocol_mode=0)
+        coordinator.is_warm_drive_controller = True
+        coordinator.data["neo_controller_type"] = "water"
+        async_add_entities = MagicMock()
+
+        await async_setup_entry(
+            MagicMock(), MagicMock(runtime_data=coordinator, data={}), async_add_entities
+        )
+
+        auxiliary_temperature_keys = {
+            entity._key
+            for entity in async_add_entities.call_args[0][0]
+            if isinstance(entity, VevorAuxTemperatureSensor)
+        }
+        assert {
+            "fire_temperature",
+            "hot_water_temperature",
+            "water_temperature",
+        } <= auxiliary_temperature_keys
+
+    @pytest.mark.asyncio
+    async def test_async_setup_entry_omits_water_temperatures_for_air_controller(self):
+        coordinator = create_mock_coordinator(protocol_mode=0)
+        coordinator.is_warm_drive_controller = True
+        coordinator.data["neo_controller_type"] = "air"
+        async_add_entities = MagicMock()
+
+        await async_setup_entry(
+            MagicMock(), MagicMock(runtime_data=coordinator, data={CONF_NEO_CONTROLLER_TYPE: "water"}), async_add_entities
+        )
+
+        auxiliary_temperature_keys = {
+            entity._key
+            for entity in async_add_entities.call_args[0][0]
+            if isinstance(entity, VevorAuxTemperatureSensor)
+        }
+        assert "fire_temperature" in auxiliary_temperature_keys
+        assert "hot_water_temperature" not in auxiliary_temperature_keys
+        assert "water_temperature" not in auxiliary_temperature_keys
+
+
     async def test_async_setup_entry_protocol_mode_0(self):
         """Test async_setup_entry with protocol mode 0 includes all sensors."""
         coordinator = create_mock_coordinator(protocol_mode=0)

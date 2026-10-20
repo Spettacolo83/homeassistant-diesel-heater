@@ -30,6 +30,10 @@
     },
     {
       "connectable": true,
+      "local_name": "Air Heater"
+    },
+    {
+      "connectable": true,
       "local_name": "Hcalory*"
     },
     {

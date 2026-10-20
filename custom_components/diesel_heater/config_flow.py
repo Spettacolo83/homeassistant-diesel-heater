@@ -19,6 +19,7 @@ from .const import (
     CONF_EXTERNAL_TEMP_SENSOR,
     CONF_FORCE_TEMP_UNIT,
     CONF_NEO_PASSWORD,
+    CONF_NEO_CONTROLLER_TYPE,
     CONF_PIN,
     CONF_PRESET_AWAY_TEMP,
     CONF_PRESET_COMFORT_TEMP,
@@ -64,6 +65,23 @@ def _default_pin_for_discovery(discovery_info: BluetoothServiceInfoBleak) -> int
     return DEFAULT_PIN
 
 
+def _is_warm_drive_device(discovery_info: BluetoothServiceInfoBleak) -> bool:
+    """Return whether the device has Warm Drive's exact advertised name."""
+    return discovery_info.name == "Air Heater"
+
+
+def _warm_drive_controller_type(
+    discovery_info: BluetoothServiceInfoBleak,
+) -> str | None:
+    """Return the controller type encoded by Warm Drive's scan record."""
+    if not _is_warm_drive_device(discovery_info):
+        return None
+    for payload in discovery_info.manufacturer_data.values():
+        if len(payload) == 16:
+            return "air" if payload[4] == 1 else "water"
+    return None
+
+
 HEATER_NAME_PREFIXES = (
     "BAC-",
     "BYD-",
@@ -78,6 +96,7 @@ def _is_likely_heater(discovery_info: BluetoothServiceInfoBleak) -> bool:
     name = raw_name.upper()
     return (
         _is_heatgenie_device(discovery_info)
+        or _is_warm_drive_device(discovery_info)
         or any(name.startswith(prefix) for prefix in HEATER_NAME_PREFIXES)
         or "CRONUS" in raw_name
         or (name.startswith("HEATER") and name[6:].isdigit())
@@ -121,15 +140,21 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Confirm discovery."""
         assert self._discovery_info is not None
         default_pin = _default_pin_for_discovery(self._discovery_info)
+        default_neo_password = DEFAULT_NEO_PASSWORD
 
         if user_input is not None:
+            data = {
+                CONF_ADDRESS: self._discovery_info.address,
+                CONF_PIN: user_input.get(CONF_PIN, default_pin),
+                CONF_NEO_PASSWORD: user_input.get(
+                    CONF_NEO_PASSWORD, default_neo_password
+                ),
+            }
+            if controller_type := _warm_drive_controller_type(self._discovery_info):
+                data[CONF_NEO_CONTROLLER_TYPE] = controller_type
             return self.async_create_entry(
                 title=f"Vevor Heater {self._discovery_info.address[-5:].replace(':', '')}",
-                data={
-                    CONF_ADDRESS: self._discovery_info.address,
-                    CONF_PIN: user_input.get(CONF_PIN, default_pin),
-                    CONF_NEO_PASSWORD: user_input.get(CONF_NEO_PASSWORD, DEFAULT_NEO_PASSWORD),
-                },
+                data=data,
             )
 
         self._set_confirm_only()
@@ -146,7 +171,7 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ),
                 vol.Optional(
                     CONF_NEO_PASSWORD,
-                    default=DEFAULT_NEO_PASSWORD,
+                    default=default_neo_password,
                 ): vol.All(
                     vol.Coerce(int),
                     vol.Range(min=MIN_NEO_PASSWORD, max=MAX_NEO_PASSWORD),
@@ -165,6 +190,10 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             address = user_input[CONF_ADDRESS]
             await self.async_set_unique_id(address)
             self._abort_if_unique_id_configured()
+
+            if discovery_info := self._discovered_devices.get(address):
+                self._discovery_info = discovery_info
+                return await self.async_step_confirm()
 
             return self.async_create_entry(
                 title=f"Vevor Heater {address[-5:].replace(':', '')}",

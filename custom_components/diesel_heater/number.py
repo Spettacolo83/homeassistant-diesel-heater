@@ -57,7 +57,6 @@ async def async_setup_entry(
             ])
     else:
         entities = [
-            VevorHeaterLevelNumber(coordinator),
             VevorHeaterTemperatureNumber(coordinator),
             VevorTankCapacityNumber(coordinator),
             VevorCurrentFuelLevelNumber(coordinator),
@@ -65,6 +64,8 @@ async def async_setup_entry(
             VevorBurnoffAfterCyclesNumber(coordinator),
             VevorBurnoffAfterHoursNumber(coordinator),
         ]
+        if not coordinator.is_dz06_neo:
+            entities.insert(0, VevorHeaterLevelNumber(coordinator))
 
         # Offset number (encrypted + CBFF protocols only)
         if mode in (0, 2, 4, 6):
