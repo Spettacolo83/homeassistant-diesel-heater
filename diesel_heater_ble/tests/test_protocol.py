@@ -1958,15 +1958,108 @@ class TestProtocolHeatGenie:
     def setup_method(self):
         self.proto = ProtocolHeatGenie()
 
-    def test_app_command_frames(self):
+    def test_app_command_frames(self, monkeypatch):
+        monkeypatch.setattr("diesel_heater_ble.protocol.randrange", lambda _: 0)
         assert self.proto.build_command(1, 0, 0)[:6] == bytearray((0xAA, 0, 0x65, 2, 20, 30))
         assert self.proto.build_command(2, 1, 0)[:6] == bytearray((0xAA, 0, 0x66, 0, 0, 1))
-        assert self.proto.build_command(3, 1, 0)[:6] == bytearray((0xAA, 0, 0x61, 1, 0xFF, 0))
+        assert self.proto.build_command(3, 1, 0).hex() == "aa00610100007f7c"
+        assert self.proto.build_command(3, 0, 0).hex() == "aa0061020000262c"
         assert self.proto.build_command(4, 20, 0)[:6] == bytearray((0xAA, 0, 0x66, 1, 0, 20))
         assert self.proto.build_command(5, 6, 0)[:6] == bytearray((0xAA, 0, 0x66, 2, 0, 6))
-        assert self.proto.build_command(15, 1, 0)[:6] == bytearray((0xAA, 0, 0x61, 10, 0xFF, 0))
+        assert self.proto.build_command(15, 1, 0).hex() == "aa00610a00008f8d"
         assert self.proto.build_command(4, 68, 0)[:6] == bytearray((0xAA, 0, 0x66, 1, 1, 68))
         assert self.proto.build_time_sync(0, 12, 34)[:6] == bytearray((0xAA, 0, 0x66, 3, 12, 34))
+
+    def test_parses_button_acknowledgement_used_by_the_app(self):
+        frame = bytearray((0xAA, 0, 0x41, 0, 0xAE, 0, 0, 0))
+        frame[-2:] = self.proto.crc16(frame[:-2]).to_bytes(2, "big")
+
+        assert self.proto.parse_command_ack(frame) == (True, 0xAE)
+
+        frame[3] = 1
+        frame[-2:] = self.proto.crc16(frame[:-2]).to_bytes(2, "big")
+        assert self.proto.parse_command_ack(frame) == (False, 0xAE)
+
+    def test_rejects_invalid_button_acknowledgement(self):
+        frame = bytearray((0xAA, 0, 0x41, 0, 0xAE, 0, 0, 0))
+        frame[-2:] = self.proto.crc16(frame[:-2]).to_bytes(2, "big")
+        frame[4] ^= 1
+
+        assert self.proto.parse_command_ack(frame) is None
+
+    def test_parses_captured_extended_f2_frame(self):
+        frame = bytearray.fromhex(
+            "aa09ff06000000f2332572002003d2001c08210000008b0bf87ff87f00000"
+            "440b1145942000000000510000000000000af0c6409"
+        )
+
+        parsed = self.proto.parse(frame)
+
+        assert parsed is not None
+        assert parsed["supply_voltage"] == 11.4
+        assert parsed["cab_temperature"] == 21.0
+        assert parsed["set_level"] == 5
+        assert parsed["set_temp"] == 16
+
+    def test_rejects_corrupted_extended_f2_frame(self):
+        frame = bytearray.fromhex(
+            "aa09ff06000000f2332572002003d2001c08210000008b0bf87ff87f00000"
+            "440b1145942000000000510000000000000af0c6409"
+        )
+        frame[20] ^= 0x01
+
+        assert not self.proto.is_status_frame(frame)
+        assert self.proto.parse(frame) is None
+
+    def test_idle_state_and_button_echo_match_the_controller_report(self):
+        frame = _make_heatgenie_status()
+        frame[8] = 5
+        frame[42] = 2
+        frame[43] = 0xAE
+        frame[-2:] = self.proto.crc16(frame[:-2]).to_bytes(2, "big")
+
+        parsed = self.proto.parse(frame)
+
+        assert parsed is not None
+        assert parsed["running_state"] == 0
+        assert parsed["running_step"] == 0
+        assert parsed["heatgenie_raw_state"] == 5
+        assert parsed["heatgenie_last_button"] == 2
+        assert parsed["heatgenie_last_button_nonce"] == 0xAE
+
+    def test_cooldown_reports_power_off(self):
+        frame = _make_heatgenie_status()
+        frame[8] = 4
+        frame[-2:] = self.proto.crc16(frame[:-2]).to_bytes(2, "big")
+
+        parsed = self.proto.parse(frame)
+
+        assert parsed is not None
+        assert parsed["running_state"] == 0
+        assert parsed["running_step"] == 4
+
+    def test_error_state_does_not_alias_generic_ventilation(self):
+        frame = _make_heatgenie_status()
+        frame[8] = 6
+        frame[-2:] = self.proto.crc16(frame[:-2]).to_bytes(2, "big")
+
+        parsed = self.proto.parse(frame)
+
+        assert parsed is not None
+        assert parsed["running_state"] == 0
+        assert parsed["running_step"] is None
+        assert parsed["heatgenie_raw_state"] == 6
+
+    def test_power_state_matches_the_app_state_table(self):
+        for state in range(10):
+            frame = _make_heatgenie_status()
+            frame[8] = state
+            frame[-2:] = self.proto.crc16(frame[:-2]).to_bytes(2, "big")
+
+            parsed = self.proto.parse(frame)
+
+            assert parsed is not None
+            assert parsed["running_state"] == int(state in (1, 2, 3))
 
     def test_parses_independent_temperature_and_component_fields(self):
         parsed = self.proto.parse(_make_heatgenie_status())

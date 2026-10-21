@@ -178,6 +178,11 @@ def create_mock_coordinator() -> VevorHeaterCoordinator:
     coordinator._v21_handshake_event = asyncio.Event()
     coordinator._v21_handshake_authenticated = None
     coordinator._feaa_command_lock = asyncio.Lock()
+    coordinator._heatgenie_status_event = asyncio.Event()
+    coordinator._heatgenie_command_lock = asyncio.Lock()
+    coordinator._heatgenie_last_status_at = 0.0
+    coordinator._heatgenie_pending_button = None
+    coordinator._heatgenie_acknowledged_button = None
     coordinator._time_synced_this_session = False
     coordinator._hcalory_write_char = None
     coordinator._connection_attempts = 0
@@ -562,6 +567,22 @@ class TestProtocolDetection:
 
         assert protocol is coordinator._protocols[8]
         assert parsed_data is data
+
+    def test_heatgenie_extended_status_updates_and_wakes_waiter(self):
+        coordinator = create_mock_coordinator()
+        coordinator._is_heatgenie_device = True
+        frame = bytearray.fromhex(
+            "aa09ff06000000f2332572002003d2001c08210000008b0bf87ff87f00000"
+            "440b1145942000000000510000000000000af0c6409"
+        )
+
+        coordinator._parse_response(frame)
+
+        assert coordinator._heatgenie_status_event.is_set()
+        assert coordinator.data["supply_voltage"] == 11.4
+        assert coordinator.data["cab_temperature"] == 21.0
+        assert coordinator.data["set_level"] == 5
+        assert coordinator.data["set_temp"] == 16
 
     def test_detect_protocol_cbff(self):
         """Test detection of CBFF/Sunster protocol."""
@@ -1614,6 +1635,77 @@ class TestAsyncCommands:
         assert call_args[0][1] == 25
 
     @pytest.mark.asyncio
+    async def test_heatgenie_connection_skips_generic_wake_up_ping(self):
+        coordinator = create_mock_coordinator()
+        coordinator._is_heatgenie_device = True
+        coordinator._client = MagicMock(is_connected=True)
+        coordinator._write_gatt = AsyncMock()
+
+        await coordinator._send_wake_up_ping()
+
+        coordinator._write_gatt.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_heatgenie_update_waits_for_automatic_status(self):
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 8
+        coordinator._client = MagicMock(is_connected=True)
+        coordinator._await_heatgenie_status = AsyncMock(return_value=True)
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        await coordinator._async_update_data()
+
+        coordinator._await_heatgenie_status.assert_awaited_once()
+        coordinator._send_command.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_heatgenie_initial_update_configures_automatic_status(self):
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 8
+        coordinator._client = None
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        async def connect() -> None:
+            coordinator._client = MagicMock(is_connected=True)
+
+        coordinator._ensure_connected = AsyncMock(side_effect=connect)
+        coordinator._await_heatgenie_status = AsyncMock(return_value=True)
+
+        await coordinator._async_update_data()
+
+        coordinator._send_command.assert_awaited_once_with(1, 0)
+        coordinator._await_heatgenie_status.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_heatgenie_controls_wait_for_automatic_reports(self):
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 8
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        await coordinator.async_turn_on()
+        coordinator.async_request_refresh.assert_not_awaited()
+
+        coordinator._send_command.reset_mock()
+        await coordinator.async_set_level(5)
+        coordinator.async_request_refresh.assert_not_awaited()
+
+        coordinator._send_command.reset_mock()
+        await coordinator.async_set_temperature(22)
+        coordinator.async_request_refresh.assert_not_awaited()
+
+        coordinator._send_command.reset_mock()
+        await coordinator.async_set_mode(RUNNING_MODE_LEVEL)
+        coordinator.async_request_refresh.assert_not_awaited()
+
+        coordinator._send_command.reset_mock()
+        await coordinator.async_set_temp_unit(True)
+        coordinator.async_request_refresh.assert_not_awaited()
+
+        coordinator._send_command.reset_mock()
+        coordinator.data["running_state"] = RUNNING_STATE_ON
+        await coordinator.async_turn_off(immediate=True)
+        coordinator.async_request_refresh.assert_not_awaited()
+
     @pytest.mark.asyncio
     async def test_async_set_temperature_heatgenie_uses_native_limits(self):
         coordinator = create_mock_coordinator()
@@ -1630,6 +1722,34 @@ class TestAsyncCommands:
 
         coordinator._send_command.assert_awaited_once_with(4, 50)
 
+    @pytest.mark.asyncio
+    async def test_heatgenie_temperature_mode_uses_raw_auto_mode(self):
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 8
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        await coordinator.async_set_mode(RUNNING_MODE_TEMPERATURE)
+
+        coordinator._send_command.assert_awaited_once_with(2, 0)
+
+    @pytest.mark.asyncio
+    async def test_heatgenie_command_waits_for_reported_effect(self):
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 8
+        coordinator._client = MagicMock(is_connected=True)
+        coordinator._characteristic = MagicMock()
+        coordinator._protocol = coordinator._protocols[8]
+
+        async def write(_packet):
+            coordinator.data["set_level"] = 5
+            coordinator._heatgenie_status_event.set()
+
+        coordinator._write_gatt = AsyncMock(side_effect=write)
+
+        assert await coordinator._send_command(5, 5) is True
+        coordinator._write_gatt.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_async_set_mode(self):
         """Test async_set_mode sends correct command."""
         coordinator = create_mock_coordinator()
@@ -6426,3 +6546,86 @@ class TestTimeSync:
         assert await coordinator.async_sync_time() is True
         coordinator._send_command.assert_awaited_once()
         assert coordinator._send_command.await_args.args[0] == 10
+
+
+class TestHeatGenieDelayedReports:
+    """Regressions for delayed F2 delivery through a Bluetooth proxy."""
+
+    def _frame(self, coordinator, *, state: int, button: int, nonce: int) -> bytearray:
+        protocol = coordinator._protocols[8]
+        frame = bytearray(50)
+        frame[0], frame[1], frame[7] = 0xAA, 9, 0xF2
+        frame[8] = state
+        frame[42], frame[43] = button, nonce
+        frame[-2:] = protocol.crc16(frame[:-2]).to_bytes(2, "big")
+        return frame
+
+    def test_stale_button_echo_does_not_overwrite_pending_command_state(self):
+        coordinator = create_mock_coordinator()
+        coordinator._is_heatgenie_device = True
+        coordinator._heatgenie_pending_button = (2, 0xAE)
+        coordinator.data["running_state"] = 0
+
+        coordinator._parse_response(self._frame(coordinator, state=1, button=1, nonce=0x8D))
+
+        assert coordinator.data["running_state"] == 0
+        assert not coordinator._heatgenie_status_event.is_set()
+
+        coordinator._parse_response(self._frame(coordinator, state=4, button=2, nonce=0xAE))
+
+        assert coordinator.data["running_state"] == 0
+        assert coordinator.data["running_step"] == RUNNING_STEP_COOLDOWN
+        assert coordinator._heatgenie_status_event.is_set()
+
+    def test_button_acknowledgement_confirms_matching_pending_button(self):
+        coordinator = create_mock_coordinator()
+        coordinator._is_heatgenie_device = True
+        coordinator._heatgenie_pending_button = (2, 0xAE)
+        protocol = coordinator._protocols[8]
+        frame = bytearray((0xAA, 0, 0x41, 0, 0xAE, 0, 0, 0))
+        frame[-2:] = protocol.crc16(frame[:-2]).to_bytes(2, "big")
+
+        coordinator._parse_response(frame)
+
+        assert coordinator._heatgenie_acknowledged_button == (2, 0xAE)
+        assert coordinator._heatgenie_status_event.is_set()
+
+    @pytest.mark.asyncio
+    async def test_app_style_button_acknowledgement_completes_command(self):
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 8
+        coordinator._is_heatgenie_device = True
+        coordinator._client = MagicMock(is_connected=True)
+        coordinator._characteristic = MagicMock()
+        coordinator._protocol = coordinator._protocols[8]
+
+        async def write(packet):
+            protocol = coordinator._protocols[8]
+            ack = bytearray((0xAA, 0, 0x41, 0, packet[4], 0, 0, 0))
+            ack[-2:] = protocol.crc16(ack[:-2]).to_bytes(2, "big")
+            coordinator._parse_response(ack)
+
+        coordinator._write_gatt = AsyncMock(side_effect=write)
+
+        assert await coordinator._send_command(3, 0) is True
+        coordinator._write_gatt.assert_awaited_once()
+
+    def test_button_acknowledgement_ignores_unmatched_nonce(self):
+        coordinator = create_mock_coordinator()
+        coordinator._is_heatgenie_device = True
+        coordinator._heatgenie_pending_button = (2, 0xAE)
+        protocol = coordinator._protocols[8]
+        frame = bytearray((0xAA, 0, 0x41, 0, 0x8D, 0, 0, 0))
+        frame[-2:] = protocol.crc16(frame[:-2]).to_bytes(2, "big")
+
+        coordinator._parse_response(frame)
+
+        assert coordinator._heatgenie_acknowledged_button is None
+        assert not coordinator._heatgenie_status_event.is_set()
+
+    @pytest.mark.asyncio
+    async def test_recent_report_satisfies_passive_refresh(self):
+        coordinator = create_mock_coordinator()
+        coordinator._heatgenie_last_status_at = time.monotonic()
+
+        assert await coordinator._await_heatgenie_status()

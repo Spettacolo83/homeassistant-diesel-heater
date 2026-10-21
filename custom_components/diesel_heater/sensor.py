@@ -407,6 +407,20 @@ class VevorRunningStepSensor(VevorSensorBase):
     @property
     def native_value(self) -> str | None:
         """Return the state."""
+        if self.coordinator.protocol_mode == 8:
+            raw_state = self.coordinator.data.get("heatgenie_raw_state")
+            return {
+                0: "Resetting",
+                1: "Ignition",
+                2: "Temperature Control",
+                3: "Manual Control",
+                4: "Cooldown",
+                5: "Standby",
+                6: "Error",
+                7: "Manual Fuel Pump",
+                8: "Ventilation",
+                9: "Start/Stop Mode",
+            }.get(raw_state, f"Unknown ({raw_state})")
         step = self.coordinator.data.get("running_step")
         return RUNNING_STEP_NAMES.get(step, f"Unknown ({step})")
 
