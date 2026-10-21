@@ -3,7 +3,7 @@ from __future__ import annotations
 
 PARALLEL_UPDATES = 1
 
-from homeassistant.components.number import NumberDeviceClass, NumberEntity
+from homeassistant.components.number import NumberDeviceClass, NumberEntity, NumberMode
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -358,6 +358,7 @@ class VevorTankCapacityNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberE
     _attr_native_min_value = 1
     _attr_native_max_value = 100
     _attr_native_step = 1
+    _attr_mode = NumberMode.BOX
     _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
@@ -413,6 +414,7 @@ class VevorCurrentFuelLevelNumber(CoordinatorEntity[VevorHeaterCoordinator], Num
     _attr_native_unit_of_measurement = UnitOfVolume.LITERS
     _attr_native_min_value = 0
     _attr_native_step = 0.1  # Allow 0.1L precision (@Wheemer, issue #38)
+    _attr_mode = NumberMode.BOX
 
     def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
         """Initialize the number entity."""

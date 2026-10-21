@@ -6,7 +6,6 @@ from unittest.mock import MagicMock, AsyncMock
 
 # Import stubs first
 from . import conftest  # noqa: F401
-
 from custom_components.diesel_heater.number import (
     VevorHeaterLevelNumber,
     VevorHeaterTemperatureNumber,
@@ -168,6 +167,12 @@ class TestVevorTankCapacityNumber:
         number = VevorTankCapacityNumber(coordinator)
 
         assert number.native_value == 10
+
+    def test_fuel_estimate_inputs_use_number_boxes(self):
+        coordinator = create_mock_coordinator()
+
+        assert VevorTankCapacityNumber(coordinator)._attr_mode._mock_name == "BOX"
+        assert VevorCurrentFuelLevelNumber(coordinator)._attr_mode._mock_name == "BOX"
 
     def test_current_fuel_level_max_handles_none_capacity(self):
         """A missing capacity must not reach max() as None."""

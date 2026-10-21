@@ -1447,6 +1447,25 @@ class TestAsyncFuelManagement:
 
         assert coordinator.data["tank_capacity"] == 15
 
+    @pytest.mark.asyncio
+    async def test_async_set_current_fuel_level_updates_remaining_only(self):
+        """Manual tank level updates fuel since refill, not lifetime consumption."""
+        coordinator = create_mock_coordinator()
+        coordinator._store = MagicMock()
+        coordinator._store.async_save = AsyncMock()
+        coordinator._last_save_time = 0
+        coordinator.data["tank_capacity"] = 5.0
+        coordinator._total_fuel_consumed = 12.3
+        coordinator.data["total_fuel_consumed"] = 12.3
+
+        await coordinator.async_set_current_fuel_level(4.6)
+
+        assert coordinator._fuel_consumed_since_reset == 0.4
+        assert coordinator.data["fuel_consumed_since_reset"] == 0.4
+        assert coordinator.data["fuel_remaining"] == 4.6
+        assert coordinator._total_fuel_consumed == 12.3
+        assert coordinator.data["total_fuel_consumed"] == 12.3
+
 
 # ---------------------------------------------------------------------------
 # Daily reset tests
