@@ -18,6 +18,7 @@ from .const import (
     CONF_CRONUS_HEATER_MODEL,
     CONF_EXTERNAL_TEMP_SENSOR,
     CONF_FORCE_TEMP_UNIT,
+    CONF_HCALORY_VARIANT,
     CONF_NEO_PASSWORD,
     CONF_NEO_CONTROLLER_TYPE,
     CONF_PIN,
@@ -43,6 +44,7 @@ from .const import (
     MIN_NEO_PASSWORD,
     MIN_PIN,
 )
+from .hcalory import hcalory_variant_from_discovery
 
 _LOGGER = logging.getLogger(__name__)
 HEATGENIE_NAME_PATTERN = re.compile(r"^C1:[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}:FE:[0-9A-F]{2}$")
@@ -97,6 +99,7 @@ def _is_likely_heater(discovery_info: BluetoothServiceInfoBleak) -> bool:
     return (
         _is_heatgenie_device(discovery_info)
         or _is_warm_drive_device(discovery_info)
+        or hcalory_variant_from_discovery(discovery_info) is not None
         or any(name.startswith(prefix) for prefix in HEATER_NAME_PREFIXES)
         or "CRONUS" in raw_name
         or (name.startswith("HEATER") and name[6:].isdigit())
@@ -152,6 +155,8 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }
             if controller_type := _warm_drive_controller_type(self._discovery_info):
                 data[CONF_NEO_CONTROLLER_TYPE] = controller_type
+            if variant := hcalory_variant_from_discovery(self._discovery_info):
+                data[CONF_HCALORY_VARIANT] = variant.value
             return self.async_create_entry(
                 title=f"Vevor Heater {self._discovery_info.address[-5:].replace(':', '')}",
                 data=data,

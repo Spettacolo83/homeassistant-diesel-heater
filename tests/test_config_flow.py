@@ -19,6 +19,7 @@ from custom_components.diesel_heater.const import (
     CONF_BURNOFF_ENABLED,
     CONF_CRONUS_HEATER_MODEL,
     CONF_EXTERNAL_TEMP_SENSOR,
+    CONF_HCALORY_VARIANT,
     CONF_NEO_CONTROLLER_TYPE,
     CONF_NEO_PASSWORD,
     CONF_PIN,
@@ -27,9 +28,14 @@ from custom_components.diesel_heater.const import (
     DEFAULT_PIN,
     DEFAULT_PRESET_AWAY_TEMP,
     DEFAULT_PRESET_COMFORT_TEMP,
+    HCALORY_MVP1_SERVICE_UUID,
     HCALORY_MVP2_SERVICE_UUID,
     HEATGENIE_SERVICE_UUID,
     SERVICE_UUID,
+)
+from custom_components.diesel_heater.hcalory import (
+    HcaloryVariant,
+    classify_hcalory_manufacturer_data,
 )
 from tests.conftest import _AbortFlow
 
@@ -50,6 +56,69 @@ def _make_ble_discovery(
     info.service_uuids = service_uuids if service_uuids is not None else [SERVICE_UUID]
     info.manufacturer_data = manufacturer_data or {}
     return info
+
+
+class TestHcaloryAdvertisementClassification:
+    """Tests that mirror every Hcalory Android-app classification branch."""
+
+    @pytest.mark.parametrize(
+        ("payload", "variant"),
+        [
+            (b"\x06\xbd\x01" + b"\x00" * 11, HcaloryVariant.MVP2),
+            (b"\x01\x02" + b"\x00" * 12, HcaloryVariant.MVP1_2),
+            (b"\x01\x03" + b"\x00" * 12, HcaloryVariant.MVP1_3),
+            (b"\x02\x02" + b"\x00" * 12, HcaloryVariant.MVP2_2),
+            (b"\x02\x03" + b"\x00" * 12, HcaloryVariant.MVP2_3),
+            (b"\x03\x01" + b"\x00" * 12, HcaloryVariant.MVP3),
+            (b"\x03\x02" + b"\x00" * 12, HcaloryVariant.MVP3_2),
+            (b"\x03\x03" + b"\x00" * 12, HcaloryVariant.MVP3_3),
+        ],
+    )
+    def test_apk_variant_record_is_classified(self, payload, variant):
+        assert classify_hcalory_manufacturer_data({65294: payload}) is variant
+
+    def test_legacy_mvp1_record_is_classified(self):
+        # This is the Android app's short ECB... legacy record branch.
+        assert classify_hcalory_manufacturer_data(
+            {0xB0EC: b"\x00\x00\x00\x00"}
+        ) is HcaloryVariant.MVP1
+
+    @pytest.mark.parametrize(
+        ("variant", "command_id"),
+        [
+            (HcaloryVariant.MVP1, bytearray((0x0E, 0x04))),
+            (HcaloryVariant.MVP2, bytearray((0x0A, 0x0A))),
+            (HcaloryVariant.MVP1_2, bytearray((0x0A, 0x0A))),
+            (HcaloryVariant.MVP1_3, bytearray((0x0A, 0x0A))),
+            (HcaloryVariant.MVP2_2, bytearray((0x0A, 0x0A))),
+            (HcaloryVariant.MVP2_3, bytearray((0x0A, 0x0A))),
+            (HcaloryVariant.MVP3, bytearray((0x0A, 0x0A))),
+            (HcaloryVariant.MVP3_2, bytearray((0x0A, 0x0A))),
+            (HcaloryVariant.MVP3_3, bytearray((0x0A, 0x0A))),
+        ],
+    )
+    def test_each_apk_variant_selects_its_command_family(self, variant, command_id):
+        from diesel_heater_ble import ProtocolHcalory
+        from custom_components.diesel_heater.hcalory import uses_mvp2_commands
+
+        protocol = ProtocolHcalory()
+        protocol.set_mvp_version(uses_mvp2_commands(variant))
+
+        assert protocol.build_command(1, 0, 0)[7:9] == command_id
+
+    async def test_variant_is_discovered_and_persisted(self):
+        flow = VevorHeaterConfigFlow()
+        discovery = _make_ble_discovery(
+            name="",
+            service_uuids=[HCALORY_MVP1_SERVICE_UUID],
+            manufacturer_data={65294: b"\x01\x02" + b"\x00" * 12},
+        )
+
+        result = await flow.async_step_bluetooth(discovery)
+        assert result["type"] == "form"
+
+        result = await flow.async_step_confirm(user_input={})
+        assert result["data"][CONF_HCALORY_VARIANT] == HcaloryVariant.MVP1_2.value
 
 
 # ---------------------------------------------------------------------------
