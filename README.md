@@ -12,7 +12,7 @@
 
 > This is a maintained fork of the original [homeassistant-vevor-heater](https://github.com/MSDATDE/homeassistant-vevor-heater) by [@MSDATDE](https://github.com/MSDATDE), enhanced with HACS 2.0+ compatibility, multi-brand support, and additional improvements.
 
-Control supported diesel air and water heaters from Home Assistant via Bluetooth. The integration supports AirHeaterBLE (AA55/AA66), AirHeaterCC (ABBA), Sunster (CBFF), Hcalory (MVP1/MVP2), HeatGenie/Boygu, Warm Drive/MUDIRO, and Webasto ThermoConnect Cronus controllers.
+Control supported diesel air and water heaters from Home Assistant via Bluetooth. The integration supports AirHeaterBLE (AA55/AA66), AirHeaterCC (ABBA), Sunster (CBFF), Hcalory (MVP1, MVP2, MVP1_2, MVP1_3, MVP2_2, MVP2_3, MVP3, MVP3_2, MVP3_3), HeatGenie/Boygu, Warm Drive/MUDIRO, and Webasto ThermoConnect Cronus controllers.
 
 ## Features
 

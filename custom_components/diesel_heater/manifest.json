@@ -42,6 +42,46 @@
     },
     {
       "connectable": true,
+      "manufacturer_id": 65294,
+      "manufacturer_data_start": [6, 189, 1]
+    },
+    {
+      "connectable": true,
+      "manufacturer_id": 65294,
+      "manufacturer_data_start": [1, 2]
+    },
+    {
+      "connectable": true,
+      "manufacturer_id": 65294,
+      "manufacturer_data_start": [1, 3]
+    },
+    {
+      "connectable": true,
+      "manufacturer_id": 65294,
+      "manufacturer_data_start": [2, 2]
+    },
+    {
+      "connectable": true,
+      "manufacturer_id": 65294,
+      "manufacturer_data_start": [2, 3]
+    },
+    {
+      "connectable": true,
+      "manufacturer_id": 65294,
+      "manufacturer_data_start": [3, 1]
+    },
+    {
+      "connectable": true,
+      "manufacturer_id": 65294,
+      "manufacturer_data_start": [3, 2]
+    },
+    {
+      "connectable": true,
+      "manufacturer_id": 65294,
+      "manufacturer_data_start": [3, 3]
+    },
+    {
+      "connectable": true,
       "local_name": "C1:*:FE:*"
     },
     {

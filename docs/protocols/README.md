@@ -31,9 +31,8 @@ not a claim about every FFF0 device.
 | AA55 / AA66 | FFE0 | FFE1 read/write/notify; frame selects AA55 or AA66 |
 | ABBA legacy | FFF0 | FFF1 notify and FFF2 write; `AB BA` status validates the protocol |
 | CBFF / Sunster V2.1 | FFF0 | Verified session plus CBFF/FEAA protocol; `AA77` starts encrypted V2.1 handling |
-| Hcalory MVP1 | FFF0 | FFF2 write and FFF1 notify, then Hcalory packet validation |
+| Hcalory MVP variants | FFF0 or BD39 | APK-identified variant plus the verified FFF2/FFF1 or BDF7/BDF8 characteristic pair |
 | Warm Drive / MUDIRO | FFF0 | Exact `Air Heater` identity, FFF1 write and FFF2 notify, then the app-defined 5C16/5A25 exchange |
-| Hcalory MVP2 | BD39 | BDF7 write and BDF8 notify, then Hcalory packet validation |
 | HeatGenie / Boygu | 181A | One notify/indicate and one write characteristic, plus supported name identity and a valid `F2` report |
 | Webasto Cronus | Proprietary | `4229d528-33d0-4aa7-9af1-00b03fc128f9` notify and `2ed964d9-1371-45ee-a84b-1d134d5ce7b7` write, plus a Cronus name |
 

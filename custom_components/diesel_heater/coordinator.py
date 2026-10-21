@@ -29,6 +29,7 @@ from homeassistant.util import dt as dt_util
 from homeassistant.helpers.event import async_track_state_change_event
 
 from .burnoff import BurnoffController, BurnoffPhase
+from .hcalory import HcaloryVariant, hcalory_variant_from_discovery, uses_mvp2_commands
 from .const import (
     ABBA_NOTIFY_UUID,
     ABBA_SERVICE_UUID,
@@ -45,6 +46,7 @@ from .const import (
     CONF_BURNOFF_ENABLED,
     CONF_EXTERNAL_TEMP_SENSOR,
     CONF_FORCE_TEMP_UNIT,
+    CONF_HCALORY_VARIANT,
     CONF_CRONUS_HEATER_MODEL,
     CRONUS_FUEL_PROFILES,
     CONF_NEO_PASSWORD,
@@ -67,6 +69,9 @@ from .const import (
     DOMAIN,
     FUEL_CONSUMPTION_TABLE,
     HEATGENIE_SERVICE_UUID,
+    HCALORY_MVP1_NOTIFY_UUID,
+    HCALORY_MVP1_SERVICE_UUID,
+    HCALORY_MVP1_WRITE_UUID,
     HCALORY_MVP2_NOTIFY_UUID,
     HCALORY_MVP2_SERVICE_UUID,
     HCALORY_MVP2_WRITE_UUID,
@@ -230,6 +235,17 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._is_hcalory_device = False  # True if using Hcalory MVP1/MVP2 protocol
         self._hcalory_mvp2_device = False  # Confirmed by the BD39 GATT service
         self._hcalory_write_char = None  # Hcalory devices use separate write characteristic
+        self._hcalory_variant: HcaloryVariant | None = None
+        try:
+            self._hcalory_variant = HcaloryVariant(
+                config_entry.data.get(CONF_HCALORY_VARIANT)
+            )
+        except (TypeError, ValueError):
+            discovery_info = bluetooth.async_last_service_info(
+                hass, ble_device.address, connectable=True
+            )
+            if discovery_info:
+                self._hcalory_variant = hcalory_variant_from_discovery(discovery_info)
         # Hcalory returns set_value=None when heater is OFF (@Xev's discovery, issue #34)
         # Remember last known values to restore when heater turns off
         self._hcalory_last_set_temp: int | None = None
@@ -1711,6 +1727,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._v21_handshake_authenticated = None
             self._cronus_expected_length = 0
 
+            hcalory_variant = getattr(self, "_hcalory_variant", None)
+
             # First, check for Hcalory MVP2 device (service bd39)
             for service in self._client.services:
                 if service.uuid.lower() == HCALORY_MVP2_SERVICE_UUID.lower():
@@ -1719,9 +1737,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     self._hcalory_mvp2_device = True
                     self._protocol_mode = 7  # Hcalory protocol
                     self._protocol = self._protocols[7]
-                    # Set MVP2 flag on the protocol
-                    if hasattr(self._protocol, 'set_mvp_version'):
-                        self._protocol.set_mvp_version(True)
+                    # The app selects its command family from the advertisement
+                    # variant, independently of the GATT service it found.
+                    if hasattr(self._protocol, "set_mvp_version"):
+                        self._protocol.set_mvp_version(
+                            hcalory_variant is None
+                            or uses_mvp2_commands(hcalory_variant)
+                        )
 
                     # Optimize update interval for Hcalory (@Xev: 15s → 5s)
                     # Hcalory needs faster polling for stability (app polls ~2s)
@@ -1746,6 +1768,37 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     if not self._hcalory_write_char:
                         self._logger.warning(
                             "⚠️ Hcalory device but bdf7 write characteristic not found!"
+                        )
+                    break
+
+            # The Hcalory app also uses FFF0/FFF2/FFF1 for MVP1 and for
+            # advertised MVP variants. Do not route a positively identified
+            # Hcalory controller through the otherwise identical ABBA GATT pair.
+            if not self._is_hcalory_device and hcalory_variant:
+                for service in self._client.services:
+                    if service.uuid.lower() != HCALORY_MVP1_SERVICE_UUID.lower():
+                        continue
+                    self._logger.info(
+                        "Detected Hcalory %s heater on FFF0 transport",
+                        hcalory_variant.value,
+                    )
+                    self._is_hcalory_device = True
+                    self._protocol_mode = 7
+                    self._protocol = self._protocols[7]
+                    if hasattr(self._protocol, "set_mvp_version"):
+                        self._protocol.set_mvp_version(
+                            uses_mvp2_commands(hcalory_variant)
+                        )
+                    self.update_interval = timedelta(seconds=UPDATE_INTERVAL_HCALORY)
+                    for char in service.characteristics:
+                        if char.uuid.lower() == HCALORY_MVP1_NOTIFY_UUID.lower():
+                            self._characteristic = char
+                            self._active_char_uuid = HCALORY_MVP1_NOTIFY_UUID
+                        elif char.uuid.lower() == HCALORY_MVP1_WRITE_UUID.lower():
+                            self._hcalory_write_char = char
+                    if not self._characteristic or not self._hcalory_write_char:
+                        self._logger.warning(
+                            "Hcalory FFF0 controller is missing its FFF1 notify or FFF2 write characteristic"
                         )
                     break
 

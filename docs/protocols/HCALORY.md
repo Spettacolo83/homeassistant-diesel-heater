@@ -1,4 +1,4 @@
-# Hcalory Protocol (MVP1 and MVP2)
+# Hcalory Protocol
 
 **Integration mode:** 7
 **Controller app evidence:** Hcalory protocol implementations and Hcalory app
@@ -6,9 +6,11 @@ transport definitions
 
 ## Scope
 
-Hcalory controllers use two related protocols. MVP1 and MVP2 share the command
-envelope but use different BLE services and characteristic layouts. They must
-not be selected from an FFF0 service alone.
+The Hcalory Android app identifies these controller variants from manufacturer
+advertisement data: `MVP1`, `MVP2`, `MVP1_2`, `MVP1_3`, `MVP2_2`, `MVP2_3`,
+`MVP3`, `MVP3_2`, and `MVP3_3`. They share the Hcalory envelope and status
+layout. The app selects a GATT transport independently from the command family,
+so an FFF0 service alone must not be treated as ABBA or as Hcalory.
 
 ## Transport
 
@@ -17,7 +19,8 @@ not be selected from an FFF0 service alone.
 | MVP1 | `0000FFF0-0000-1000-8000-00805F9B34FB` | `0000FFF2-0000-1000-8000-00805F9B34FB` | `0000FFF1-0000-1000-8000-00805F9B34FB` |
 | MVP2 | `0000BD39-0000-1000-8000-00805F9B34FB` | `0000BDF7-0000-1000-8000-00805F9B34FB` | `0000BDF8-0000-1000-8000-00805F9B34FB` |
 
-MVP2 sends a connection/status request using command `0A 0A` with the current
+Legacy `MVP1` sends its status query using `0E 04`. `MVP2` and all seven
+numbered MVP variants use authenticated `0A 0A` status requests with the current
 time encoded as raw hour, minute, second, ISO weekday, and a trailing `00`.
 This is neither a Unix timestamp nor BCD.
 
@@ -75,6 +78,7 @@ controlled state rather than an immediate off indication.
 
 ## Detection
 
-The integration distinguishes MVP1 and MVP2 from the verified service and
-characteristic directions, then validates the Hcalory status/command protocol.
-FFF0 alone is shared with other heater families and is not sufficient evidence.
+The integration preserves the app-recognized advertisement variant in the
+config entry, chooses the verified FFF0 or BD39 characteristic pair, and then
+uses the matching Hcalory command family. FFF0 alone is shared with other
+heater families and is not sufficient evidence.
