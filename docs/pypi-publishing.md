@@ -4,14 +4,17 @@ This guide is the release procedure for the bundled `diesel-heater-ble` library.
 
 ## Release Sequence
 
-1. Make the library change in `diesel_heater_ble/src/diesel_heater_ble/`.
-2. Update the library version in `diesel_heater_ble/pyproject.toml`.
-3. From the repository root, run `bash scripts/pre-release-check.sh`.
-4. Build and publish the library wheel only after that check succeeds.
-5. Confirm the new wheel is available from PyPI.
-6. Update the integration requirement in `custom_components/diesel_heater/manifest.json`.
-7. Run `bash scripts/pre-release-check.sh` again against the released PyPI version.
-8. Create the integration release only after the second check succeeds.
+1. Make the library change in `diesel_heater_ble/src/diesel_heater_ble/` and update its version in `diesel_heater_ble/pyproject.toml`.
+2. Update `custom_components/diesel_heater/manifest.json` to require that same version.
+3. Build and validate the wheel from the reviewed PR commit.
+4. Publish that exact wheel to PyPI.
+5. Confirm the new wheel is available from PyPI, then run `bash scripts/pre-release-check.sh`.
+6. Merge the PR and create the integration release only after the check succeeds.
+
+The pre-release check compares the bundled library package with the PyPI wheel
+when their versions match. It rejects a source change that reuses an already
+published version, even when every import still resolves. A higher local library
+version is allowed only while awaiting its first PyPI publication.
 
 ## Required Pre-Publish Check
 

@@ -33,6 +33,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MANIFEST="$REPO_ROOT/custom_components/diesel_heater/manifest.json"
 INTEGRATION_PATH="$REPO_ROOT/custom_components/diesel_heater"
+LIBRARY_PYPROJECT="$REPO_ROOT/diesel_heater_ble/pyproject.toml"
 
 echo "=== pre-release-check for $(python3 -c "import json; print(json.load(open('$MANIFEST'))['version'])") ==="
 echo
@@ -74,18 +75,39 @@ if [ -z "$PIN" ]; then
 fi
 
 PYPI_VER=$(curl -s https://pypi.org/pypi/diesel-heater-ble/json | python3 -c "import json,sys; print(json.load(sys.stdin)['info']['version'])")
+LIB_VER=$(python3 -c "
+import pathlib, re
+text = pathlib.Path('$LIBRARY_PYPROJECT').read_text()
+match = re.search(r'^version = \"([^\"]+)\"', text, re.M)
+print(match.group(1) if match else '')
+")
 
-python3 -c "
+if [ -z "$LIB_VER" ]; then
+    echo "ERROR: could not extract library version from $LIBRARY_PYPROJECT"
+    exit 1
+fi
+
+COMPARE_PUBLISHED_SOURCE=$(python3 -c "
+import sys
 from packaging.version import Version
 pin = Version('$PIN')
 served = Version('$PYPI_VER')
+local = Version('$LIB_VER')
 if served < pin:
-    print(f'ERROR: PyPI serves diesel-heater-ble $PYPI_VER but manifest requires >={pin}')
-    print('       Publish the new library to PyPI BEFORE releasing the integration')
-    print('       (see docs/pypi-publishing.md).')
+    print(f'ERROR: PyPI serves diesel-heater-ble $PYPI_VER but manifest requires >={pin}', file=sys.stderr)
+    print('       Publish the new library to PyPI BEFORE releasing the integration', file=sys.stderr)
+    print('       (see docs/pypi-publishing.md).', file=sys.stderr)
     raise SystemExit(1)
-print(f'    pin={pin} <= PyPI={served} - OK')
-"
+print(f'    pin={pin} <= PyPI={served} - OK', file=sys.stderr)
+if local == served:
+    print('true')
+elif local > served:
+    print(f'    bundled library={local} is awaiting PyPI publication (latest={served})', file=sys.stderr)
+    print('false')
+else:
+    print(f'    bundled library={local} is older than PyPI latest={served}', file=sys.stderr)
+    print('false')
+")
 
 TMPDIR=$(mktemp -d)
 cleanup() {
@@ -144,6 +166,44 @@ if missing:
 
 print("    all integration imports resolve against the pinned PyPI package - OK")
 PYEOF
+
+if [ "$COMPARE_PUBLISHED_SOURCE" = true ]; then
+    echo "    comparing bundled library source with selected PyPI wheel..."
+    python3 - "$REPO_ROOT/diesel_heater_ble/src/diesel_heater_ble" <<'PYEOF'
+import hashlib
+import importlib.util
+import pathlib
+import sys
+
+source_dir = pathlib.Path(sys.argv[1])
+spec = importlib.util.find_spec("diesel_heater_ble")
+if spec is None or not spec.submodule_search_locations:
+    raise SystemExit("    ERROR: installed diesel_heater_ble package not found")
+
+published_dir = pathlib.Path(next(iter(spec.submodule_search_locations)))
+
+def package_files(directory: pathlib.Path) -> dict[str, str]:
+    return {
+        path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in directory.iterdir()
+        if path.is_file() and (path.suffix == ".py" or path.name == "py.typed")
+    }
+
+source_files = package_files(source_dir)
+published_files = package_files(published_dir)
+if source_files != published_files:
+    print("    FAILURES: bundled diesel-heater-ble source differs from PyPI")
+    for name in sorted(set(source_files) | set(published_files)):
+        if source_files.get(name) != published_files.get(name):
+            print(f"      {name}: bundled and PyPI contents differ")
+    print()
+    print("    Publish the bundled library version and update manifest.json before")
+    print("    creating an integration release.")
+    raise SystemExit(1)
+
+print("    bundled diesel-heater-ble source matches selected PyPI wheel - OK")
+PYEOF
+fi
 
 deactivate
 echo
