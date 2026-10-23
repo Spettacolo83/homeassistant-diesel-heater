@@ -1,16 +1,6 @@
 {
   "domain": "diesel_heater",
   "name": "Diesel Heater",
-  "codeowners": ["@Spettacolo83"],
-  "config_flow": true,
-  "dependencies": ["bluetooth"],
-  "documentation": "https://github.com/Spettacolo83/homeassistant-diesel-heater",
-  "integration_type": "device",
-  "issue_tracker": "https://github.com/Spettacolo83/homeassistant-diesel-heater/issues",
-  "iot_class": "local_polling",
-  "loggers": ["diesel_heater_ble"],
-  "requirements": ["diesel-heater-ble>=0.3.8"],
-  "icon": "mdi:radiator",
   "bluetooth": [
     {
       "connectable": true,
@@ -43,42 +33,67 @@
     {
       "connectable": true,
       "manufacturer_id": 65294,
-      "manufacturer_data_start": [6, 189, 1]
+      "manufacturer_data_start": [
+        6,
+        189,
+        1
+      ]
     },
     {
       "connectable": true,
       "manufacturer_id": 65294,
-      "manufacturer_data_start": [1, 2]
+      "manufacturer_data_start": [
+        1,
+        2
+      ]
     },
     {
       "connectable": true,
       "manufacturer_id": 65294,
-      "manufacturer_data_start": [1, 3]
+      "manufacturer_data_start": [
+        1,
+        3
+      ]
     },
     {
       "connectable": true,
       "manufacturer_id": 65294,
-      "manufacturer_data_start": [2, 2]
+      "manufacturer_data_start": [
+        2,
+        2
+      ]
     },
     {
       "connectable": true,
       "manufacturer_id": 65294,
-      "manufacturer_data_start": [2, 3]
+      "manufacturer_data_start": [
+        2,
+        3
+      ]
     },
     {
       "connectable": true,
       "manufacturer_id": 65294,
-      "manufacturer_data_start": [3, 1]
+      "manufacturer_data_start": [
+        3,
+        1
+      ]
     },
     {
       "connectable": true,
       "manufacturer_id": 65294,
-      "manufacturer_data_start": [3, 2]
+      "manufacturer_data_start": [
+        3,
+        2
+      ]
     },
     {
       "connectable": true,
       "manufacturer_id": 65294,
-      "manufacturer_data_start": [3, 3]
+      "manufacturer_data_start": [
+        3,
+        3
+      ]
     },
     {
       "connectable": true,
@@ -92,6 +107,24 @@
       "connectable": true,
       "local_name": "BOYGU*"
     }
+  ],
+  "codeowners": [
+    "@Spettacolo83"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "bluetooth",
+    "recorder"
+  ],
+  "documentation": "https://github.com/Spettacolo83/homeassistant-diesel-heater",
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/Spettacolo83/homeassistant-diesel-heater/issues",
+  "loggers": [
+    "diesel_heater_ble"
+  ],
+  "requirements": [
+    "diesel-heater-ble>=0.3.8"
   ],
   "version": "2.1.5-beta.19"
 }
