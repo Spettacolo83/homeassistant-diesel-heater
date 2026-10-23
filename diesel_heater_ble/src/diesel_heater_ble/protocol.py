@@ -688,7 +688,7 @@ class ProtocolCronus(HeaterProtocol):
         interlock = self._int(records, f"{prefix}_interlock", 0)
         parsed: dict[str, Any] = {
             "connected": True, "cronus_controller_type": prefix,
-            "cronus_mode": self._AIR_MODE_NAMES.get(mode),
+            "cronus_mode": self._AIR_MODE_NAMES.get(mode) if mode is not None else None,
             "cronus_state": state, "cronus_state_real": state_real,
             "cronus_interlock": bool(interlock),
             "running_state": int(state in self._ACTIVE_STATES) if state is not None else None,
@@ -1200,6 +1200,8 @@ class ProtocolCBFF(HeaterProtocol):
 
         All commands are encrypted with double-XOR when device_sn is available.
         """
+        payload: bytes | bytearray
+
         # Status request
         if command in (0, 1):
             packet = self._build_feaa(cmd_1=0x00, cmd_2=0x00)
@@ -1242,7 +1244,9 @@ class ProtocolCBFF(HeaterProtocol):
             packet = self._build_feaa(cmd_1=0x01, cmd_2=0x01, payload=payload)
 
         elif command == 18 and self.supports_auto_start_stop:
-            payload = bytearray(self._v21_settings)
+            settings = self._v21_settings
+            assert settings is not None
+            payload = bytearray(settings)
             payload[-1] = 1 if argument else 0
             packet = self._build_feaa(cmd_1=0x03, cmd_2=0x01, payload=payload)
 
@@ -1266,7 +1270,7 @@ class ProtocolCBFF(HeaterProtocol):
         return packet
 
     @staticmethod
-    def _build_feaa(cmd_1: int, cmd_2: int, payload: bytes = b"") -> bytearray:
+    def _build_feaa(cmd_1: int, cmd_2: int, payload: bytes | bytearray = b"") -> bytearray:
         """Build FEAA packet with checksum.
 
         Format: FEAA + version + pkg_num + length(2) + cmd_1 + cmd_2 + payload + checksum
@@ -1476,7 +1480,7 @@ class ProtocolCBFF(HeaterProtocol):
         """Check if parsed CBFF data has physically impossible values."""
         voltage = parsed.get("supply_voltage", 0)
         cab_temp = parsed.get("cab_temperature", 0)
-        return voltage > 100 or voltage < 0 or abs(cab_temp) > 500
+        return bool(voltage > 100 or voltage < 0 or abs(cab_temp) > 500)
 
     @staticmethod
     def _encrypt_cbff(data: bytearray, device_sn: str) -> bytearray:
@@ -2123,7 +2127,7 @@ class ProtocolHcalory(HeaterProtocol):
             Password handshake command packet
         """
         # Extract individual digits from passkey
-        digits = []
+        digits: list[int] = []
         pk = passkey
         for _ in range(4):
             digits.insert(0, pk % 10)
