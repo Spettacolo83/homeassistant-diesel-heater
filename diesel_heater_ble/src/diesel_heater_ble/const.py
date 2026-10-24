@@ -295,3 +295,9 @@ HCALORY_MODE_NAMES: Final = {
 # Hcalory MVP2 Temperature Units (byte 37)
 HCALORY_TEMP_CELSIUS: Final = 0x00
 HCALORY_TEMP_FAHRENHEIT: Final = 0x01
+
+# Hcalory MVP2 Altitude Modes (byte 18) - NOTE: No actual sensor, UI removed (issue #34)
+HCALORY_ALTITUDE_OFF: Final = 0x00
+HCALORY_ALTITUDE_LOW: Final = 0x01
+HCALORY_ALTITUDE_MEDIUM: Final = 0x02
+HCALORY_ALTITUDE_HIGH: Final = 0x03
