@@ -1034,15 +1034,6 @@ class ProtocolABBA(HeaterProtocol):
         # Map Vevor commands to ABBA hex commands
         if command == 1:
             return self._build_abba("baab04cc000000")
-        elif command == 10:
-            # AirHeaterCC sends BA AB 05 EA HH MM SS weekday after connecting.
-            hour = (argument >> 24) & 0xFF
-            minute = (argument >> 16) & 0xFF
-            second = (argument >> 8) & 0xFF
-            weekday = argument & 0xFF
-            return self._build_abba(
-                f"baab05ea{hour:02x}{minute:02x}{second:02x}{weekday:02x}"
-            )
         elif command == 3:
             # ABBA uses openOnHeat (0xA1) as a toggle: same command for
             # both ON and OFF.  The AirHeaterCC app has no explicit "off"

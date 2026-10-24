@@ -1120,11 +1120,6 @@ class TestProtocolABBA:
         assert pkt[1] == 0xAB
         assert pkt[3] == 0xCC  # Status command
 
-    def test_build_command_time_matches_airheatercc(self):
-        """Command 10 mirrors AirHeaterCC: BA AB 05 EA HH MM SS weekday."""
-        packet = self.proto.build_command(10, 0x0D040500, 1234)
-        assert packet.hex() == "baab05ea0d0405006a"
-
     def test_build_command_toggle_on_off(self):
         """Command 3 → heat toggle (0xA1)."""
         pkt = self.proto.build_command(3, 1, 1234)
