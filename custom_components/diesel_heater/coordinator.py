@@ -349,7 +349,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """Return whether this controller has an app-backed clock-write command."""
         if self.is_dz06_neo:
             return False
-        if self._protocol_mode in (1, 2, 3, 4, 8, 9):
+        if self._protocol_mode in (1, 2, 3, 4, 5, 8, 9):
             return True
         if self._protocol_mode != 7:
             return False
@@ -3869,7 +3869,24 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 self._logger.warning("Sunster V2.1 time sync failed")
             return
 
-        if self._protocol_mode == 7:
+        if self._protocol_mode == 5:
+            # AirHeaterCC uses JavaScript Date.getDay(): Sunday=0 through Saturday=6.
+            javascript_weekday = (now.weekday() + 1) % 7
+            time_value = (
+                (now.hour << 24)
+                | (now.minute << 16)
+                | (now.second << 8)
+                | javascript_weekday
+            )
+            success = await self._send_command(10, time_value)
+            self._logger.info(
+                "Syncing ABBA time to %02d:%02d:%02d JS weekday=%d",
+                now.hour,
+                now.minute,
+                now.second,
+                javascript_weekday,
+            )
+        elif self._protocol_mode == 7:
             self._protocol.set_query_timestamp(now)
             try:
                 success = await self._send_command(10, 0)

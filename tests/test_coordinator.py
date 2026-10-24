@@ -6564,7 +6564,7 @@ class TestCronusTransactionSafety:
 class TestTimeSync:
     """Exercise only app-backed time synchronization paths."""
 
-    @pytest.mark.parametrize("protocol_mode", (0, 5, 6))
+    @pytest.mark.parametrize("protocol_mode", (0, 6))
     @pytest.mark.asyncio
     async def test_async_sync_time_rejects_unsupported_protocols(self, protocol_mode):
         """No generic time command is sent to unsupported controller families."""
@@ -6607,6 +6607,21 @@ class TestTimeSync:
         coordinator._send_command.assert_awaited_once_with(10, 0)
         assert protocol.set_query_timestamp.call_count == 2
         assert protocol.set_query_timestamp.call_args == call(None)
+
+    @pytest.mark.asyncio
+    async def test_async_sync_time_uses_abba_app_clock_frame(self):
+        """AirHeaterCC uses BA AB 05 EA with JS Sunday=0 weekday numbering."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 5
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        with patch(
+            "custom_components.diesel_heater.coordinator.dt_util.now",
+            return_value=datetime(2026, 10, 25, 13, 4, 5),
+        ):
+            assert await coordinator.async_sync_time() is True
+
+        coordinator._send_command.assert_awaited_once_with(10, 0x0D040500)
 
     @pytest.mark.asyncio
     async def test_async_sync_time_uses_heatgenie_clock_frame(self):
@@ -6668,7 +6683,7 @@ class TestTimeSync:
         assert not coordinator.supports_time_sync
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("protocol_mode", (1, 2, 3, 4, 7, 8))
+    @pytest.mark.parametrize("protocol_mode", (1, 2, 3, 4, 5, 7, 8))
     async def test_supported_protocols_auto_sync_after_initial_status(self, protocol_mode):
         """Every app-backed clock-write protocol syncs after its first status."""
         coordinator = create_mock_coordinator()
@@ -6699,30 +6714,6 @@ class TestTimeSync:
 
         coordinator.async_sync_time.assert_awaited_once()
         assert coordinator._time_synced_this_connection is True
-
-    @pytest.mark.asyncio
-    async def test_unsupported_protocol_does_not_auto_sync_after_initial_status(self):
-        """ABBA remains excluded because it has no app-backed clock write."""
-        coordinator = create_mock_coordinator()
-        client = MagicMock()
-        client.is_connected = True
-        coordinator._client = None
-        coordinator._protocol_mode = 5
-        coordinator._protocol = coordinator._protocols[5]
-        coordinator._check_daily_reset = AsyncMock()
-        coordinator._check_daily_runtime_reset = AsyncMock()
-        coordinator._ensure_connected = AsyncMock(
-            side_effect=lambda: setattr(coordinator, "_client", client)
-        )
-        coordinator._send_command = AsyncMock(return_value=True)
-        coordinator._save_valid_data = MagicMock()
-        coordinator._update_fuel_tracking = MagicMock()
-        coordinator._update_runtime_tracking = MagicMock()
-        coordinator.async_sync_time = AsyncMock(return_value=True)
-
-        await coordinator._async_update_data()
-
-        coordinator.async_sync_time.assert_not_awaited()
 
 
 class TestHeatGenieDelayedReports:
