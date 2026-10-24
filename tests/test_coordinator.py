@@ -6609,6 +6609,37 @@ class TestTimeSync:
         assert protocol.set_query_timestamp.call_args == call(None)
 
     @pytest.mark.asyncio
+    async def test_async_sync_time_uses_dz06_warm_drive_timestamped_reads(self):
+        """DZ06 replays the HA-owned timestamped Warm Drive startup sequence."""
+        from custom_components.diesel_heater.const import (
+            CONF_NEO_CONTROLLER_TYPE,
+            DZ06_NEO_NOTIFY_UUID,
+            DZ06_NEO_WRITE_UUID,
+        )
+
+        coordinator = create_mock_coordinator()
+        coordinator._is_abba_device = True
+        coordinator._characteristic = MagicMock(
+            uuid=DZ06_NEO_NOTIFY_UUID,
+            properties=["notify"],
+        )
+        coordinator._abba_write_char = MagicMock(
+            uuid=DZ06_NEO_WRITE_UUID,
+            properties=["write"],
+        )
+        coordinator.config_entry.data[CONF_NEO_CONTROLLER_TYPE] = "air"
+        coordinator._send_dz06_neo_run_settings = AsyncMock(return_value=True)
+        coordinator._send_dz06_neo_configuration = AsyncMock(return_value=True)
+        coordinator._send_dz06_neo_board_info = AsyncMock()
+
+        assert coordinator.supports_time_sync
+        assert await coordinator.async_sync_time() is True
+        coordinator._send_dz06_neo_run_settings.assert_awaited_once()
+        coordinator._send_dz06_neo_configuration.assert_awaited_once()
+        coordinator._send_dz06_neo_board_info.assert_awaited_once()
+        assert coordinator._time_synced_this_connection
+
+    @pytest.mark.asyncio
     async def test_async_sync_time_uses_abba_app_clock_frame(self):
         """AirHeaterCC uses BA AB 05 EA with JS Sunday=0 weekday numbering."""
         coordinator = create_mock_coordinator()

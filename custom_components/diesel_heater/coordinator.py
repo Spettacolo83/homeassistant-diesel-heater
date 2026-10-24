@@ -348,7 +348,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     def supports_time_sync(self) -> bool:
         """Return whether this controller has an app-backed clock-write command."""
         if self.is_dz06_neo:
-            return False
+            return True
         if self._protocol_mode in (1, 2, 3, 4, 5, 8, 9):
             return True
         if self._protocol_mode != 7:
@@ -2008,14 +2008,18 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     # Continue anyway - will retry in _send_command if needed
 
             if self.is_dz06_neo:
-                if not await self._send_dz06_neo_configuration():
-                    await self._cleanup_connection()
-                    raise BleakError("DZ06 Neo configuration read failed")
+                # Warm Drive sends timestamped run settings, then configuration,
+                # followed by board information for its air/water controllers.
                 if not await self._send_dz06_neo_run_settings():
                     await self._cleanup_connection()
                     raise BleakError("DZ06 Neo startup settings read failed")
+                if not await self._send_dz06_neo_configuration():
+                    await self._cleanup_connection()
+                    raise BleakError("DZ06 Neo configuration read failed")
                 if self.is_warm_drive_controller:
                     await self._send_dz06_neo_board_info()
+                # Both successful startup reads carry the current local timestamp.
+                self._time_synced_this_connection = True
             elif self._is_cronus_device:
                 self._logger.debug("Cronus ready; polling record cache")
             else:
@@ -3861,6 +3865,20 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             return False
 
         now = dt_util.now()
+        if self.is_dz06_neo:
+            # Reissue Warm Drive timestamped startup reads on an explicit sync.
+            success = await self._send_dz06_neo_run_settings()
+            if success:
+                success = await self._send_dz06_neo_configuration()
+            if success and self.is_warm_drive_controller:
+                await self._send_dz06_neo_board_info()
+            if success:
+                self._time_synced_this_connection = True
+                self._logger.info("DZ06 Neo time sync successful")
+            else:
+                self._logger.warning("DZ06 Neo time sync failed")
+            return success
+
         if self._protocol_mode == 6:
             success = await self._send_v21_time_sync(now)
             if success:
