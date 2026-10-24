@@ -177,6 +177,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._notification_data: bytearray | None = None
         self._neo_config_received = False
         self._neo_run_settings_received = False
+        self._warm_drive_board_config: bytearray | None = None
         # Get passkey from config, default to 1234 (factory default for most heaters)
         self._passkey = config_entry.data.get(CONF_PIN, DEFAULT_PIN)
         self._neo_password = config_entry.data.get(CONF_NEO_PASSWORD, DEFAULT_NEO_PASSWORD)
@@ -282,7 +283,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             "cab_temperature_raw": None,  # Raw temperature before any offset
             "heater_offset": 0,  # Current offset sent to heater (cmd 20)
             "connected": False,
-            "auto_start_stop": None,  # Automatic Start/Stop flag (byte 31)
+            "auto_start_stop": None,  # Automatic Start/Stop flag
+            "warm_drive_max_heat": None,  # Warm Drive 5C16 work mode: 2=Max Heat
             "auto_offset_enabled": False,  # Auto offset adjustment enabled
             # Configuration settings (bytes 26-30)
             "language": None,  # byte 26: Voice notification language
@@ -418,12 +420,35 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 return name
         return ""
 
+    def _warm_drive_type_from_advertisement(self) -> str | None:
+        """Return the APK-defined controller type from Warm Drive's scan record."""
+        hass = getattr(self, "hass", None)
+        if not hass:
+            return None
+        for connectable in (True, False):
+            try:
+                info = bluetooth.async_last_service_info(
+                    hass, self.address, connectable=connectable
+                )
+            except Exception:  # pragma: no cover - defensive HA lookup
+                continue
+            if info is None:
+                continue
+            for payload in (getattr(info, "manufacturer_data", None) or {}).values():
+                if len(payload) == 16:
+                    return "air" if payload[4] == 1 else "water"
+        return None
+
     @property
     def is_warm_drive_controller(self) -> bool:
         """Return whether the controller identifies itself as Warm Drive."""
         if self.config_entry.data.get(CONF_NEO_CONTROLLER_TYPE) in ("air", "water"):
             return True
-        return self._advertised_heater_name() == "Air Heater"
+        if self._advertised_heater_name() == "Air Heater":
+            return True
+        # Warm Drive's APK uses byte 4 of its 16-byte manufacturer record
+        # when the local name is not available.
+        return self._warm_drive_type_from_advertisement() in ("air", "water")
 
     @property
     def is_dz06_neo(self) -> bool:
@@ -2040,6 +2065,15 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     self.data["neo_controller_type"] = (
                         "air" if data[2] == 1 else "water"
                     )
+                    self._warm_drive_board_config = bytearray(data)
+                    self.data.update(
+                        {
+                            "auto_start_stop": data[14] == 1,
+                            "warm_drive_max_heat": data[13] == 2,
+                            "tank_volume": data[15],
+                            "pump_type": data[16],
+                        }
+                    )
                 self._neo_config_received = True
             if len(data) >= 21 and data[0] == 0x5D:
                 if data[17] in (1, 2):
@@ -2507,6 +2541,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 self._v21_handshake_sent = False
                 self._v21_handshake_event.clear()
                 self._v21_handshake_authenticated = None
+                self._warm_drive_board_config = None
                 # Keep the V2.1 initial settings write one-shot across reconnects.
                 # The Sunster app retains its equivalent first-send guard per device.
 
@@ -2716,18 +2751,62 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         return packet
 
     @staticmethod
+    def _modbus_crc16(payload: bytes) -> bytes:
+        """Return the app's CRC16/MODBUS checksum in big-endian order."""
+        crc = 0xFFFF
+        for value in payload:
+            crc ^= value
+            for _ in range(8):
+                crc = (crc >> 1) ^ 0xA001 if crc & 1 else crc >> 1
+        return crc.to_bytes(2, "big")
+
+    @staticmethod
     def _neo_packet(opcode: int, run_type: int, target: int, altitude: int) -> bytearray:
         """Build a Sunster Neo control packet with CRC16/MODBUS."""
         packet = bytearray((0xA5, 0x09, 0x01, opcode, run_type, target))
         packet.extend(altitude.to_bytes(2, "big"))
         packet.append(1)
-        crc = 0xFFFF
-        for value in packet:
-            crc ^= value
-            for _ in range(8):
-                crc = (crc >> 1) ^ 0xA001 if crc & 1 else crc >> 1
-        packet.extend(crc.to_bytes(2, "big"))
+        packet.extend(VevorHeaterCoordinator._modbus_crc16(packet))
         return packet
+
+    def _warm_drive_config_packet(
+        self, overrides: dict[int, int]
+    ) -> bytearray | None:
+        """Build the APK-defined 0x26 write from the cached 5C16 configuration."""
+        config = self._warm_drive_board_config
+        if config is None or len(config) < 17:
+            return None
+        packet = bytearray((0x26, 0x12))
+        packet.extend(config[2:17])
+        for index, value in overrides.items():
+            if not 2 <= index <= 16:
+                return None
+            packet[index] = value & 0xFF
+        packet.append(1)
+        packet.extend(self._modbus_crc16(packet))
+        return packet
+
+    async def _async_write_warm_drive_config(
+        self, overrides: dict[int, int], updates: dict[str, Any], action: str
+    ) -> bool:
+        """Write one app-backed Warm Drive configuration change."""
+        packet = self._warm_drive_config_packet(overrides)
+        if packet is None:
+            self._logger.warning(
+                "Warm Drive %s is unavailable until a 5C16 configuration frame is received",
+                action,
+            )
+            return False
+        try:
+            await self._write_gatt(packet)
+        except Exception as err:
+            self._logger.warning("Warm Drive %s write failed: %s", action, err)
+            return False
+        for index, value in overrides.items():
+            self._warm_drive_board_config[index] = value & 0xFF
+        self.data.update(updates)
+        await self.async_request_refresh()
+        return True
 
     def _neo_control_settings(
         self, use_startup_defaults: bool = False
@@ -3809,6 +3888,18 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         when it drops 2°C below the target.
         """
         self._logger.info("Setting Auto Start/Stop to %s", "enabled" if enabled else "disabled")
+        if self.is_warm_drive_controller:
+            if self.data.get("running_mode") != RUNNING_MODE_TEMPERATURE:
+                self._logger.warning(
+                    "Warm Drive Auto Start/Stop is available only in Temperature mode"
+                )
+                return
+            await self._async_write_warm_drive_config(
+                {14: 1 if enabled else 0},
+                {"auto_start_stop": enabled},
+                "Auto Start/Stop",
+            )
+            return
         if (
             self._protocol_mode == 6
             and isinstance(self._protocol, ProtocolCBFF)
@@ -3821,6 +3912,16 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         success = await self._send_command(18, 1 if enabled else 0)
         if success:
             await self.async_request_refresh()
+
+    async def async_set_warm_drive_max_heat(self, enabled: bool) -> None:
+        """Set the APK-defined Warm Drive Max Heat configuration flag."""
+        if not self.is_warm_drive_controller:
+            return
+        await self._async_write_warm_drive_config(
+            {13: 2 if enabled else 1},
+            {"warm_drive_max_heat": enabled},
+            "Max Heat",
+        )
 
     async def async_sync_time(self) -> bool:
         """Synchronize time only through a protocol's app-backed command."""
@@ -4022,6 +4123,18 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         Args:
             volume_index: Tank volume index (0-10)
         """
+        if self.is_warm_drive_controller:
+            if not 0 <= volume_index <= 5:
+                self._logger.warning(
+                    "Unsupported Warm Drive tank volume index %d", volume_index
+                )
+                return
+            await self._async_write_warm_drive_config(
+                {15: volume_index},
+                {"tank_volume": volume_index},
+                "tank volume",
+            )
+            return
         volume_index = max(0, min(10, volume_index))
         self._logger.info("⛽ Setting tank volume to index %d (cmd 16)", volume_index)
         success = await self._send_command(16, volume_index)
@@ -4041,6 +4154,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             pump_type: Pump type (0-3)
         """
         pump_type = max(0, min(3, pump_type))
+        if self.is_warm_drive_controller:
+            await self._async_write_warm_drive_config(
+                {16: pump_type},
+                {"pump_type": pump_type},
+                "pump flow",
+            )
+            return
         self._logger.info("🔧 Setting pump type to %d (cmd 17)", pump_type)
         success = await self._send_command(17, pump_type)
         if success:

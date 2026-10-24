@@ -45,6 +45,23 @@ numeric controller code.
 Temperature values on the wire are Celsius. Warm Drive converts Celsius to
 Fahrenheit only for display.
 
+## Configuration
+
+The app reads the 24-byte `5C 16` controller configuration and writes its
+editable portion back as a `26 12` frame. The integration preserves every
+cached field and changes only the requested value, followed by the app's
+trailing `01` and CRC16/MODBUS checksum.
+
+| `5C 16` byte | App setting | Home Assistant entity |
+| --- | --- | --- |
+| 13 | Work mode: `1` normal / `2` Max Heat | Max Heat switch |
+| 14 | Auto Start/Stop: `0` off / `1` on | Auto Start/Stop switch |
+| 15 | Tank capacity: 5, 7, 9, 10, 15, or 20 L | Tank Volume select |
+| 16 | Pump flow: 16, 22, 28, or 32 mL | Pump Flow select |
+
+Auto Start/Stop is editable only while the controller is in Temperature mode,
+matching the app.
+
 ## Exposed telemetry
 
 All verified Warm Drive controllers expose controller-reported Motor Speed and
