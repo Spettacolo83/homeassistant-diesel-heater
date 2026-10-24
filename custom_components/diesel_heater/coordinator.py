@@ -349,9 +349,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """Return whether this controller has an app-backed clock-write command."""
         if self.is_dz06_neo:
             return False
-        if self._protocol_mode in (1, 2, 3, 4, 8):
+        if self._protocol_mode in (1, 2, 3, 4, 8, 9):
             return True
-        return self._protocol_mode == 7 and self._hcalory_mvp2_device
+        if self._protocol_mode != 7:
+            return False
+        if self._hcalory_variant is not None:
+            return uses_mvp2_commands(self._hcalory_variant)
+        return self._hcalory_mvp2_device
 
     @property
     def cronus_fuel_profile(self) -> dict[str, object] | None:
@@ -722,7 +726,18 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     self._last_save_time = current_time
             self._last_valid_data = self.data.copy()
             self._consecutive_failures = 0
-            return self.data
+
+        # ThermoConnect writes record 97 (UTC HH MM SS DD MM YY) when its
+        # initial record exchange completes. Do the same once per BLE
+        # connection, after the snapshot transaction has released its lock.
+        if not self._time_synced_this_connection:
+            try:
+                if await self.async_sync_time():
+                    self._time_synced_this_connection = True
+                    self._logger.info("Auto time sync completed")
+            except Exception as sync_err:
+                self._logger.debug("Auto time sync failed (non-critical): %s", sync_err)
+        return self.data
 
     def _dz06_neo_display_temperature(self, raw_temperature: int) -> float:
         """Return a Warm Drive temperature in the app-selected display unit."""
@@ -3860,6 +3875,19 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 success = await self._send_command(10, 0)
             finally:
                 self._protocol.set_query_timestamp(None)
+        elif self._protocol_mode == 9:
+            utc_now = dt_util.utcnow()
+            success = await self._async_write_cronus_record(
+                "time",
+                bytes((
+                    utc_now.hour,
+                    utc_now.minute,
+                    utc_now.second,
+                    utc_now.day,
+                    utc_now.month,
+                    utc_now.year % 100,
+                )),
+            )
         elif self._protocol_mode == 8:
             time_value = (now.weekday() << 11) | (now.hour << 6) | now.minute
             success = await self._send_command(10, time_value)

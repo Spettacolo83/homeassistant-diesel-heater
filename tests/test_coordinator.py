@@ -19,6 +19,7 @@ from . import conftest  # noqa: F401
 # Now we can import the coordinator
 from custom_components.diesel_heater.burnoff import BurnoffController, BurnoffPhase
 from custom_components.diesel_heater.coordinator import UpdateFailed, VevorHeaterCoordinator
+from custom_components.diesel_heater.hcalory import HcaloryVariant
 from custom_components.diesel_heater.const import (
     CONF_CRONUS_HEATER_MODEL,
     CONF_FORCE_TEMP_UNIT,
@@ -172,6 +173,7 @@ def create_mock_coordinator() -> VevorHeaterCoordinator:
     coordinator._is_abba_device = False
     coordinator._is_hcalory_device = False
     coordinator._hcalory_mvp2_device = False
+    coordinator._hcalory_variant = None
     coordinator._is_heatgenie_device = False
     coordinator._heatgenie_write_char = None
     coordinator._v21_handshake_sent = False
@@ -6414,6 +6416,39 @@ class TestCronusTransactionSafety:
         assert not coordinator._cronus_write_succeeded
 
     @pytest.mark.asyncio
+    async def test_cronus_snapshot_auto_syncs_app_clock_once_per_connection(self):
+        """The app writes record 97 after its initial Cronus record exchange."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 9
+        values = {
+            "h1_available": b"\x02",
+            "air_state": b"\x00",
+            "air_state_real": b"\x05",
+            "air_mode": b"\x00",
+        }
+
+        async def read_record(name):
+            value = values.get(name)
+            if value is None:
+                return False
+            coordinator._cronus_records[name] = value
+            return True
+
+        coordinator._async_read_cronus_record = AsyncMock(side_effect=read_record)
+        coordinator._async_write_cronus_record = AsyncMock(return_value=True)
+        with patch(
+            "custom_components.diesel_heater.coordinator.dt_util.utcnow",
+            return_value=datetime(2026, 10, 24, 15, 4, 5),
+        ):
+            await coordinator._async_update_cronus_data()
+            await coordinator._async_update_cronus_data()
+
+        coordinator._async_write_cronus_record.assert_awaited_once_with(
+            "time", bytes((15, 4, 5, 24, 10, 26))
+        )
+        assert coordinator._time_synced_this_connection
+
+    @pytest.mark.asyncio
     async def test_rejects_partial_poll_instead_of_reusing_cached_state(self):
         coordinator = create_mock_coordinator()
         coordinator._protocol_mode = 9
@@ -6529,7 +6564,7 @@ class TestCronusTransactionSafety:
 class TestTimeSync:
     """Exercise only app-backed time synchronization paths."""
 
-    @pytest.mark.parametrize("protocol_mode", (0, 5, 6, 9))
+    @pytest.mark.parametrize("protocol_mode", (0, 5, 6))
     @pytest.mark.asyncio
     async def test_async_sync_time_rejects_unsupported_protocols(self, protocol_mode):
         """No generic time command is sent to unsupported controller families."""
@@ -6584,6 +6619,53 @@ class TestTimeSync:
         coordinator._send_command.assert_awaited_once()
         assert coordinator._send_command.await_args.args[0] == 10
 
+    @pytest.mark.asyncio
+    async def test_async_sync_time_uses_cronus_app_utc_record(self):
+        """Cronus writes its six-byte UTC clock record 97, not command 10."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 9
+        coordinator._async_write_cronus_record = AsyncMock(return_value=True)
+
+        with patch(
+            "custom_components.diesel_heater.coordinator.dt_util.utcnow",
+            return_value=datetime(2026, 10, 24, 15, 4, 5),
+        ):
+            assert await coordinator.async_sync_time() is True
+
+        coordinator._async_write_cronus_record.assert_awaited_once_with(
+            "time", bytes((15, 4, 5, 24, 10, 26))
+        )
+
+    @pytest.mark.parametrize(
+        "variant",
+        (
+            HcaloryVariant.MVP2,
+            HcaloryVariant.MVP1_2,
+            HcaloryVariant.MVP1_3,
+            HcaloryVariant.MVP2_2,
+            HcaloryVariant.MVP2_3,
+            HcaloryVariant.MVP3,
+            HcaloryVariant.MVP3_2,
+            HcaloryVariant.MVP3_3,
+        ),
+    )
+    def test_hcalory_timestamped_variants_support_time_sync(self, variant):
+        """Every app-defined Hcalory variant except legacy MVP1 uses 0A0A."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 7
+        coordinator._hcalory_mvp2_device = False
+        coordinator._hcalory_variant = variant
+
+        assert coordinator.supports_time_sync
+
+    def test_hcalory_legacy_mvp1_does_not_support_time_sync(self):
+        """The app's legacy MVP1 0E04 query does not carry a clock."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 7
+        coordinator._hcalory_mvp2_device = False
+        coordinator._hcalory_variant = HcaloryVariant.MVP1
+
+        assert not coordinator.supports_time_sync
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("protocol_mode", (1, 2, 3, 4, 7, 8))
