@@ -77,6 +77,14 @@ ABBA_WRITE_UUID: Final = "0000fff2-0000-1000-8000-00805f9b34fb"
 # Sunster Neo DZ06 split-FFF0 transport.  Unlike legacy ABBA devices,
 # FFF1 is write-capable and FFF2 is notify-capable.
 # Warm Drive reports a distinct warning code table in its 0x5A25 status frame.
+# Warm Drive's 0x26 configuration values (from the companion app).
+WARM_DRIVE_TANK_VOLUME_OPTIONS: Final = {
+    0: "5 L", 1: "7 L", 2: "9 L", 3: "10 L", 4: "15 L", 5: "20 L",
+}
+WARM_DRIVE_PUMP_FLOW_OPTIONS: Final = {
+    0: "16 mL", 1: "22 mL", 2: "28 mL", 3: "32 mL",
+}
+
 WARM_DRIVE_ERROR_NAMES: Final = {
     0: "No fault",
     1: "Supply voltage low",

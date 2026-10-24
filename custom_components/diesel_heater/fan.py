@@ -37,7 +37,13 @@ async def async_setup_entry(
 ) -> None:
     """Set up Vevor Heater fan from config entry."""
     coordinator = entry.runtime_data
-    if coordinator.protocol_mode != 9 and not coordinator.is_dz06_neo:
+    if coordinator.protocol_mode != 9 and (
+        not coordinator.is_dz06_neo
+        or (
+            coordinator.is_warm_drive_controller
+            and coordinator.data.get("neo_controller_type") == "air"
+        )
+    ):
         async_add_entities([VevorHeaterFan(coordinator)])
 
 

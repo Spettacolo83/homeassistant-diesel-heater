@@ -439,3 +439,35 @@ class TestCronusFanSetup:
         await async_setup_entry(MagicMock(), entry, async_add_entities)
 
         async_add_entities.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_warm_drive_air_creates_level_fan() -> None:
+    """The APK-derived level control is exposed only for Warm Drive air units."""
+    coordinator = create_mock_coordinator()
+    coordinator.is_dz06_neo = True
+    coordinator.is_warm_drive_controller = True
+    coordinator.data["neo_controller_type"] = "air"
+    entry = MagicMock(runtime_data=coordinator)
+    async_add_entities = MagicMock()
+
+    await async_setup_entry(MagicMock(), entry, async_add_entities)
+
+    entities = async_add_entities.call_args.args[0]
+    assert len(entities) == 1
+    assert isinstance(entities[0], VevorHeaterFan)
+
+
+@pytest.mark.asyncio
+async def test_warm_drive_water_does_not_create_level_fan() -> None:
+    """Water controllers keep the level control absent."""
+    coordinator = create_mock_coordinator()
+    coordinator.is_dz06_neo = True
+    coordinator.is_warm_drive_controller = True
+    coordinator.data["neo_controller_type"] = "water"
+    entry = MagicMock(runtime_data=coordinator)
+    async_add_entities = MagicMock()
+
+    await async_setup_entry(MagicMock(), entry, async_add_entities)
+
+    async_add_entities.assert_not_called()
