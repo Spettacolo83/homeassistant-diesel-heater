@@ -439,10 +439,28 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     return "air" if payload[4] == 1 else "water"
         return None
 
+    def _remember_warm_drive_identity(self) -> None:
+        """Persist an identified Warm Drive type for later nameless reconnects."""
+        controller_type = self.data.get("neo_controller_type")
+        if controller_type not in ("air", "water"):
+            return
+        if self.config_entry.data.get(CONF_NEO_CONTROLLER_TYPE) == controller_type:
+            return
+        hass = getattr(self, "hass", None)
+        config_entries = getattr(hass, "config_entries", None)
+        if config_entries is None:
+            return
+        config_entries.async_update_entry(
+            self.config_entry,
+            data={**self.config_entry.data, CONF_NEO_CONTROLLER_TYPE: controller_type},
+        )
+
     @property
     def is_warm_drive_controller(self) -> bool:
         """Return whether the controller identifies itself as Warm Drive."""
         if self.config_entry.data.get(CONF_NEO_CONTROLLER_TYPE) in ("air", "water"):
+            return True
+        if self.data.get("neo_controller_type") in ("air", "water"):
             return True
         if self._advertised_heater_name() == "Air Heater":
             return True
@@ -2061,10 +2079,19 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 if minimum <= maximum:
                     self.data["neo_min_target"] = minimum
                     self.data["neo_max_target"] = maximum
-                if self.is_warm_drive_controller:
+                # A proxy can omit both the local name and the manufacturer
+                # record. The observed Mudiro controller identifies itself in
+                # this app-defined 5C16 response; do not apply that fallback
+                # to a controller that supplied a different explicit name.
+                if data[2] in (1, 2) and (
+                    self.is_warm_drive_controller
+                    or not self._advertised_heater_name()
+                ):
                     self.data["neo_controller_type"] = (
                         "air" if data[2] == 1 else "water"
                     )
+                    self._remember_warm_drive_identity()
+                if self.is_warm_drive_controller:
                     self._warm_drive_board_config = bytearray(data)
                     self.data.update(
                         {

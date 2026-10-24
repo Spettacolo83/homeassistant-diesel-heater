@@ -62,6 +62,7 @@ def coordinator_for_layout(
     coordinator._burnoff = BurnoffController(coordinator)
     coordinator._notification_data = None
     coordinator._neo_run_settings_received = False
+    coordinator._warm_drive_board_config = None
     coordinator._neo_password = 100000000
     coordinator._logger = MagicMock()
     coordinator.async_request_refresh = AsyncMock()
@@ -125,6 +126,35 @@ def test_warm_drive_uses_manufacturer_record_when_name_is_missing(
             lambda *_args, **_kwargs: cached,
         )
         assert coordinator._warm_drive_type_from_advertisement() == expected
+
+
+def test_5c16_identifies_an_unnamed_warm_drive_controller() -> None:
+    """Use the observed controller frame when a proxy omits both identity records."""
+    coordinator = coordinator_for_layout(True, name=None)
+    coordinator.address = "C8:17:F5:28:E7:9D"
+    coordinator.hass = MagicMock()
+    coordinator.hass.config_entries = MagicMock()
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(
+            coordinator_module.bluetooth,
+            "async_last_service_info",
+            lambda *_args, **_kwargs: None,
+        )
+        coordinator._notification_callback(FFF2, neo_config_response(device_type=1))
+
+        assert coordinator.is_warm_drive_controller is True
+        assert coordinator.data["neo_controller_type"] == "air"
+    coordinator.hass.config_entries.async_update_entry.assert_called_once()
+
+
+def test_5c16_does_not_reclassify_a_named_non_warm_drive_controller() -> None:
+    """A controller that gives another explicit name keeps its existing path."""
+    coordinator = coordinator_for_layout(True, name="Sunster Neo")
+    coordinator._notification_callback(FFF2, neo_config_response(device_type=1))
+
+    assert coordinator.is_warm_drive_controller is False
+    assert coordinator.data.get("neo_controller_type") is None
+    assert coordinator._warm_drive_board_config is None
 
 
 def test_warm_drive_ignores_a_mac_address_name() -> None:
