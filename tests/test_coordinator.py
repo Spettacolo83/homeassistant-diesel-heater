@@ -183,6 +183,7 @@ def create_mock_coordinator() -> VevorHeaterCoordinator:
     coordinator._heatgenie_last_status_at = 0.0
     coordinator._heatgenie_pending_button = None
     coordinator._heatgenie_acknowledged_button = None
+    coordinator._time_synced_this_connection = False
     coordinator._time_synced_this_session = False
     coordinator._hcalory_write_char = None
     coordinator._connection_attempts = 0
@@ -1705,7 +1706,9 @@ class TestAsyncCommands:
 
         await coordinator._async_update_data()
 
-        coordinator._send_command.assert_awaited_once_with(1, 0)
+        assert coordinator._send_command.await_args_list[0] == call(1, 0)
+        assert coordinator._send_command.await_args_list[1].args[0] == 10
+        assert coordinator._send_command.await_count == 2
         coordinator._await_heatgenie_status.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -3228,6 +3231,7 @@ class TestBLEConnectionCleanup:
         coordinator._characteristic = MagicMock()
         coordinator._characteristic.properties = ["notify"]
         coordinator._active_char_uuid = "fff1"
+        coordinator._time_synced_this_connection = True
 
         await coordinator._cleanup_connection()
 
@@ -3235,6 +3239,7 @@ class TestBLEConnectionCleanup:
         mock_client.disconnect.assert_called_once()
         assert coordinator._client is None
         assert coordinator._characteristic is None
+        assert coordinator._time_synced_this_connection is False
 
     @pytest.mark.asyncio
     async def test_cleanup_connection_handles_disconnect_error(self):
@@ -6578,6 +6583,64 @@ class TestTimeSync:
         assert await coordinator.async_sync_time() is True
         coordinator._send_command.assert_awaited_once()
         assert coordinator._send_command.await_args.args[0] == 10
+
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("protocol_mode", (1, 2, 3, 4, 7, 8))
+    async def test_supported_protocols_auto_sync_after_initial_status(self, protocol_mode):
+        """Every app-backed clock-write protocol syncs after its first status."""
+        coordinator = create_mock_coordinator()
+        client = MagicMock()
+        client.is_connected = True
+        coordinator._client = None
+        coordinator._protocol_mode = protocol_mode
+        if protocol_mode == 7:
+            from diesel_heater_ble import ProtocolHcalory
+
+            coordinator._protocol = ProtocolHcalory()
+            coordinator._hcalory_mvp2_device = True
+        else:
+            coordinator._protocol = coordinator._protocols[protocol_mode]
+            coordinator._hcalory_mvp2_device = False
+        coordinator._check_daily_reset = AsyncMock()
+        coordinator._check_daily_runtime_reset = AsyncMock()
+        coordinator._ensure_connected = AsyncMock(
+            side_effect=lambda: setattr(coordinator, "_client", client)
+        )
+        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator._save_valid_data = MagicMock()
+        coordinator._update_fuel_tracking = MagicMock()
+        coordinator._update_runtime_tracking = MagicMock()
+        coordinator.async_sync_time = AsyncMock(return_value=True)
+
+        await coordinator._async_update_data()
+
+        coordinator.async_sync_time.assert_awaited_once()
+        assert coordinator._time_synced_this_connection is True
+
+    @pytest.mark.asyncio
+    async def test_unsupported_protocol_does_not_auto_sync_after_initial_status(self):
+        """ABBA remains excluded because it has no app-backed clock write."""
+        coordinator = create_mock_coordinator()
+        client = MagicMock()
+        client.is_connected = True
+        coordinator._client = None
+        coordinator._protocol_mode = 5
+        coordinator._protocol = coordinator._protocols[5]
+        coordinator._check_daily_reset = AsyncMock()
+        coordinator._check_daily_runtime_reset = AsyncMock()
+        coordinator._ensure_connected = AsyncMock(
+            side_effect=lambda: setattr(coordinator, "_client", client)
+        )
+        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator._save_valid_data = MagicMock()
+        coordinator._update_fuel_tracking = MagicMock()
+        coordinator._update_runtime_tracking = MagicMock()
+        coordinator.async_sync_time = AsyncMock(return_value=True)
+
+        await coordinator._async_update_data()
+
+        coordinator.async_sync_time.assert_not_awaited()
 
 
 class TestHeatGenieDelayedReports:

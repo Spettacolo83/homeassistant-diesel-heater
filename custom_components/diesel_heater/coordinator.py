@@ -231,6 +231,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._heatgenie_last_status_at = 0.0
         self._heatgenie_pending_button: tuple[int, int] | None = None
         self._heatgenie_acknowledged_button: tuple[int, int] | None = None
+        self._time_synced_this_connection = False
         self._time_synced_this_session = False
         self._is_hcalory_device = False  # True if using Hcalory MVP1/MVP2 protocol
         self._hcalory_mvp2_device = False  # Confirmed by the BD39 GATT service
@@ -1616,11 +1617,23 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     and self._protocol_mode == 6
                     and not self._time_synced_this_session
                 ):
-                    self._time_synced_this_session = True
                     try:
                         self._logger.debug("Auto-syncing time after initial status...")
-                        await self._send_v21_time_sync(dt_util.now())
-                        self._logger.info("Auto time sync completed")
+                        if await self._send_v21_time_sync(dt_util.now()):
+                            self._time_synced_this_session = True
+                            self._logger.info("Auto time sync completed")
+                    except Exception as sync_err:
+                        self._logger.debug("Auto time sync failed (non-critical): %s", sync_err)
+                elif (
+                    connected_this_update
+                    and self.supports_time_sync
+                    and not self._time_synced_this_connection
+                ):
+                    try:
+                        self._logger.debug("Auto-syncing time after initial status...")
+                        if await self.async_sync_time():
+                            self._time_synced_this_connection = True
+                            self._logger.info("Auto time sync completed")
                     except Exception as sync_err:
                         self._logger.debug("Auto time sync failed (non-critical): %s", sync_err)
 
@@ -2508,6 +2521,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 self._v21_handshake_event.clear()
                 self._v21_handshake_authenticated = None
                 # Keep the V2.1 initial settings write one-shot across reconnects.
+                self._time_synced_this_connection = False
                 # The Sunster app retains its equivalent first-send guard per device.
 
     async def _async_password_handshake(self, max_retries: int = 3) -> bool:
