@@ -2083,14 +2083,24 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 # record. The observed Mudiro controller identifies itself in
                 # this app-defined 5C16 response; do not apply that fallback
                 # to a controller that supplied a different explicit name.
+                advertised_name = self._advertised_heater_name()
                 if data[2] in (1, 2) and (
-                    self.is_warm_drive_controller
-                    or not self._advertised_heater_name()
+                    self.is_warm_drive_controller or not advertised_name
                 ):
-                    self.data["neo_controller_type"] = (
-                        "air" if data[2] == 1 else "water"
-                    )
+                    controller_type = "air" if data[2] == 1 else "water"
+                    if self.data.get("neo_controller_type") != controller_type:
+                        self._logger.debug(
+                            "Warm Drive identity: controller_type=%s source=5C16",
+                            controller_type,
+                        )
+                    self.data["neo_controller_type"] = controller_type
                     self._remember_warm_drive_identity()
+                elif data[2] in (1, 2):
+                    self._logger.debug(
+                        "Warm Drive identity ignored: controller_name=%r type_byte=%d",
+                        advertised_name,
+                        data[2],
+                    )
                 if self.is_warm_drive_controller:
                     self._warm_drive_board_config = bytearray(data)
                     self.data.update(
@@ -2100,6 +2110,15 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                             "tank_volume": data[15],
                             "pump_type": data[16],
                         }
+                    )
+                    self._logger.debug(
+                        "Warm Drive 5C16: type=%s work_mode=%d auto_start_stop=%s "
+                        "tank_capacity_index=%d pump_flow_index=%d",
+                        self.data["neo_controller_type"],
+                        data[13],
+                        self.data["auto_start_stop"],
+                        data[15],
+                        data[16],
                     )
                 self._neo_config_received = True
             if len(data) >= 21 and data[0] == 0x5D:
@@ -2824,14 +2843,41 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 action,
             )
             return False
+        self._logger.debug(
+            "Warm Drive %s: writing 2612 overrides=%s packet=%s",
+            action,
+            overrides,
+            packet.hex(),
+        )
         try:
             await self._write_gatt(packet)
         except Exception as err:
             self._logger.warning("Warm Drive %s write failed: %s", action, err)
             return False
-        for index, value in overrides.items():
-            self._warm_drive_board_config[index] = value & 0xFF
-        self.data.update(updates)
+
+        # The app follows a configuration write with a new 5C16 read. Do the
+        # same before publishing a changed configuration state.
+        if getattr(self, "_client", None) is not None:
+            try:
+                confirmed = await self._send_dz06_neo_configuration()
+            except Exception as err:
+                self._logger.warning(
+                    "Warm Drive %s confirmation read failed: %s", action, err
+                )
+                return False
+            if not confirmed:
+                self._logger.warning(
+                    "Warm Drive %s write sent but 5C16 confirmation failed", action
+                )
+                return False
+            self._logger.debug(
+                "Warm Drive %s: 5C16 confirmation received", action
+            )
+        else:  # pragma: no cover - production writes have an active BLE client
+            for index, value in overrides.items():
+                self._warm_drive_board_config[index] = value & 0xFF
+            self.data.update(updates)
+
         await self.async_request_refresh()
         return True
 

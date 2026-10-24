@@ -821,6 +821,51 @@ async def test_warm_drive_config_write_updates_cached_field_after_success() -> N
 
 
 @pytest.mark.asyncio
+async def test_warm_drive_config_write_requires_a_5c16_confirmation() -> None:
+    """A production write does not claim success until the app's readback arrives."""
+    coordinator = coordinator_for_layout(True)
+    config = bytearray(range(24))
+    config[:3] = bytes((0x5C, 0x16, 1))
+    coordinator._warm_drive_board_config = config
+    coordinator._client = object()
+    coordinator._write_gatt = AsyncMock()
+    coordinator._send_dz06_neo_configuration = AsyncMock(return_value=False)
+
+    result = await coordinator._async_write_warm_drive_config(
+        {14: 1},
+        {"auto_start_stop": True},
+        "Auto Start/Stop",
+    )
+
+    assert result is False
+    assert coordinator._warm_drive_board_config[14] == 14
+    assert "auto_start_stop" not in coordinator.data
+    coordinator.async_request_refresh.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_warm_drive_config_write_refreshes_after_5c16_confirmation() -> None:
+    """A confirmed native write refreshes the coordinator state."""
+    coordinator = coordinator_for_layout(True)
+    config = bytearray(range(24))
+    config[:3] = bytes((0x5C, 0x16, 1))
+    coordinator._warm_drive_board_config = config
+    coordinator._client = object()
+    coordinator._write_gatt = AsyncMock()
+    coordinator._send_dz06_neo_configuration = AsyncMock(return_value=True)
+
+    result = await coordinator._async_write_warm_drive_config(
+        {14: 1},
+        {"auto_start_stop": True},
+        "Auto Start/Stop",
+    )
+
+    assert result is True
+    coordinator._send_dz06_neo_configuration.assert_awaited_once()
+    coordinator.async_request_refresh.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_warm_drive_config_write_does_not_update_cache_on_failure() -> None:
     """Failed writes must not claim a controller-side configuration change."""
     coordinator = coordinator_for_layout(True)
