@@ -3713,6 +3713,28 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._logger.info("Ignoring level change during burn-off")
             return False
 
+        if self.is_warm_drive_controller:
+            if self.data.get("neo_controller_type") != "air":
+                self._logger.warning(
+                    "Warm Drive level control is available only on air controllers"
+                )
+                return False
+            level = max(1, min(10, level))
+            settings = self._neo_control_settings()
+            if settings is None:
+                return False
+            _, _, altitude = settings
+            # The Warm Drive app has no independent gear command. Its manual
+            # 1-10 indicator is a 3°C target ladder: 8, 11, ..., 35°C.
+            target = 5 + (level * 3)
+            self._logger.info(
+                "Warm Drive level request: level=%d target=%d°C altitude=%d",
+                level,
+                target,
+                altitude,
+            )
+            return await self._async_set_dz06_neo_control(1, target, altitude)
+
         if self.is_dz06_neo:
             self._logger.warning(
                 "DZ06 Neo has no legacy gear command; use the native mode control"

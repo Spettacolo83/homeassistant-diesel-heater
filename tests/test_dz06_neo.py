@@ -403,7 +403,7 @@ async def test_mode_change_uses_native_warm_drive_control() -> None:
 
 @pytest.mark.asyncio
 async def test_level_change_does_not_send_a_legacy_gear_command() -> None:
-    coordinator = coordinator_for_layout(True)
+    coordinator = coordinator_for_layout(True, name="DZ06 Neo")
     coordinator._write_gatt = AsyncMock()
 
     assert await coordinator.async_set_level(2) is False
@@ -799,6 +799,30 @@ def test_warm_drive_config_write_changes_only_requested_field(
     assert packet[-2:] == coordinator._modbus_crc16(packet[:-2])
 
 
+def test_warm_drive_config_write_preserves_observed_calibration_bytes() -> None:
+    """A scoped write retains every calibration value from the real 0x26 frame."""
+    # Captured by SilverServerT from a Warm Drive air controller. The values
+    # not exposed by HA are intentionally preserved rather than interpreted or
+    # rewritten: oil type, 1.5-5.5 Hz pump range, 1550-4499 RPM fan range, and
+    # glow setting 5.
+    observed_write = bytes.fromhex(
+        "2612010108230f37060e1193050100000101ea86"
+    )
+    coordinator = coordinator_for_layout(True)
+    coordinator._warm_drive_board_config = bytearray(
+        b"\x5c\x16" + observed_write[2:17] + b"\x00" * 7
+    )
+
+    packet = coordinator._warm_drive_config_packet({14: 1})
+
+    assert packet is not None
+    assert packet[2:14] == observed_write[2:14]
+    assert packet[14] == 1
+    assert packet[15:17] == observed_write[15:17]
+    assert packet[17] == 1
+    assert packet[-2:] == coordinator._modbus_crc16(packet[:-2])
+
+
 @pytest.mark.asyncio
 async def test_warm_drive_config_write_updates_cached_field_after_success() -> None:
     """Only a successful native config write changes the locally exposed value."""
@@ -884,3 +908,43 @@ async def test_warm_drive_config_write_does_not_update_cache_on_failure() -> Non
     assert coordinator._warm_drive_board_config[14] == 14
     assert "auto_start_stop" not in coordinator.data
     coordinator.async_request_refresh.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("level", "target"), [(1, 8), (3, 14), (5, 20), (10, 35)])
+async def test_warm_drive_air_level_uses_apk_target_ladder(
+    level: int, target: int
+) -> None:
+    """Warm Drive presents levels as the app's 8-35°C manual target ladder."""
+    coordinator = coordinator_for_layout(True)
+    coordinator.data.update(
+        {
+            "neo_controller_type": "air",
+            "neo_run_type": 1,
+            "neo_raw_state": 2,
+            "neo_min_target": 8,
+            "neo_max_target": 35,
+            "set_temp": 20,
+            "altitude": 91,
+        }
+    )
+    response = bytearray(39)
+    response[:2], response[15], response[34] = b"Z%", target, 1
+    coordinator._write_gatt = AsyncMock(
+        side_effect=lambda packet: coordinator._notification_callback(FFF2, response)
+    )
+
+    assert await coordinator.async_set_level(level) is True
+    packet = coordinator._write_gatt.await_args.args[0]
+    assert packet[3:9] == bytearray((0x51, 1, target, 0, 91, 1))
+
+
+@pytest.mark.asyncio
+async def test_warm_drive_water_level_change_sends_nothing() -> None:
+    """Warm Drive's water interface has no APK-proven 1-10 level control."""
+    coordinator = coordinator_for_layout(True)
+    coordinator.data["neo_controller_type"] = "water"
+    coordinator._write_gatt = AsyncMock()
+
+    assert await coordinator.async_set_level(5) is False
+    coordinator._write_gatt.assert_not_awaited()
