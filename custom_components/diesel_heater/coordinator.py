@@ -231,6 +231,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._heatgenie_last_status_at = 0.0
         self._heatgenie_pending_button: tuple[int, int] | None = None
         self._heatgenie_acknowledged_button: tuple[int, int] | None = None
+        self._time_synced_this_connection = False
         self._time_synced_this_session = False
         self._is_hcalory_device = False  # True if using Hcalory MVP1/MVP2 protocol
         self._hcalory_mvp2_device = False  # Confirmed by the BD39 GATT service
@@ -347,10 +348,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     def supports_time_sync(self) -> bool:
         """Return whether this controller has an app-backed clock-write command."""
         if self.is_dz06_neo:
-            return False
-        if self._protocol_mode in (1, 2, 3, 4, 8):
             return True
-        return self._protocol_mode == 7 and self._hcalory_mvp2_device
+        if self._protocol_mode in (1, 2, 3, 4, 5, 8, 9):
+            return True
+        if self._protocol_mode != 7:
+            return False
+        if self._hcalory_variant is not None:
+            return uses_mvp2_commands(self._hcalory_variant)
+        return self._hcalory_mvp2_device
 
     @property
     def cronus_fuel_profile(self) -> dict[str, object] | None:
@@ -721,7 +726,18 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     self._last_save_time = current_time
             self._last_valid_data = self.data.copy()
             self._consecutive_failures = 0
-            return self.data
+
+        # ThermoConnect writes record 97 (UTC HH MM SS DD MM YY) when its
+        # initial record exchange completes. Do the same once per BLE
+        # connection, after the snapshot transaction has released its lock.
+        if not self._time_synced_this_connection:
+            try:
+                if await self.async_sync_time():
+                    self._time_synced_this_connection = True
+                    self._logger.info("Auto time sync completed")
+            except Exception as sync_err:
+                self._logger.debug("Auto time sync failed (non-critical): %s", sync_err)
+        return self.data
 
     def _dz06_neo_display_temperature(self, raw_temperature: int) -> float:
         """Return a Warm Drive temperature in the app-selected display unit."""
@@ -1616,11 +1632,23 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     and self._protocol_mode == 6
                     and not self._time_synced_this_session
                 ):
-                    self._time_synced_this_session = True
                     try:
                         self._logger.debug("Auto-syncing time after initial status...")
-                        await self._send_v21_time_sync(dt_util.now())
-                        self._logger.info("Auto time sync completed")
+                        if await self._send_v21_time_sync(dt_util.now()):
+                            self._time_synced_this_session = True
+                            self._logger.info("Auto time sync completed")
+                    except Exception as sync_err:
+                        self._logger.debug("Auto time sync failed (non-critical): %s", sync_err)
+                elif (
+                    connected_this_update
+                    and self.supports_time_sync
+                    and not self._time_synced_this_connection
+                ):
+                    try:
+                        self._logger.debug("Auto-syncing time after initial status...")
+                        if await self.async_sync_time():
+                            self._time_synced_this_connection = True
+                            self._logger.info("Auto time sync completed")
                     except Exception as sync_err:
                         self._logger.debug("Auto time sync failed (non-critical): %s", sync_err)
 
@@ -1980,14 +2008,18 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     # Continue anyway - will retry in _send_command if needed
 
             if self.is_dz06_neo:
-                if not await self._send_dz06_neo_configuration():
-                    await self._cleanup_connection()
-                    raise BleakError("DZ06 Neo configuration read failed")
+                # Warm Drive sends timestamped run settings, then configuration,
+                # followed by board information for its air/water controllers.
                 if not await self._send_dz06_neo_run_settings():
                     await self._cleanup_connection()
                     raise BleakError("DZ06 Neo startup settings read failed")
+                if not await self._send_dz06_neo_configuration():
+                    await self._cleanup_connection()
+                    raise BleakError("DZ06 Neo configuration read failed")
                 if self.is_warm_drive_controller:
                     await self._send_dz06_neo_board_info()
+                # Both successful startup reads carry the current local timestamp.
+                self._time_synced_this_connection = True
             elif self._is_cronus_device:
                 self._logger.debug("Cronus ready; polling record cache")
             else:
@@ -2508,6 +2540,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 self._v21_handshake_event.clear()
                 self._v21_handshake_authenticated = None
                 # Keep the V2.1 initial settings write one-shot across reconnects.
+                self._time_synced_this_connection = False
                 # The Sunster app retains its equivalent first-send guard per device.
 
     async def _async_password_handshake(self, max_retries: int = 3) -> bool:
@@ -3832,6 +3865,20 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             return False
 
         now = dt_util.now()
+        if self.is_dz06_neo:
+            # Reissue Warm Drive timestamped startup reads on an explicit sync.
+            success = await self._send_dz06_neo_run_settings()
+            if success:
+                success = await self._send_dz06_neo_configuration()
+            if success and self.is_warm_drive_controller:
+                await self._send_dz06_neo_board_info()
+            if success:
+                self._time_synced_this_connection = True
+                self._logger.info("DZ06 Neo time sync successful")
+            else:
+                self._logger.warning("DZ06 Neo time sync failed")
+            return success
+
         if self._protocol_mode == 6:
             success = await self._send_v21_time_sync(now)
             if success:
@@ -3840,12 +3887,42 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 self._logger.warning("Sunster V2.1 time sync failed")
             return
 
-        if self._protocol_mode == 7:
+        if self._protocol_mode == 5:
+            # AirHeaterCC uses JavaScript Date.getDay(): Sunday=0 through Saturday=6.
+            javascript_weekday = (now.weekday() + 1) % 7
+            time_value = (
+                (now.hour << 24)
+                | (now.minute << 16)
+                | (now.second << 8)
+                | javascript_weekday
+            )
+            success = await self._send_command(10, time_value)
+            self._logger.info(
+                "Syncing ABBA time to %02d:%02d:%02d JS weekday=%d",
+                now.hour,
+                now.minute,
+                now.second,
+                javascript_weekday,
+            )
+        elif self._protocol_mode == 7:
             self._protocol.set_query_timestamp(now)
             try:
                 success = await self._send_command(10, 0)
             finally:
                 self._protocol.set_query_timestamp(None)
+        elif self._protocol_mode == 9:
+            utc_now = dt_util.utcnow()
+            success = await self._async_write_cronus_record(
+                "time",
+                bytes((
+                    utc_now.hour,
+                    utc_now.minute,
+                    utc_now.second,
+                    utc_now.day,
+                    utc_now.month,
+                    utc_now.year % 100,
+                )),
+            )
         elif self._protocol_mode == 8:
             time_value = (now.weekday() << 11) | (now.hour << 6) | now.minute
             success = await self._send_command(10, time_value)
