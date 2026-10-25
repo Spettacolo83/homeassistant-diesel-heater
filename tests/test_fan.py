@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock, AsyncMock
 
 # Import stubs first
 from . import conftest  # noqa: F401
@@ -381,7 +381,7 @@ class TestOrderedLevels:
     def test_ordered_levels_content(self):
         """Test ORDERED_LEVELS contains string levels 1-10."""
         expected = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
-        assert ORDERED_LEVELS == expected
+        assert expected == ORDERED_LEVELS
 
 
 # ---------------------------------------------------------------------------

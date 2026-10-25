@@ -943,8 +943,18 @@ class TestNotificationCallback:
         client.is_connected = True
         client.disconnect = AsyncMock()
         coordinator._client = None
+        # _send_command_unlocked refuses to write without a characteristic.
+        # _ensure_connected is mocked here, so the characteristic must be
+        # provided by the test — both initially and on reconnect, since
+        # _cleanup_connection clears it.
+        coordinator._characteristic = MagicMock()
+
+        async def _fake_ensure_connected():
+            coordinator._client = client
+            coordinator._characteristic = MagicMock()
+
         coordinator._ensure_connected = AsyncMock(
-            side_effect=lambda: setattr(coordinator, "_client", client)
+            side_effect=_fake_ensure_connected
         )
         coordinator._check_daily_reset = AsyncMock()
         coordinator._check_daily_runtime_reset = AsyncMock()
@@ -974,6 +984,12 @@ class TestNotificationCallback:
                         protocol._build_feaa(0x83, 0x01, b"\x01"), serial
                     ),
                 )
+            # (0x06, 0x00) is the V2.1 handshake, queued when the
+            # decrypted status is parsed. Deliberately no reply here:
+            # an 86/00 ack sent through _notification_callback while
+            # _send_command is waiting for the status would be discarded
+            # as a non-status notification and the status request would
+            # time out and re-send.
 
         coordinator._write_gatt = AsyncMock(side_effect=respond_to_write)
 
@@ -984,9 +1000,11 @@ class TestNotificationCallback:
             data = await coordinator._async_update_data()
 
         assert data["connected"] is True
-        assert sent_commands == [(0x00, 0x00), (0x03, 0x01)]
+        # Status, then the V2.1 handshake queued on the decrypted status,
+        # then the one-shot 03/01 settings (time sync) write.
+        assert sent_commands == [(0x00, 0x00), (0x06, 0x00), (0x03, 0x01)]
         time_sync = protocol._decrypt_cbff(
-            coordinator._write_gatt.await_args_list[1].args[0], serial
+            coordinator._write_gatt.await_args_list[2].args[0], serial
         )
         assert time_sync[10:12] == bytearray((0x3A, 0x82))
 
@@ -1000,7 +1018,15 @@ class TestNotificationCallback:
             data = await coordinator._async_update_data()
 
         assert data["connected"] is True
-        assert sent_commands == [(0x00, 0x00), (0x03, 0x01), (0x00, 0x00)]
+        # Reconnect: status again and a fresh handshake (cleanup resets
+        # _v21_handshake_sent), but no second settings write.
+        assert sent_commands == [
+            (0x00, 0x00),
+            (0x06, 0x00),
+            (0x03, 0x01),
+            (0x00, 0x00),
+            (0x06, 0x00),
+        ]
 
 # ---------------------------------------------------------------------------
 # Additional fuel tracking tests
@@ -2508,7 +2534,10 @@ class TestExternalTempSensor:
 
         # Mock async_track_state_change_event
         mock_unsub = MagicMock()
-        with patch("custom_components.diesel_heater.coordinator.async_track_state_change_event", return_value=mock_unsub) as mock_track:
+        with patch(
+            "custom_components.diesel_heater.coordinator.async_track_state_change_event",
+            return_value=mock_unsub,
+        ) as mock_track:
             await coordinator._setup_external_temp_listener()
 
             mock_track.assert_called_once()
@@ -2943,7 +2972,7 @@ class TestAsyncUpdateData:
         coordinator._update_runtime_tracking = MagicMock()
         coordinator.async_save_data = AsyncMock()
 
-        result = await coordinator._async_update_data()
+        await coordinator._async_update_data()
 
         # Should have tried 3 times
         assert coordinator._send_command.call_count == 3
@@ -3130,9 +3159,14 @@ class TestStatisticsImportDetailed:
         coordinator = create_mock_coordinator()
         mock_recorder = MagicMock()
 
-        with patch("custom_components.diesel_heater.coordinator.get_instance", return_value=mock_recorder):
-            with patch("custom_components.diesel_heater.coordinator.async_add_external_statistics", side_effect=Exception("Stats error")):
-                await coordinator._import_statistics("2024-01-15", 2.5)
+        with (
+            patch("custom_components.diesel_heater.coordinator.get_instance", return_value=mock_recorder),
+            patch(
+                "custom_components.diesel_heater.coordinator.async_add_external_statistics",
+                side_effect=Exception("Stats error"),
+            ),
+        ):
+            await coordinator._import_statistics("2024-01-15", 2.5)
 
         coordinator._logger.warning.assert_called()
 
@@ -3177,9 +3211,14 @@ class TestStatisticsImportDetailed:
         coordinator = create_mock_coordinator()
         mock_recorder = MagicMock()
 
-        with patch("custom_components.diesel_heater.coordinator.get_instance", return_value=mock_recorder):
-            with patch("custom_components.diesel_heater.coordinator.async_add_external_statistics", side_effect=Exception("Stats error")):
-                await coordinator._import_runtime_statistics("2024-01-15", 4.5)
+        with (
+            patch("custom_components.diesel_heater.coordinator.get_instance", return_value=mock_recorder),
+            patch(
+                "custom_components.diesel_heater.coordinator.async_add_external_statistics",
+                side_effect=Exception("Stats error"),
+            ),
+        ):
+            await coordinator._import_runtime_statistics("2024-01-15", 4.5)
 
         coordinator._logger.warning.assert_called()
 
@@ -3842,7 +3881,7 @@ class TestEnsureConnected:
             mock_establish.side_effect = Exception("Test error")
             coordinator._cleanup_connection = AsyncMock()
 
-            with pytest.raises(Exception):
+            with pytest.raises(Exception, match="Test error"):
                 await coordinator._ensure_connected()
 
             # Cleanup should be called at least once
@@ -4135,7 +4174,7 @@ class TestEnsureConnected:
 # Tests for _notification_callback and _parse_response (lines 1048-1165)
 # ---------------------------------------------------------------------------
 
-class TestNotificationCallback:
+class TestNotificationCallbackParsing:
     """Tests for notification callback and response parsing."""
 
     def test_notification_callback_logs_and_parses(self):
@@ -4539,7 +4578,7 @@ class TestPostStatusRequest:
 
         coordinator._write_gatt.side_effect = set_notification_after_write
 
-        result = await coordinator._send_command(4, 5, timeout=0.2)  # Not command 1
+        await coordinator._send_command(4, 5, timeout=0.2)  # Not command 1
 
         # Should have called build_command twice (original + status)
         assert mock_protocol.build_command.call_count == 2
@@ -4567,7 +4606,7 @@ class TestPostStatusRequest:
 
         coordinator._write_gatt.side_effect = set_notification_after_write
 
-        result = await coordinator._send_command(1, 0, timeout=0.2)  # Command 1 = status request
+        await coordinator._send_command(1, 0, timeout=0.2)  # Command 1 = status request
 
         # Should only call build_command once (no post-status for status command)
         assert mock_protocol.build_command.call_count == 1
@@ -6524,7 +6563,9 @@ class TestCronusTransactionSafety:
 class TestTimeSync:
     """Exercise only app-backed time synchronization paths."""
 
-    @pytest.mark.parametrize("protocol_mode", (0, 5, 6, 9))
+    # Mode 6 (Sunster FEAA/CBFF V2.1) is supported: it syncs time through
+    # the app-backed 03/01 settings write, not command 10.
+    @pytest.mark.parametrize("protocol_mode", (0, 5, 9))
     @pytest.mark.asyncio
     async def test_async_sync_time_rejects_unsupported_protocols(self, protocol_mode):
         """No generic time command is sent to unsupported controller families."""

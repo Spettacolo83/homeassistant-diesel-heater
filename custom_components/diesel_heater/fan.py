@@ -1,10 +1,7 @@
 """Fan platform for Vevor Diesel Heater."""
 from __future__ import annotations
 
-PARALLEL_UPDATES = 1
-
 import logging
-import math
 from typing import Any
 
 from homeassistant.components.fan import FanEntity, FanEntityFeature
@@ -29,6 +26,7 @@ _LOGGER = logging.getLogger(__name__)
 # Ordered list of levels for percentage conversion
 ORDERED_LEVELS = [str(level) for level in range(MIN_LEVEL, MAX_LEVEL + 1)]
 
+PARALLEL_UPDATES = 1
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -39,7 +37,6 @@ async def async_setup_entry(
     coordinator = entry.runtime_data
     if coordinator.protocol_mode != 9 and not coordinator.is_dz06_neo:
         async_add_entities([VevorHeaterFan(coordinator)])
-
 
 class VevorHeaterFan(FanEntity):
     """Fan entity for Vevor Heater level control."""

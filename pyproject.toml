@@ -26,6 +26,12 @@ line-length = 120
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM"]
 
+# Tests import conftest first to install the Home Assistant stub finder,
+# and use function-level imports to load stubs before the real modules,
+# so import order in tests/ is intentional and cannot be sorted.
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402", "I001"]
+
 [tool.coverage.run]
 source = ["custom_components/vevor_heater", "diesel_heater_ble"]
 

@@ -1,46 +1,44 @@
 """Climate platform for Vevor Diesel Heater."""
 from __future__ import annotations
 
-PARALLEL_UPDATES = 1
-
 import logging
 from typing import Any
 
 from homeassistant.components.climate import (
+    PRESET_AWAY,
+    PRESET_COMFORT,
+    PRESET_NONE,
     ClimateEntity,
     ClimateEntityFeature,
     HVACAction,
     HVACMode,
-    PRESET_AWAY,
-    PRESET_COMFORT,
-    PRESET_NONE,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
-
-from . import VevorHeaterConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from . import VevorHeaterConfigEntry
 from .const import (
     CONF_PRESET_AWAY_TEMP,
     CONF_PRESET_COMFORT_TEMP,
     DEFAULT_PRESET_AWAY_TEMP,
     DEFAULT_PRESET_COMFORT_TEMP,
     DOMAIN,
-    RUNNING_STEP_STANDBY,
-    RUNNING_STEP_SELF_TEST,
+    RUNNING_STEP_COOLDOWN,
     RUNNING_STEP_IGNITION,
     RUNNING_STEP_RUNNING,
-    RUNNING_STEP_COOLDOWN,
+    RUNNING_STEP_SELF_TEST,
+    RUNNING_STEP_STANDBY,
     RUNNING_STEP_VENTILATION,
 )
 from .coordinator import VevorHeaterCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
+PARALLEL_UPDATES = 1
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -50,7 +48,6 @@ async def async_setup_entry(
     """Set up Vevor Heater climate from config entry."""
     coordinator = entry.runtime_data
     async_add_entities([VevorHeaterClimate(coordinator, entry)])
-
 
 class VevorHeaterClimate(
     CoordinatorEntity[VevorHeaterCoordinator], ClimateEntity, RestoreEntity
@@ -139,8 +136,6 @@ class VevorHeaterClimate(
         target = last_state.attributes.get(ATTR_TEMPERATURE)
         if isinstance(target, (int, float)) and 8 <= target <= 36:
             self._restored_abba_target = float(target)
-
-
 
     @property
     def supported_features(self) -> ClimateEntityFeature:

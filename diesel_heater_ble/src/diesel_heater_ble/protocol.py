@@ -37,21 +37,15 @@ from .const import (
     HCALORY_MIN_LEVEL,
     HCALORY_MIN_TEMP_CELSIUS,
     HCALORY_MIN_TEMP_FAHRENHEIT,
-    HCALORY_POWER_AUTO_OFF,
-    HCALORY_POWER_AUTO_ON,
     HCALORY_POWER_AUTO_TOGGLE,
     HCALORY_POWER_CELSIUS,
     HCALORY_POWER_FAHRENHEIT,
     HCALORY_POWER_OFF,
     HCALORY_POWER_ON,
     HCALORY_POWER_QUERY,
-    HCALORY_STATE_HEATING_MANUAL_GEAR,
-    HCALORY_STATE_HEATING_TEMP_AUTO,
-    HCALORY_STATE_MACHINE_FAULT,
-    HCALORY_STATE_NATURAL_WIND,
-    HCALORY_STATE_STANDBY,
     MAX_TEMP_CELSIUS,
     MIN_TEMP_CELSIUS,
+    PROTOCOL_HEADER_FEAA,
     RUNNING_MODE_LEVEL,
     RUNNING_MODE_MANUAL,
     RUNNING_MODE_TEMPERATURE,
@@ -62,7 +56,6 @@ from .const import (
     RUNNING_STEP_STANDBY,
     RUNNING_STEP_VENTILATION,
     SUNSTER_V21_KEY,
-    PROTOCOL_HEADER_FEAA,
 )
 
 # ---------------------------------------------------------------------------
@@ -1733,21 +1726,18 @@ class ProtocolHcalory(HeaterProtocol):
         try:
             # Import MVP2 constants
             from .const import (
+                HCALORY_MODE_LEVEL,
+                HCALORY_MODE_TEMPERATURE,
+                HCALORY_MODE_VENTILATION,
+                HCALORY_RUNNING_STATUS_ERROR,
                 HCALORY_RUNNING_STATUS_OFF,
                 HCALORY_RUNNING_STATUS_TURNING_OFF,
-                HCALORY_RUNNING_STATUS_HEATING,
-                HCALORY_RUNNING_STATUS_VENTILATION,
-                HCALORY_RUNNING_STATUS_ERROR,
-                HCALORY_RUNNING_STEP_INACTIVE,
+                HCALORY_RUNNING_STEP_COOLDOWN,
                 HCALORY_RUNNING_STEP_FAN,
                 HCALORY_RUNNING_STEP_IGNITION,
-                HCALORY_RUNNING_STEP_COOLDOWN,
+                HCALORY_RUNNING_STEP_INACTIVE,
                 HCALORY_RUNNING_STEP_RUNNING,
                 HCALORY_RUNNING_STEP_STANDBY,
-                HCALORY_MODE_OFF,
-                HCALORY_MODE_TEMPERATURE,
-                HCALORY_MODE_LEVEL,
-                HCALORY_MODE_VENTILATION,
             )
 
             # Byte 20: Complete state byte (status in high nibble, running_step in low nibble)
@@ -1802,7 +1792,10 @@ class ProtocolHcalory(HeaterProtocol):
             set_value_raw = _u8_to_number(data[22])
 
             # Critical: set_value is None when heater is OFF, TURNING_OFF, or ERROR (@Xev's discovery)
-            if complete_state_byte == HCALORY_RUNNING_STATUS_OFF or status in (HCALORY_RUNNING_STATUS_TURNING_OFF, HCALORY_RUNNING_STATUS_ERROR):
+            if complete_state_byte == HCALORY_RUNNING_STATUS_OFF or status in (
+                HCALORY_RUNNING_STATUS_TURNING_OFF,
+                HCALORY_RUNNING_STATUS_ERROR,
+            ):
                 # Heater is OFF - don't parse set_value (coordinator must remember last value)
                 parsed["hcalory_set_value_none"] = True
             else:

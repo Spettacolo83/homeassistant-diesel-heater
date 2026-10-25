@@ -11,7 +11,6 @@ import shutil
 from typing import Any
 
 import voluptuous as vol
-
 from homeassistant.components import bluetooth
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_ADDRESS, Platform
@@ -22,7 +21,6 @@ from homeassistant.exceptions import (
     ServiceValidationError,
 )
 from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
 from .const import DOMAIN, OLD_DOMAIN
@@ -388,7 +386,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: DieselHeaterConfigEntry)
             timeout=30.0
         )
         _LOGGER.info("Successfully connected to Diesel Heater at %s", address)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         _LOGGER.warning(
             "Initial connection to Diesel Heater at %s timed out after 30 seconds. "
             "Setup will complete anyway and retry in background. "

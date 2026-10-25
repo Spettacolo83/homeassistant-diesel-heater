@@ -15,8 +15,8 @@ Requirements:
   pip install bleak
 """
 import asyncio
-import sys
 import json
+import sys
 from pathlib import Path
 
 try:
@@ -51,7 +51,7 @@ def save_scan(data: dict, filename: str):
 
 def load_scan(filename: str):
     """Load scan results from file."""
-    with open(filename, 'r') as f:
+    with open(filename) as f:
         return json.load(f)
 
 
@@ -98,7 +98,7 @@ def compare_scans(before: dict, after: dict):
             print(f"    RSSI: {info['rssi']}")
             if info['services']:
                 print(f"    Services: {', '.join(info['services'][:3])}")
-            print(f"    ⭐ THIS COULD BE YOUR VEVOR HEATER!")
+            print("    ⭐ THIS COULD BE YOUR VEVOR HEATER!")
 
     if appeared:
         print(f"\n📱 NEW DEVICES ({len(appeared)}):")

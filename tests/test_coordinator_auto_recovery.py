@@ -13,6 +13,8 @@ Validates the inline recovery path added to `VevorHeaterCoordinator`:
 """
 from __future__ import annotations
 
+import contextlib
+
 import asyncio
 import sys
 import time
@@ -356,11 +358,11 @@ class TestSendCommandTimeoutWrapper:
         async def _fast_wait_for(aw, timeout):
             return await orig_wait_for(aw, timeout=0.05)
 
-        with patch.object(coord_module.asyncio, "wait_for", side_effect=_fast_wait_for):
-            try:
-                self._run(c._async_update_data())
-            except Exception:
-                pass  # UpdateFailed may propagate; irrelevant here
+        with (
+            patch.object(coord_module.asyncio, "wait_for", side_effect=_fast_wait_for),
+            contextlib.suppress(Exception),  # UpdateFailed may propagate; irrelevant here
+        ):
+            self._run(c._async_update_data())
 
         # The key assertion: _handle_connection_failure was called at least once
         # — proving that a hung _send_command does produce a failure signal
@@ -397,11 +399,11 @@ class TestSendCommandTimeoutWrapper:
         async def _fast_wait_for(aw, timeout):
             return await orig_wait_for(aw, timeout=0.05)
 
-        with patch.object(coord_module.asyncio, "wait_for", side_effect=_fast_wait_for):
-            try:
-                self._run(c._async_update_data())
-            except Exception:
-                pass  # UpdateFailed is expected
+        with (
+            patch.object(coord_module.asyncio, "wait_for", side_effect=_fast_wait_for),
+            contextlib.suppress(Exception),  # UpdateFailed is expected
+        ):
+            self._run(c._async_update_data())
 
         assert c._handle_connection_failure.called
         # The error passed must be a TimeoutError (the connect wrap converts

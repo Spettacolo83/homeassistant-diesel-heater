@@ -484,7 +484,9 @@ class TestAsyncSetupEntry:
         async_add_entities = MagicMock()
 
         await async_setup_entry(
-            MagicMock(), MagicMock(runtime_data=coordinator, data={CONF_NEO_CONTROLLER_TYPE: "water"}), async_add_entities
+            MagicMock(),
+            MagicMock(runtime_data=coordinator, data={CONF_NEO_CONTROLLER_TYPE: "water"}),
+            async_add_entities,
         )
 
         auxiliary_temperature_keys = {

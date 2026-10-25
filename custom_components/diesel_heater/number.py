@@ -1,14 +1,11 @@
 """Number platform for Vevor Diesel Heater."""
 from __future__ import annotations
 
-PARALLEL_UPDATES = 1
-
 from homeassistant.components.number import NumberDeviceClass, NumberEntity, NumberMode
+from homeassistant.const import EntityCategory, UnitOfTemperature, UnitOfTime, UnitOfVolume
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-
-from homeassistant.const import EntityCategory, UnitOfTemperature, UnitOfTime, UnitOfVolume
 
 from . import VevorHeaterConfigEntry
 from .const import (
@@ -28,6 +25,7 @@ from .const import (
 )
 from .coordinator import VevorHeaterCoordinator
 
+PARALLEL_UPDATES = 1
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -72,7 +70,6 @@ async def async_setup_entry(
             entities.append(VevorHeaterOffsetNumber(coordinator))
 
     async_add_entities(entities)
-
 
 class VevorHeaterLevelNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberEntity):
     """Vevor Heater level number entity.
@@ -140,10 +137,7 @@ class VevorHeaterLevelNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberEn
         # Check if in Temperature mode (RUNNING_MODE_TEMPERATURE = 1)
         from .const import RUNNING_MODE_TEMPERATURE
         running_mode = self.coordinator.data.get("running_mode")
-        if running_mode == RUNNING_MODE_TEMPERATURE:
-            return False
-
-        return True
+        return running_mode != RUNNING_MODE_TEMPERATURE
 
     @property
     def native_value(self) -> float:
@@ -158,7 +152,6 @@ class VevorHeaterLevelNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberEn
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
-
 
 class VevorHeaterTemperatureNumber(
     CoordinatorEntity[VevorHeaterCoordinator], NumberEntity
@@ -254,10 +247,7 @@ class VevorHeaterTemperatureNumber(
         # Check if in Level mode (RUNNING_MODE_LEVEL = 2)
         from .const import RUNNING_MODE_LEVEL
         running_mode = self.coordinator.data.get("running_mode")
-        if running_mode == RUNNING_MODE_LEVEL:
-            return False
-
-        return True
+        return running_mode != RUNNING_MODE_LEVEL
 
     @property
     def native_value(self) -> float | None:
@@ -276,7 +266,6 @@ class VevorHeaterTemperatureNumber(
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
-
 
 class VevorHeaterOffsetNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberEntity):
     """Vevor Heater temperature offset number entity.
@@ -342,7 +331,6 @@ class VevorHeaterOffsetNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberE
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
 
-
 class VevorTankCapacityNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberEntity):
     """Tank capacity number entity for estimated fuel tracking.
 
@@ -394,7 +382,6 @@ class VevorTankCapacityNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberE
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
-
 
 class VevorCurrentFuelLevelNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberEntity):
     """Current fuel level number entity for manual fuel level input.
@@ -462,7 +449,6 @@ class VevorCurrentFuelLevelNumber(CoordinatorEntity[VevorHeaterCoordinator], Num
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
 
-
 class VevorBurnoffDurationNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberEntity):
     """Length of a max-power burn-off cycle, in minutes."""
 
@@ -500,7 +486,6 @@ class VevorBurnoffDurationNumber(CoordinatorEntity[VevorHeaterCoordinator], Numb
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
 
-
 class VevorBurnoffAfterCyclesNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberEntity):
     """Controller heat cycles after which in-run burn-off starts (0 = off)."""
 
@@ -536,7 +521,6 @@ class VevorBurnoffAfterCyclesNumber(CoordinatorEntity[VevorHeaterCoordinator], N
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
-
 
 class VevorBurnoffAfterHoursNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberEntity):
     """RUNNING hours after which in-run burn-off starts (0 = off)."""
@@ -574,5 +558,4 @@ class VevorBurnoffAfterHoursNumber(CoordinatorEntity[VevorHeaterCoordinator], Nu
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
-
 

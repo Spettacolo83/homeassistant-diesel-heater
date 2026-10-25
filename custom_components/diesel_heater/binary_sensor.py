@@ -1,8 +1,6 @@
 """Binary sensor platform for Vevor Diesel Heater."""
 from __future__ import annotations
 
-PARALLEL_UPDATES = 1
-
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
@@ -16,6 +14,7 @@ from . import VevorHeaterConfigEntry
 from .const import DOMAIN, ERROR_NONE, RUNNING_MODE_TEMPERATURE, RUNNING_STATE_ON
 from .coordinator import VevorHeaterCoordinator
 
+PARALLEL_UPDATES = 1
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -64,7 +63,6 @@ async def async_setup_entry(
         )
     async_add_entities(entities)
 
-
 class VevorHeaterActiveSensor(
     CoordinatorEntity[VevorHeaterCoordinator], BinarySensorEntity
 ):
@@ -105,7 +103,6 @@ class VevorHeaterActiveSensor(
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
 
-
 class VevorHeaterProblemSensor(
     CoordinatorEntity[VevorHeaterCoordinator], BinarySensorEntity
 ):
@@ -136,7 +133,6 @@ class VevorHeaterProblemSensor(
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
-
 
 class VevorHeaterConnectedSensor(
     CoordinatorEntity[VevorHeaterCoordinator], BinarySensorEntity
@@ -178,7 +174,6 @@ class VevorHeaterConnectedSensor(
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
 
-
 class VevorComponentActiveSensor(CoordinatorEntity[VevorHeaterCoordinator], BinarySensorEntity):
     """An independently reported heater component state."""
 
@@ -213,7 +208,6 @@ class VevorComponentActiveSensor(CoordinatorEntity[VevorHeaterCoordinator], Bina
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
-
 
 class VevorCronusContinuousRunSensor(
     CoordinatorEntity[VevorHeaterCoordinator], BinarySensorEntity
@@ -278,7 +272,6 @@ class VevorCronusInterlockSensor(
         """Refresh the entity after the record cache changes."""
         self.async_write_ha_state()
 
-
 class VevorAutoStartStopSensor(
     CoordinatorEntity[VevorHeaterCoordinator], BinarySensorEntity
 ):
@@ -324,7 +317,6 @@ class VevorAutoStartStopSensor(
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
 
-
 class VevorBurnoffActiveSensor(
     CoordinatorEntity[VevorHeaterCoordinator], BinarySensorEntity
 ):
@@ -356,7 +348,6 @@ class VevorBurnoffActiveSensor(
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
-
 
 class VevorBurnoffPendingSensor(
     CoordinatorEntity[VevorHeaterCoordinator], BinarySensorEntity

@@ -52,7 +52,7 @@ class TestSaveScan:
         }
         save_scan(data, filename)
 
-        with open(filename, 'r') as f:
+        with open(filename) as f:
             loaded = json.load(f)
 
         assert loaded == data
@@ -67,7 +67,7 @@ class TestSaveScan:
 
         save_scan({}, filename)
 
-        with open(filename, 'r') as f:
+        with open(filename) as f:
             loaded = json.load(f)
 
         assert loaded == {}
@@ -289,7 +289,9 @@ class TestCompareScans:
 
         captured = capsys.readouterr()
         # Should not show RSSI changes section for small changes
-        assert "RSSI CHANGES" not in captured.out or "AA:BB:CC:DD:EE:FF" not in captured.out.split("RSSI CHANGES")[1] if "RSSI CHANGES" in captured.out else True
+        assert "RSSI CHANGES" not in captured.out or (
+            "AA:BB:CC:DD:EE:FF" not in captured.out.split("RSSI CHANGES")[1]
+        )
 
 
 # ---------------------------------------------------------------------------

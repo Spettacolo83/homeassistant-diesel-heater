@@ -1,8 +1,6 @@
 """Switch platform for Vevor Diesel Heater."""
 from __future__ import annotations
 
-PARALLEL_UPDATES = 1
-
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
@@ -15,6 +13,7 @@ from . import VevorHeaterConfigEntry
 from .const import CONF_EXTERNAL_TEMP_SENSOR, DOMAIN, RUNNING_MODE_TEMPERATURE, RUNNING_STATE_ON
 from .coordinator import VevorHeaterCoordinator
 
+PARALLEL_UPDATES = 1
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -63,7 +62,6 @@ async def async_setup_entry(
 
     async_add_entities(entities)
 
-
 class VevorHeaterPowerSwitch(CoordinatorEntity[VevorHeaterCoordinator], SwitchEntity):
     """Vevor Heater power switch."""
 
@@ -109,7 +107,6 @@ class VevorHeaterPowerSwitch(CoordinatorEntity[VevorHeaterCoordinator], SwitchEn
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
 
-
 class VevorBurnoffSwitch(CoordinatorEntity[VevorHeaterCoordinator], SwitchEntity):
     """Enable automatic soot burn-off (in-run thresholds and dirty HA Off)."""
 
@@ -146,7 +143,6 @@ class VevorBurnoffSwitch(CoordinatorEntity[VevorHeaterCoordinator], SwitchEntity
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
-
 
 class VevorAutoStartStopSwitch(CoordinatorEntity[VevorHeaterCoordinator], SwitchEntity):
     """Vevor Heater Auto Start/Stop switch.
@@ -206,7 +202,6 @@ class VevorAutoStartStopSwitch(CoordinatorEntity[VevorHeaterCoordinator], Switch
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
 
-
 class VevorAutoOffsetSwitch(CoordinatorEntity[VevorHeaterCoordinator], SwitchEntity):
     """Vevor Heater Auto Temperature Offset switch.
 
@@ -265,7 +260,6 @@ class VevorAutoOffsetSwitch(CoordinatorEntity[VevorHeaterCoordinator], SwitchEnt
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
 
-
 class VevorTempUnitSwitch(CoordinatorEntity[VevorHeaterCoordinator], SwitchEntity):
     """Vevor Heater Temperature Unit switch.
 
@@ -310,7 +304,6 @@ class VevorTempUnitSwitch(CoordinatorEntity[VevorHeaterCoordinator], SwitchEntit
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
 
-
 class VevorAltitudeUnitSwitch(CoordinatorEntity[VevorHeaterCoordinator], SwitchEntity):
     """Vevor Heater Altitude Unit switch.
 
@@ -354,7 +347,6 @@ class VevorAltitudeUnitSwitch(CoordinatorEntity[VevorHeaterCoordinator], SwitchE
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
-
 
 class VevorHighAltitudeSwitch(CoordinatorEntity[VevorHeaterCoordinator], SwitchEntity):
     """Vevor Heater High Altitude Mode switch (ABBA/HeaterCC only).
@@ -406,7 +398,6 @@ class VevorHighAltitudeSwitch(CoordinatorEntity[VevorHeaterCoordinator], SwitchE
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
-
 
 class VevorTimerSwitch(CoordinatorEntity[VevorHeaterCoordinator], SwitchEntity):
     """Vevor Heater Timer Switch (AA55/AA66 encrypted only, issue #48).
