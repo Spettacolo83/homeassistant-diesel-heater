@@ -80,9 +80,9 @@ jobs:
         run: pip install "ruff>=0.4.0"
 
       - name: Run ruff check
-        run: ruff check custom_components/ diesel_heater_ble/src/ tests/
-        continue-on-error: true
+        run: ruff check custom_components/ diesel_heater_ble/src/ tests
+        
 
       - name: Run ruff format check
         run: ruff format --check custom_components/ diesel_heater_ble/src/ tests/
-        
+                continue-on-error: true 
