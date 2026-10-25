@@ -2508,7 +2508,10 @@ class TestExternalTempSensor:
 
         # Mock async_track_state_change_event
         mock_unsub = MagicMock()
-        with patch("custom_components.diesel_heater.coordinator.async_track_state_change_event", return_value=mock_unsub) as mock_track:
+        with patch(
+            "custom_components.diesel_heater.coordinator.async_track_state_change_event",
+            return_value=mock_unsub,
+        ) as mock_track:
             await coordinator._setup_external_temp_listener()
 
             mock_track.assert_called_once()
@@ -2943,7 +2946,7 @@ class TestAsyncUpdateData:
         coordinator._update_runtime_tracking = MagicMock()
         coordinator.async_save_data = AsyncMock()
 
-        result = await coordinator._async_update_data()
+        await coordinator._async_update_data()
 
         # Should have tried 3 times
         assert coordinator._send_command.call_count == 3
@@ -3130,9 +3133,14 @@ class TestStatisticsImportDetailed:
         coordinator = create_mock_coordinator()
         mock_recorder = MagicMock()
 
-        with patch("custom_components.diesel_heater.coordinator.get_instance", return_value=mock_recorder):
-            with patch("custom_components.diesel_heater.coordinator.async_add_external_statistics", side_effect=Exception("Stats error")):
-                await coordinator._import_statistics("2024-01-15", 2.5)
+        with (
+            patch("custom_components.diesel_heater.coordinator.get_instance", return_value=mock_recorder),
+            patch(
+                "custom_components.diesel_heater.coordinator.async_add_external_statistics",
+                side_effect=Exception("Stats error"),
+            ),
+        ):
+            await coordinator._import_statistics("2024-01-15", 2.5)
 
         coordinator._logger.warning.assert_called()
 
@@ -3177,9 +3185,14 @@ class TestStatisticsImportDetailed:
         coordinator = create_mock_coordinator()
         mock_recorder = MagicMock()
 
-        with patch("custom_components.diesel_heater.coordinator.get_instance", return_value=mock_recorder):
-            with patch("custom_components.diesel_heater.coordinator.async_add_external_statistics", side_effect=Exception("Stats error")):
-                await coordinator._import_runtime_statistics("2024-01-15", 4.5)
+        with (
+            patch("custom_components.diesel_heater.coordinator.get_instance", return_value=mock_recorder),
+            patch(
+                "custom_components.diesel_heater.coordinator.async_add_external_statistics",
+                side_effect=Exception("Stats error"),
+            ),
+        ):
+            await coordinator._import_runtime_statistics("2024-01-15", 4.5)
 
         coordinator._logger.warning.assert_called()
 
@@ -3842,7 +3855,7 @@ class TestEnsureConnected:
             mock_establish.side_effect = Exception("Test error")
             coordinator._cleanup_connection = AsyncMock()
 
-            with pytest.raises(Exception):
+            with pytest.raises(Exception, match="Test error"):
                 await coordinator._ensure_connected()
 
             # Cleanup should be called at least once
@@ -4135,7 +4148,7 @@ class TestEnsureConnected:
 # Tests for _notification_callback and _parse_response (lines 1048-1165)
 # ---------------------------------------------------------------------------
 
-class TestNotificationCallback:
+class TestNotificationCallback:  # noqa: F811  # duplicate name shadows the class at line 825; un-shadowing exposes 2 pre-existing FEAA failures - follow-up, not this CI fix
     """Tests for notification callback and response parsing."""
 
     def test_notification_callback_logs_and_parses(self):
@@ -4539,7 +4552,7 @@ class TestPostStatusRequest:
 
         coordinator._write_gatt.side_effect = set_notification_after_write
 
-        result = await coordinator._send_command(4, 5, timeout=0.2)  # Not command 1
+        await coordinator._send_command(4, 5, timeout=0.2)  # Not command 1
 
         # Should have called build_command twice (original + status)
         assert mock_protocol.build_command.call_count == 2
@@ -4567,7 +4580,7 @@ class TestPostStatusRequest:
 
         coordinator._write_gatt.side_effect = set_notification_after_write
 
-        result = await coordinator._send_command(1, 0, timeout=0.2)  # Command 1 = status request
+        await coordinator._send_command(1, 0, timeout=0.2)  # Command 1 = status request
 
         # Should only call build_command once (no post-status for status command)
         assert mock_protocol.build_command.call_count == 1

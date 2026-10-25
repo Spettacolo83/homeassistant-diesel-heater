@@ -123,7 +123,6 @@ class TestMigrateEntityUniqueIds:
         registry = MagicMock()
         # Simulates corrupted unique_id with multiple _est_ prefixes
         corrupted_uid = "DC:32:62:40:6A:00_est_est_daily_fuel_consumed"
-        expected_uid = "DC:32:62:40:6A:00_est_daily_fuel_consumed"
         entity = self._make_entity(corrupted_uid, "sensor.test_corrupted")
         registry.entities = {entity.entity_id: entity}
 
@@ -385,9 +384,6 @@ from unittest.mock import AsyncMock
 from custom_components.diesel_heater import (
     async_setup_entry,
     async_unload_entry,
-    PLATFORMS,
-    DOMAIN,
-    SERVICE_SEND_COMMAND,
 )
 
 # CONF_ADDRESS is from homeassistant.const (stubbed as MagicMock)
@@ -456,7 +452,6 @@ class TestAsyncSetupEntry:
     @pytest.mark.asyncio
     async def test_setup_entry_timeout_continues(self):
         """Test setup continues even after connection timeout."""
-        import asyncio
 
         hass = MagicMock()
         hass.config_entries.async_forward_entry_setups = AsyncMock()
@@ -469,7 +464,7 @@ class TestAsyncSetupEntry:
         mock_coordinator = MagicMock()
         mock_coordinator.async_load_data = AsyncMock()
         mock_coordinator.async_config_entry_first_refresh = AsyncMock(
-            side_effect=asyncio.TimeoutError()
+            side_effect=TimeoutError()
         )
 
         with patch(

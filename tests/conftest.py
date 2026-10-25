@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import sys
 import types
-from datetime import timezone
+from datetime import UTC
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -196,9 +196,9 @@ class _StubConfigEntry:
 # Force-create the modules via our finder, then override specific attributes
 # with real classes.  This must happen BEFORE any test imports config_flow.py.
 
-import homeassistant.config_entries  # noqa: E402
-import homeassistant.data_entry_flow  # noqa: E402
-import homeassistant.const  # noqa: E402
+import homeassistant.config_entries  # noqa: E402,F401  # side effect: creates stub module
+import homeassistant.data_entry_flow  # noqa: E402,F401  # side effect: creates stub module
+import homeassistant.const  # noqa: E402,F401  # side effect: creates stub module
 
 sys.modules["homeassistant.config_entries"].ConfigFlow = _StubConfigFlow
 sys.modules["homeassistant.config_entries"].OptionsFlow = _StubOptionsFlow
@@ -242,7 +242,8 @@ class _StubUpdateFailed(Exception):
 
 
 # Inject coordinator stubs
-import homeassistant.helpers.update_coordinator  # noqa: E402
+
+import homeassistant.helpers.update_coordinator  # noqa: E402,F401  # side effect: creates stub module
 
 sys.modules["homeassistant.helpers.update_coordinator"].DataUpdateCoordinator = _StubDataUpdateCoordinator
 sys.modules["homeassistant.helpers.update_coordinator"].UpdateFailed = _StubUpdateFailed
@@ -366,18 +367,19 @@ class _StubRestoreEntity:
 
 
 # Inject entity stubs - import modules first to create them via our finder
-import homeassistant.helpers.entity  # noqa: E402
-import homeassistant.components.sensor  # noqa: E402
-import homeassistant.components.binary_sensor  # noqa: E402
-import homeassistant.components.climate  # noqa: E402
-import homeassistant.components.fan  # noqa: E402
-import homeassistant.components.switch  # noqa: E402
-import homeassistant.components.select  # noqa: E402
-import homeassistant.components.number  # noqa: E402
-import homeassistant.components.button  # noqa: E402
-import homeassistant.helpers.restore_state  # noqa: E402
 
 sys.modules["homeassistant.helpers.update_coordinator"].CoordinatorEntity = _StubCoordinatorEntity
+import homeassistant.helpers.entity  # noqa: E402,F401  # side effect: creates stub module
+import homeassistant.components.sensor  # noqa: E402,F401  # side effect: creates stub module
+import homeassistant.components.binary_sensor  # noqa: E402,F401  # side effect: creates stub module
+import homeassistant.components.climate  # noqa: E402,F401  # side effect: creates stub module
+import homeassistant.components.fan  # noqa: E402,F401  # side effect: creates stub module
+import homeassistant.components.switch  # noqa: E402,F401  # side effect: creates stub module
+import homeassistant.components.select  # noqa: E402,F401  # side effect: creates stub module
+import homeassistant.components.number  # noqa: E402,F401  # side effect: creates stub module
+import homeassistant.components.button  # noqa: E402,F401  # side effect: creates stub module
+import homeassistant.helpers.restore_state  # noqa: E402,F401  # side effect: creates stub module
+
 sys.modules["homeassistant.helpers.entity"].Entity = _StubEntity
 
 sys.modules["homeassistant.components.sensor"].SensorEntity = _StubSensorEntity
@@ -433,7 +435,7 @@ sys.modules["homeassistant.const"].CONF_ADDRESS = "address"
 
 import homeassistant.util.dt as _ha_dt  # noqa: E402
 
-_ha_dt.UTC = timezone.utc
+_ha_dt.UTC = UTC
 
 
 # ---------------------------------------------------------------------------

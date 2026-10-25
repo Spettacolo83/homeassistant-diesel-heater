@@ -1,8 +1,6 @@
 """Sensor platform for Vevor Diesel Heater."""
 from __future__ import annotations
 
-PARALLEL_UPDATES = 1
-
 from datetime import datetime
 
 from homeassistant.components.sensor import (
@@ -13,7 +11,6 @@ from homeassistant.components.sensor import (
 from homeassistant.const import (
     CONCENTRATION_PARTS_PER_MILLION,
     EntityCategory,
-    PERCENTAGE,
     UnitOfElectricPotential,
     UnitOfTemperature,
     UnitOfTime,
@@ -25,15 +22,16 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import VevorHeaterConfigEntry
 from .const import (
+    CONF_NEO_CONTROLLER_TYPE,
     DOMAIN,
-    WARM_DRIVE_ERROR_NAMES,
     ERROR_NAMES,
     RUNNING_MODE_NAMES,
     RUNNING_STEP_NAMES,
-    CONF_NEO_CONTROLLER_TYPE,
+    WARM_DRIVE_ERROR_NAMES,
 )
 from .coordinator import VevorHeaterCoordinator
 
+PARALLEL_UPDATES = 1
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -153,7 +151,6 @@ async def async_setup_entry(
         entities.append(VevorAuxTemperatureSensor(coordinator, "outlet_temperature", "Outlet Temperature"))
     async_add_entities(entities)
 
-
 class VevorSensorBase(CoordinatorEntity[VevorHeaterCoordinator], SensorEntity):
     """Base class for Vevor Heater sensors."""
 
@@ -196,7 +193,6 @@ class VevorSensorBase(CoordinatorEntity[VevorHeaterCoordinator], SensorEntity):
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
 
-
 class VevorCaseTemperatureSensor(VevorSensorBase):
     """Case temperature sensor.
 
@@ -222,7 +218,6 @@ class VevorCaseTemperatureSensor(VevorSensorBase):
         """Return the state."""
         return self.coordinator.data.get("case_temperature")
 
-
 class VevorCabTemperatureSensor(VevorSensorBase):
     """Cab/interior temperature sensor.
 
@@ -247,7 +242,6 @@ class VevorCabTemperatureSensor(VevorSensorBase):
         """Return the state."""
         return self.coordinator.data.get("cab_temperature")
 
-
 class VevorAuxTemperatureSensor(VevorSensorBase):
     """Temperature sensor exposed only by protocols that report it."""
 
@@ -267,7 +261,6 @@ class VevorAuxTemperatureSensor(VevorSensorBase):
         """Return the state."""
         return self.coordinator.data.get(self._key)
 
-
 class VevorCronusDurationSensor(VevorSensorBase):
     """ThermoConnect configured duration, reported in minutes."""
 
@@ -284,7 +277,6 @@ class VevorCronusDurationSensor(VevorSensorBase):
         """Return the record value in minutes."""
         return self.coordinator.data.get(self._key)
 
-
 class VevorCronusModeSensor(VevorSensorBase):
     """Read-only mode reported by a ThermoConnect water controller."""
 
@@ -298,7 +290,6 @@ class VevorCronusModeSensor(VevorSensorBase):
     def native_value(self) -> str | None:
         """Return the current mode without exposing an unsupported control."""
         return self.coordinator.data.get(self._key)
-
 
 class VevorCronusAirPressureSensor(VevorSensorBase):
     """Raw air-pressure telemetry reported by ThermoConnect."""
@@ -314,7 +305,6 @@ class VevorCronusAirPressureSensor(VevorSensorBase):
     def native_value(self) -> int | None:
         """Return the raw value used by ThermoConnect."""
         return self.coordinator.data.get("cronus_air_pressure")
-
 
 class VevorRawInteriorTemperatureSensor(VevorSensorBase):
     """Raw interior temperature sensor (before any offset).
@@ -344,7 +334,6 @@ class VevorRawInteriorTemperatureSensor(VevorSensorBase):
     def native_value(self) -> float | None:
         """Return the state."""
         return self.coordinator.data.get("cab_temperature_raw")
-
 
 class VevorHeaterOffsetSensor(VevorSensorBase):
     """Heater temperature offset sensor.
@@ -376,7 +365,6 @@ class VevorHeaterOffsetSensor(VevorSensorBase):
         # Hcalory doesn't support temperature offset commands (@Xev, issue #34)
         return self.coordinator.protocol_mode != 7
 
-
 class VevorSupplyVoltageSensor(VevorSensorBase):
     """Supply voltage sensor."""
 
@@ -393,7 +381,6 @@ class VevorSupplyVoltageSensor(VevorSensorBase):
     def native_value(self) -> float | None:
         """Return the state."""
         return self.coordinator.data.get("supply_voltage")
-
 
 class VevorRunningStepSensor(VevorSensorBase):
     """Running step sensor."""
@@ -424,7 +411,6 @@ class VevorRunningStepSensor(VevorSensorBase):
         step = self.coordinator.data.get("running_step")
         return RUNNING_STEP_NAMES.get(step, f"Unknown ({step})")
 
-
 class VevorRunningModeSensor(VevorSensorBase):
     """Running mode sensor."""
 
@@ -440,7 +426,6 @@ class VevorRunningModeSensor(VevorSensorBase):
         mode = self.coordinator.data.get("running_mode")
         return RUNNING_MODE_NAMES.get(mode, f"Unknown ({mode})")
 
-
 class VevorSetLevelSensor(VevorSensorBase):
     """Set level sensor."""
 
@@ -455,7 +440,6 @@ class VevorSetLevelSensor(VevorSensorBase):
     def native_value(self) -> int | None:
         """Return the state."""
         return self.coordinator.data.get("set_level")
-
 
 class VevorAltitudeSensor(VevorSensorBase):
     """Altitude sensor."""
@@ -474,7 +458,6 @@ class VevorAltitudeSensor(VevorSensorBase):
         """Return the state."""
         return self.coordinator.data.get("altitude")
 
-
 class VevorMotorSpeedSensor(VevorSensorBase):
     """Motor speed reported by the DZ06 Neo status frame."""
 
@@ -490,7 +473,6 @@ class VevorMotorSpeedSensor(VevorSensorBase):
     def native_value(self) -> int | None:
         """Return the motor speed in RPM."""
         return self.coordinator.data.get("motor_speed")
-
 
 class VevorErrorCodeSensor(VevorSensorBase):
     """Error code sensor."""
@@ -510,7 +492,6 @@ class VevorErrorCodeSensor(VevorSensorBase):
             self.coordinator.is_warm_drive_controller
         ) else ERROR_NAMES
         return names.get(error, f"Unknown error ({error})")
-
 
 # Fuel consumption sensors
 
@@ -532,7 +513,6 @@ class VevorHourlyFuelConsumptionSensor(VevorSensorBase):
         """Return the state."""
         return self.coordinator.data.get("hourly_fuel_consumption")
 
-
 class VevorDailyFuelConsumedSensor(VevorSensorBase):
     """Estimated daily fuel consumed sensor."""
 
@@ -550,7 +530,6 @@ class VevorDailyFuelConsumedSensor(VevorSensorBase):
         """Return the state."""
         return self.coordinator.data.get("daily_fuel_consumed")
 
-
 class VevorTotalFuelConsumedSensor(VevorSensorBase):
     """Estimated total fuel consumed sensor."""
 
@@ -567,7 +546,6 @@ class VevorTotalFuelConsumedSensor(VevorSensorBase):
     def native_value(self) -> float | None:
         """Return the state."""
         return self.coordinator.data.get("total_fuel_consumed")
-
 
 class VevorDailyFuelHistorySensor(VevorSensorBase):
     """Estimated daily fuel consumption history sensor."""
@@ -611,7 +589,6 @@ class VevorDailyFuelHistorySensor(VevorSensorBase):
             "last_30_days": round(sum(sorted_history.values()), 2),
         }
 
-
 # Runtime tracking sensors
 
 class VevorDailyRuntimeSensor(VevorSensorBase):
@@ -631,7 +608,6 @@ class VevorDailyRuntimeSensor(VevorSensorBase):
         """Return the state."""
         return self.coordinator.data.get("daily_runtime_hours")
 
-
 class VevorTotalRuntimeSensor(VevorSensorBase):
     """Total runtime sensor."""
 
@@ -648,7 +624,6 @@ class VevorTotalRuntimeSensor(VevorSensorBase):
     def native_value(self) -> float | None:
         """Return the state."""
         return self.coordinator.data.get("total_runtime_hours")
-
 
 class VevorDailyRuntimeHistorySensor(VevorSensorBase):
     """Daily runtime history sensor."""
@@ -692,7 +667,6 @@ class VevorDailyRuntimeHistorySensor(VevorSensorBase):
             "last_30_days_hours": round(sum(sorted_history.values()), 2),
         }
 
-
 # Fuel level tracking
 
 class VevorFuelRemainingSensor(VevorSensorBase):
@@ -734,7 +708,6 @@ class VevorFuelRemainingSensor(VevorSensorBase):
 
         return attrs
 
-
 class VevorLastRefueledSensor(VevorSensorBase):
     """Last refueled timestamp sensor.
 
@@ -765,7 +738,6 @@ class VevorLastRefueledSensor(VevorSensorBase):
         """Return if entity is available."""
         return self.coordinator.data.get("last_refueled") is not None
 
-
 class VevorFuelConsumedSinceResetSensor(VevorSensorBase):
     """Estimated fuel consumed since last refuel reset.
 
@@ -794,7 +766,6 @@ class VevorFuelConsumedSinceResetSensor(VevorSensorBase):
         """Return if entity is available."""
         return self.coordinator.data.get("fuel_consumed_since_reset") is not None
 
-
 class VevorCOSensor(VevorSensorBase):
     """Carbon monoxide (CO) sensor.
 
@@ -822,7 +793,6 @@ class VevorCOSensor(VevorSensorBase):
         """Return if entity is available (only for CBFF devices with CO sensor)."""
         return self.coordinator.data.get("co_ppm") is not None
 
-
 # CBFF extended info sensors
 
 class VevorHardwareVersionSensor(VevorSensorBase):
@@ -845,7 +815,6 @@ class VevorHardwareVersionSensor(VevorSensorBase):
         """Return if entity is available."""
         return self.coordinator.data.get("hardware_version") is not None
 
-
 class VevorSoftwareVersionSensor(VevorSensorBase):
     """Software version sensor (CBFF protocol only)."""
 
@@ -865,7 +834,6 @@ class VevorSoftwareVersionSensor(VevorSensorBase):
     def available(self) -> bool:
         """Return if entity is available."""
         return self.coordinator.data.get("software_version") is not None
-
 
 class VevorRemainingRunTimeSensor(VevorSensorBase):
     """Remaining run time sensor (CBFF protocol only).
@@ -892,7 +860,6 @@ class VevorRemainingRunTimeSensor(VevorSensorBase):
         """Return if entity is available."""
         return self.coordinator.data.get("remain_run_time") is not None
 
-
 class VevorStartupTempDiffSensor(VevorSensorBase):
     """Startup temperature difference sensor (CBFF protocol only).
 
@@ -917,7 +884,6 @@ class VevorStartupTempDiffSensor(VevorSensorBase):
     def available(self) -> bool:
         """Return if entity is available."""
         return self.coordinator.data.get("startup_temp_diff") is not None
-
 
 class VevorShutdownTempDiffSensor(VevorSensorBase):
     """Shutdown temperature difference sensor (CBFF protocol only).
@@ -944,7 +910,6 @@ class VevorShutdownTempDiffSensor(VevorSensorBase):
         """Return if entity is available."""
         return self.coordinator.data.get("shutdown_temp_diff") is not None
 
-
 class VevorProtocolSensor(VevorSensorBase):
     """Detected BLE protocol sensor.
 
@@ -970,7 +935,6 @@ class VevorProtocolSensor(VevorSensorBase):
         # Always available once coordinator is set up
         return self.coordinator.last_update_success
 
-
 class VevorBurnoffRemainingSensor(VevorSensorBase):
     """Remaining time in the current max-power burn-off cycle."""
 
@@ -994,7 +958,6 @@ class VevorBurnoffRemainingSensor(VevorSensorBase):
         """Return if entity is available."""
         return self.coordinator.burnoff_active
 
-
 class VevorBurnoffCyclesSensor(VevorSensorBase):
     """Controller heat cycles since the last successful burn-off."""
 
@@ -1010,7 +973,6 @@ class VevorBurnoffCyclesSensor(VevorSensorBase):
     def native_value(self) -> int:
         """Return cycles since last successful burn-off."""
         return self.coordinator.burnoff_cycles_since
-
 
 class VevorBurnoffHoursSensor(VevorSensorBase):
     """RUNNING hours since the last successful burn-off."""

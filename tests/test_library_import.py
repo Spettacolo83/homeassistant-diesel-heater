@@ -35,7 +35,6 @@ from diesel_heater_ble.const import (
     RUNNING_STATE_OFF,
     RUNNING_STATE_ON,
     RUNNING_STEP_COOLDOWN,
-    RUNNING_STEP_IGNITION,
     RUNNING_STEP_RUNNING,
     RUNNING_STEP_STANDBY,
 )
@@ -97,7 +96,7 @@ class TestLibraryConstants:
         assert ABBA_STATUS_MAP[0x02] == RUNNING_STEP_COOLDOWN
 
     def test_cbff_on_states(self):
-        assert CBFF_RUN_STATE_ON == {2, 5, 6}
+        assert {2, 5, 6} == CBFF_RUN_STATE_ON
 
     def test_error_names(self):
         assert ERROR_NAMES[0] == "No fault"

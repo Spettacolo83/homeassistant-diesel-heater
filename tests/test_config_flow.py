@@ -780,7 +780,7 @@ class TestOptionsFlow:
         result = await flow.async_step_init()
 
         schema_keys = {
-            key.schema for key in result["data_schema"].schema.keys()
+            key.schema for key in result["data_schema"].schema
             if hasattr(key, "schema")
         }
         assert CONF_CRONUS_HEATER_MODEL in schema_keys
@@ -791,7 +791,7 @@ class TestOptionsFlow:
         result = await flow.async_step_init()
 
         schema_keys = {
-            k.schema for k in result["data_schema"].schema.keys()
+            k.schema for k in result["data_schema"].schema
             if hasattr(k, "schema")
         }
         assert CONF_PIN in schema_keys
@@ -802,7 +802,7 @@ class TestOptionsFlow:
         result = await flow.async_step_init()
 
         schema_keys = {
-            k.schema for k in result["data_schema"].schema.keys()
+            k.schema for k in result["data_schema"].schema
             if hasattr(k, "schema")
         }
         assert CONF_PRESET_AWAY_TEMP in schema_keys
@@ -814,7 +814,7 @@ class TestOptionsFlow:
         result = await flow.async_step_init()
 
         schema_keys = {
-            k.schema for k in result["data_schema"].schema.keys()
+            k.schema for k in result["data_schema"].schema
             if hasattr(k, "schema")
         }
         assert CONF_EXTERNAL_TEMP_SENSOR in schema_keys
@@ -825,7 +825,7 @@ class TestOptionsFlow:
         result = await flow.async_step_init()
 
         schema_keys = {
-            k.schema for k in result["data_schema"].schema.keys()
+            k.schema for k in result["data_schema"].schema
             if hasattr(k, "schema")
         }
         assert CONF_AUTO_OFFSET_MAX not in schema_keys
@@ -840,7 +840,7 @@ class TestOptionsFlow:
         result = await flow.async_step_init()
 
         schema_keys = {
-            k.schema for k in result["data_schema"].schema.keys()
+            k.schema for k in result["data_schema"].schema
             if hasattr(k, "schema")
         }
         assert CONF_AUTO_OFFSET_MAX in schema_keys

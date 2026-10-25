@@ -1,8 +1,6 @@
 """Button platform for Vevor Diesel Heater."""
 from __future__ import annotations
 
-PARALLEL_UPDATES = 1
-
 from homeassistant.components.button import ButtonEntity
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
@@ -13,6 +11,7 @@ from . import VevorHeaterConfigEntry
 from .const import DOMAIN
 from .coordinator import VevorHeaterCoordinator
 
+PARALLEL_UPDATES = 1
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -35,7 +34,6 @@ async def async_setup_entry(
         entities.insert(0, VevorTimeSyncButton(coordinator))
 
     async_add_entities(entities)
-
 
 class VevorTimeSyncButton(CoordinatorEntity[VevorHeaterCoordinator], ButtonEntity):
     """Button to sync heater time with Home Assistant.
@@ -71,7 +69,6 @@ class VevorTimeSyncButton(CoordinatorEntity[VevorHeaterCoordinator], ButtonEntit
     async def async_press(self) -> None:
         """Handle the button press."""
         await self.coordinator.async_sync_time()
-
 
 class VevorResetFuelLevelButton(CoordinatorEntity[VevorHeaterCoordinator], ButtonEntity):
     """Button to reset estimated fuel remaining after refueling.
@@ -109,7 +106,6 @@ class VevorResetFuelLevelButton(CoordinatorEntity[VevorHeaterCoordinator], Butto
         """Handle the button press."""
         await self.coordinator.async_reset_fuel_level()
 
-
 class VevorPowerOffNowButton(CoordinatorEntity[VevorHeaterCoordinator], ButtonEntity):
     """Skip burn-off and power the heater off immediately."""
 
@@ -136,7 +132,6 @@ class VevorPowerOffNowButton(CoordinatorEntity[VevorHeaterCoordinator], ButtonEn
     async def async_press(self) -> None:
         """Handle the button press."""
         await self.coordinator.async_power_off_now()
-
 
 class VevorRunBurnoffButton(CoordinatorEntity[VevorHeaterCoordinator], ButtonEntity):
     """Run max-power burn-off without shutting down afterwards."""

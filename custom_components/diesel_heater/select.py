@@ -1,8 +1,6 @@
 """Select platform for Vevor Diesel Heater."""
 from __future__ import annotations
 
-PARALLEL_UPDATES = 1
-
 import logging
 
 from homeassistant.components.select import SelectEntity
@@ -18,9 +16,9 @@ from .const import (
     LANGUAGE_OPTIONS,
     PUMP_TYPE_OPTIONS,
     RUNNING_MODE_LEVEL,
+    RUNNING_MODE_NAMES,
     RUNNING_MODE_TEMPERATURE,
     RUNNING_MODE_VENTILATION,
-    RUNNING_MODE_NAMES,
     RUNNING_STEP_STANDBY,
     RUNNING_STEP_VENTILATION,
     TANK_VOLUME_OPTIONS,
@@ -29,6 +27,7 @@ from .coordinator import VevorHeaterCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
+PARALLEL_UPDATES = 1
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -72,7 +71,6 @@ async def async_setup_entry(
         entities.append(VevorHighAltitudeModeSelect(coordinator))
 
     async_add_entities(entities)
-
 
 class CronusModeSelect(SelectEntity):
     """ThermoConnect controller mode selector."""
@@ -212,7 +210,6 @@ class VevorHeaterModeSelect(SelectEntity):
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
 
-
 class VevorHeaterLanguageSelect(SelectEntity):
     """Select entity for Vevor Heater voice notification language."""
 
@@ -270,7 +267,6 @@ class VevorHeaterLanguageSelect(SelectEntity):
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
-
 
 class VevorHeaterPumpTypeSelect(SelectEntity):
     """Select entity for Vevor Heater oil pump type."""
@@ -334,7 +330,6 @@ class VevorHeaterPumpTypeSelect(SelectEntity):
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
 
-
 class VevorHeaterTankVolumeSelect(SelectEntity):
     """Select entity for Vevor Heater tank volume."""
 
@@ -397,7 +392,6 @@ class VevorHeaterTankVolumeSelect(SelectEntity):
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
 
-
 class VevorBacklightSelect(SelectEntity):
     """Select entity for display backlight brightness (cmd 21).
 
@@ -456,7 +450,6 @@ class VevorBacklightSelect(SelectEntity):
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
-
 
 class VevorHighAltitudeModeSelect(SelectEntity):
     """High Altitude Mode select entity (Hcalory MVP2 only).

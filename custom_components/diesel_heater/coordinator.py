@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import random
 import time
 from datetime import datetime, timedelta
 from typing import Any
@@ -11,48 +10,57 @@ from typing import Any
 from bleak import BleakClient
 from bleak.exc import BleakError
 from bleak_retry_connector import establish_connection
-
 from homeassistant.components import bluetooth
 from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.statistics import (
-    async_add_external_statistics,
     StatisticData,
-    StatisticMetaData,
     StatisticMeanType,
+    StatisticMetaData,
+    async_add_external_statistics,
 )
 from homeassistant.const import UnitOfTime, UnitOfVolume
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from homeassistant.helpers.event import async_track_state_change_event
+from diesel_heater_ble import (
+    HeaterProtocol,
+    ProtocolAA55,
+    ProtocolAA55Encrypted,
+    ProtocolAA66,
+    ProtocolAA66Encrypted,
+    ProtocolABBA,
+    ProtocolCBFF,
+    ProtocolCronus,
+    ProtocolHcalory,
+    ProtocolHeatGenie,
+    _decrypt_data,
+    _u8_to_number,
+)
 
 from .burnoff import BurnoffController, BurnoffPhase
-from .hcalory import HcaloryVariant, hcalory_variant_from_discovery, uses_mvp2_commands
 from .const import (
-    ABBA_NOTIFY_UUID,
     ABBA_SERVICE_UUID,
-    ABBA_WRITE_UUID,
     AUTO_OFFSET_THRESHOLD,
     AUTO_OFFSET_THROTTLE_SECONDS,
     CHARACTERISTIC_UUID,
     CHARACTERISTIC_UUID_ALT,
-    CONF_AUTO_OFFSET_ENABLED,
     CONF_AUTO_OFFSET_MAX,
     CONF_BURNOFF_AFTER_CYCLES,
     CONF_BURNOFF_AFTER_HOURS,
     CONF_BURNOFF_DURATION,
     CONF_BURNOFF_ENABLED,
+    CONF_CRONUS_HEATER_MODEL,
     CONF_EXTERNAL_TEMP_SENSOR,
     CONF_FORCE_TEMP_UNIT,
     CONF_HCALORY_VARIANT,
-    CONF_CRONUS_HEATER_MODEL,
-    CRONUS_FUEL_PROFILES,
-    CONF_NEO_PASSWORD,
     CONF_NEO_CONTROLLER_TYPE,
+    CONF_NEO_PASSWORD,
     CONF_PIN,
     CONF_TEMPERATURE_OFFSET,
+    CRONUS_FUEL_PROFILES,
     CRONUS_NOTIFY_UUID,
     CRONUS_WRITE_UUID,
     DEFAULT_AUTO_OFFSET_MAX,
@@ -64,32 +72,32 @@ from .const import (
     DEFAULT_NEO_PASSWORD,
     DEFAULT_PIN,
     DEFAULT_TEMPERATURE_OFFSET,
+    DOMAIN,
+    DZ06_NEO_NOTIFY_UUID,
+    DZ06_NEO_WRITE_UUID,
     FORCE_TEMP_UNIT_CELSIUS,
     FORCE_TEMP_UNIT_FAHRENHEIT,
-    DOMAIN,
     FUEL_CONSUMPTION_TABLE,
-    HEATGENIE_SERVICE_UUID,
     HCALORY_MVP1_NOTIFY_UUID,
     HCALORY_MVP1_SERVICE_UUID,
     HCALORY_MVP1_WRITE_UUID,
     HCALORY_MVP2_NOTIFY_UUID,
     HCALORY_MVP2_SERVICE_UUID,
     HCALORY_MVP2_WRITE_UUID,
-    DZ06_NEO_NOTIFY_UUID,
-    DZ06_NEO_WRITE_UUID,
+    HEATGENIE_SERVICE_UUID,
     MAX_BURNOFF_AFTER_CYCLES,
     MAX_BURNOFF_AFTER_HOURS,
     MAX_BURNOFF_DURATION,
     MAX_HEATER_OFFSET,
-    MAX_LEVEL,
     MAX_HISTORY_DAYS,
+    MAX_LEVEL,
     MIN_BURNOFF_AFTER_CYCLES,
     MIN_BURNOFF_AFTER_HOURS,
     MIN_BURNOFF_DURATION,
     MIN_HEATER_OFFSET,
+    PROTOCOL_HEADER_AA77,
     PROTOCOL_HEADER_ABBA,
     PROTOCOL_HEADER_CBFF,
-    PROTOCOL_HEADER_AA77,
     RUNNING_MODE_LEVEL,
     RUNNING_MODE_TEMPERATURE,
     RUNNING_MODE_VENTILATION,
@@ -106,15 +114,15 @@ from .const import (
     STORAGE_KEY_AUTO_OFFSET_ENABLED,
     STORAGE_KEY_BURNOFF,
     STORAGE_KEY_BURNOFF_ACCUMULATOR,
-    STORAGE_KEY_FUEL_SINCE_RESET,
-    STORAGE_KEY_LAST_REFUELED,
-    STORAGE_KEY_TANK_CAPACITY,
     STORAGE_KEY_DAILY_DATE,
     STORAGE_KEY_DAILY_FUEL,
     STORAGE_KEY_DAILY_HISTORY,
     STORAGE_KEY_DAILY_RUNTIME,
     STORAGE_KEY_DAILY_RUNTIME_DATE,
     STORAGE_KEY_DAILY_RUNTIME_HISTORY,
+    STORAGE_KEY_FUEL_SINCE_RESET,
+    STORAGE_KEY_LAST_REFUELED,
+    STORAGE_KEY_TANK_CAPACITY,
     STORAGE_KEY_TOTAL_FUEL,
     STORAGE_KEY_TOTAL_RUNTIME,
     TEMP_UNIT_CELSIUS,
@@ -122,20 +130,7 @@ from .const import (
     UPDATE_INTERVAL,
     UPDATE_INTERVAL_HCALORY,
 )
-from diesel_heater_ble import (
-    HeaterProtocol,
-    ProtocolAA55,
-    ProtocolAA55Encrypted,
-    ProtocolAA66,
-    ProtocolAA66Encrypted,
-    ProtocolABBA,
-    ProtocolCronus,
-    ProtocolHeatGenie,
-    ProtocolCBFF,
-    ProtocolHcalory,
-    _decrypt_data,
-    _u8_to_number,
-)
+from .hcalory import HcaloryVariant, hcalory_variant_from_discovery, uses_mvp2_commands
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -379,15 +374,18 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         base_name = PROTOCOL_MODE_NAMES.get(self._protocol_mode, "Unknown")
 
         # For Hcalory, add MVP1/MVP2 variant
-        if self._protocol_mode == 7 and self._protocol is not None:
-            if hasattr(self._protocol, '_is_mvp2'):
-                variant = "MVP2" if self._protocol._is_mvp2 else "MVP1"
-                return f"Hcalory {variant}"
+        if self._protocol_mode == 7 and self._protocol is not None and hasattr(self._protocol, '_is_mvp2'):
+            variant = "MVP2" if self._protocol._is_mvp2 else "MVP1"
+            return f"Hcalory {variant}"
 
         # For CBFF, indicate V2.1 encrypted mode if active
-        if self._protocol_mode == 6 and self._protocol is not None:
-            if hasattr(self._protocol, 'v21_mode') and self._protocol.v21_mode:
-                return "CBFF V2.1 (Encrypted)"
+        if (
+            self._protocol_mode == 6
+            and self._protocol is not None
+            and hasattr(self._protocol, 'v21_mode')
+            and self._protocol.v21_mode
+        ):
+            return "CBFF V2.1 (Encrypted)"
 
         return base_name
 
@@ -893,7 +891,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     async def _import_statistics(self, date_str: str, liters: float) -> None:
         """Import daily fuel consumption into Home Assistant statistics for graphing."""
         # Skip if recorder is not available
-        if not (recorder := get_instance(self.hass)):
+        if not get_instance(self.hass):
             self._logger.debug("Recorder not available, skipping statistics import")
             return
 
@@ -960,7 +958,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     async def _import_runtime_statistics(self, date_str: str, hours: float) -> None:
         """Import daily runtime into Home Assistant statistics for graphing."""
         # Skip if recorder is not available
-        if not (recorder := get_instance(self.hass)):
+        if not get_instance(self.hass):
             self._logger.debug("Recorder not available, skipping runtime statistics import")
             return
 
@@ -1105,15 +1103,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         # Issue #47: Hcalory doesn't report power level in Temperature mode
         # Estimate it based on temperature difference
-        if power_level is None or power_level == 1:
-            if self._protocol_mode == 7:  # Hcalory
-                running_mode = self.data.get("running_mode")
-                if running_mode == 2:  # Temperature mode
-                    power_level = self._estimate_hcalory_power_level()
-                    self._logger.debug(
-                        "Hcalory Temperature mode: estimated power level %d for fuel calculation",
-                        power_level
-                    )
+        if (power_level is None or power_level == 1) and self._protocol_mode == 7:  # Hcalory
+            running_mode = self.data.get("running_mode")
+            if running_mode == 2:  # Temperature mode
+                power_level = self._estimate_hcalory_power_level()
+                self._logger.debug(
+                    "Hcalory Temperature mode: estimated power level %d for fuel calculation",
+                    power_level
+                )
 
         if power_level is None:
             power_level = 1  # Fallback to minimum
@@ -1142,11 +1139,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             power_level = self.data.get("set_level")
 
             # Issue #47: Estimate power level for Hcalory in Temperature mode
-            if power_level is None or power_level == 1:
-                if self._protocol_mode == 7:  # Hcalory
-                    running_mode = self.data.get("running_mode")
-                    if running_mode == 2:  # Temperature mode
-                        power_level = self._estimate_hcalory_power_level()
+            if (power_level is None or power_level == 1) and self._protocol_mode == 7:  # Hcalory
+                running_mode = self.data.get("running_mode")
+                if running_mode == 2:  # Temperature mode
+                    power_level = self._estimate_hcalory_power_level()
 
             if power_level is None:
                 power_level = 1  # Fallback
@@ -1384,9 +1380,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """
         if self._consecutive_failures < self._internal_recovery_threshold:
             return False
-        if time.time() - self._last_internal_recovery_at < self._internal_recovery_cooldown_s:
-            return False
-        return True
+        return not time.time() - self._last_internal_recovery_at < self._internal_recovery_cooldown_s
 
     def _resolve_local_hci_for_heater(
         self, adapters: dict
@@ -1514,16 +1508,16 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 # BCM43438 after the first poll wedges the GATT subscription.
                 await asyncio.wait_for(self._ensure_connected(), timeout=20.0)
                 connected_this_update = True
-            except asyncio.TimeoutError as err:
+            except TimeoutError as err:
                 self._logger.debug(
                     "bleak connect() hung — treating as connection failure "
                     "so the recovery threshold can advance"
                 )
                 self._handle_connection_failure(err)
-                raise UpdateFailed("Connect timeout — kernel BT likely wedged")
+                raise UpdateFailed("Connect timeout — kernel BT likely wedged") from err
             except Exception as err:
                 self._handle_connection_failure(err)
-                raise UpdateFailed(f"Failed to connect: {err}")
+                raise UpdateFailed(f"Failed to connect: {err}") from err
 
         try:
             if getattr(self, "_is_cronus_device", False):
@@ -1550,7 +1544,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                             self._send_command(1, 0),
                             timeout=15.0,
                         )
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         self._logger.debug(
                             "Status request hard-timeout (attempt %d/%d) — bleak "
                             "write likely hung on wedged adapter",
@@ -1653,7 +1647,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._handle_connection_failure(err)
             if self._consecutive_failures <= self._max_stale_cycles:
                 return self.data
-            raise UpdateFailed(f"Error updating data: {err}")
+            raise UpdateFailed(f"Error updating data: {err}") from err
 
     async def _ensure_connected(self) -> None:
         """Ensure BLE connection is established with exponential backoff."""
@@ -1934,7 +1928,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                         if service.uuid.lower() == service_uuid.lower():
                             # Log all characteristics in this service for debugging
                             char_list = [f"{c.uuid} (props: {c.properties})" for c in service.characteristics]
-                            self._logger.info("📋 Vevor/Sunster service %s characteristics: %s", service_uuid[-4:], char_list)
+                            self._logger.info(
+                                "📋 Vevor/Sunster service %s characteristics: %s",
+                                service_uuid[-4:],
+                                char_list,
+                            )
 
                             for char in service.characteristics:
                                 if char.uuid.lower() == char_uuid.lower():
@@ -2004,7 +2002,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._connection_attempts = 0  # Reset on successful connection
             self._logger.info("Successfully connected to Vevor Heater")
 
-        except Exception as err:
+        except Exception:
             # Clean up on any connection failure
             await self._cleanup_connection()
             raise
@@ -2041,9 +2039,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                         "air" if data[2] == 1 else "water"
                     )
                 self._neo_config_received = True
-            if len(data) >= 21 and data[0] == 0x5D:
-                if data[17] in (1, 2):
-                    self._heater_uses_fahrenheit = data[17] == 2
+            if len(data) >= 21 and data[0] == 0x5D and data[17] in (1, 2):
+                self._heater_uses_fahrenheit = data[17] == 2
             if len(data) == 39 and data[:2] == bytearray((0x5A, 0x25)):
                 if not self.is_warm_drive_controller:
                     self._handle_legacy_dz06_neo_status(data)
@@ -2468,7 +2465,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self.data["cab_temperature"] = calibrated_temp
 
             self._logger.debug(
-                "Applied HA display offset: reported=%s°C, ha_offset=%s°C, display=%s°C, raw_sensor=%s°C (heater_offset=%s°C)",
+                "Applied HA display offset: reported=%s°C, ha_offset=%s°C, "
+                "display=%s°C, raw_sensor=%s°C (heater_offset=%s°C)",
                 reported_temp, manual_offset, calibrated_temp, raw_sensor_temp, heater_offset
             )
 
@@ -2564,7 +2562,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                             # The Hcalory app parses four PIN digits at 13-16 and
                             # the authentication result at byte 17.
                             auth_byte = self._notification_data[17]
-                            auth_status = "authenticated ✅" if auth_byte == 0x01 else "unauthenticated ❌" if auth_byte == 0x00 else f"unknown (0x{auth_byte:02X})"
+                            auth_status = (
+                                "authenticated ✅"
+                                if auth_byte == 0x01
+                                else "unauthenticated ❌"
+                                if auth_byte == 0x00
+                                else f"unknown (0x{auth_byte:02X})"
+                            )
 
                             self._logger.info(
                                 "✅ MVP2 password handshake ACK received after %.2fs - Status: %s",
@@ -2642,7 +2646,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             return
         try:
             await asyncio.wait_for(self._v21_handshake_event.wait(), timeout=5.0)
-        except asyncio.TimeoutError as err:
+        except TimeoutError as err:
             raise BleakError("Sunster V2.1 handshake timed out") from err
         if not self._v21_handshake_authenticated:
             raise BleakError("Sunster V2.1 handshake was rejected")
@@ -2687,7 +2691,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if self._is_heatgenie_device:
             return
         try:
-            if self._client and (self._characteristic or self._abba_write_char or self._hcalory_write_char or self._heatgenie_write_char):
+            if self._client and (
+                self._characteristic
+                or self._abba_write_char
+                or self._hcalory_write_char
+                or self._heatgenie_write_char
+            ):
                 packet = self._build_command_packet(1)
                 await self._write_gatt(packet)
                 await asyncio.sleep(0.5)
@@ -3025,7 +3034,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     self._notification_data = None
         return False
 
-    async def _send_command_unlocked(self, command: int, argument: int, timeout: float = 5.0, max_retries: int = 1) -> bool:
+    async def _send_command_unlocked(
+        self, command: int, argument: int, timeout: float = 5.0, max_retries: int = 1
+    ) -> bool:
         """Send command to heater with retry logic (@Xev optimizations, issue #34).
 
         Args:
