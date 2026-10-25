@@ -31,6 +31,7 @@ from homeassistant.helpers.event import async_track_state_change_event
 from .burnoff import BurnoffController, BurnoffPhase
 from .hcalory import HcaloryVariant, hcalory_variant_from_discovery, uses_mvp2_commands
 from .const import (
+    ABBA_MAX_LEVEL,
     ABBA_NOTIFY_UUID,
     ABBA_SERVICE_UUID,
     ABBA_WRITE_UUID,
@@ -3348,7 +3349,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         mode_ok = True
         if self.data.get("running_mode") != RUNNING_MODE_LEVEL:
             mode_ok = bool(await self.async_set_mode(RUNNING_MODE_LEVEL))
-        return bool(await self.async_set_level(MAX_LEVEL)) and mode_ok
+        max_level = ABBA_MAX_LEVEL if self._protocol_mode == 5 else MAX_LEVEL
+        return bool(await self.async_set_level(max_level)) and mode_ok
 
     async def async_restore_burnoff_snapshot(self, cycle: Any) -> bool:
         """Restore the app-native mode and target captured before burn-off."""
@@ -3567,11 +3569,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             )
             return False
 
-        level = max(1, min(10, level))
+        max_level = ABBA_MAX_LEVEL if self._protocol_mode == 5 else MAX_LEVEL
+        level = max(1, min(max_level, level))
         if self._protocol_mode == 5:  # ABBA/HeaterCC uses level up/down button commands
             current_level_raw = self.data.get("set_level")
             try:
-                current_level = max(1, min(10, int(current_level_raw)))
+                current_level = max(1, min(ABBA_MAX_LEVEL, int(current_level_raw)))
             except (TypeError, ValueError):
                 self._logger.warning("ABBA: Cannot set level without current set_level")
                 return False

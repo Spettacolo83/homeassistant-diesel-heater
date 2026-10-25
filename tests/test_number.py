@@ -18,6 +18,7 @@ from custom_components.diesel_heater.number import (
     async_setup_entry,
 )
 from custom_components.diesel_heater.const import (
+    ABBA_MAX_LEVEL,
     RUNNING_MODE_LEVEL,
     RUNNING_MODE_TEMPERATURE,
 )
@@ -520,6 +521,15 @@ class TestNumberAsyncSetNativeValue:
 
 class TestNumberEntityAttributes:
     """Tests for number entity attributes."""
+
+    def test_abba_level_uses_six_step_range(self):
+        """ABBA's number control matches AirHeaterCC's six-step range."""
+        coordinator = create_mock_coordinator(protocol_mode=5)
+
+        number = VevorHeaterLevelNumber(coordinator)
+
+        assert number._attr_native_min_value == 1
+        assert number._attr_native_max_value == ABBA_MAX_LEVEL
 
     def test_level_icon(self):
         """Test level icon."""

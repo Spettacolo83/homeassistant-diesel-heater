@@ -20,6 +20,7 @@ from . import conftest  # noqa: F401
 from custom_components.diesel_heater.burnoff import BurnoffController, BurnoffPhase
 from custom_components.diesel_heater.coordinator import UpdateFailed, VevorHeaterCoordinator
 from custom_components.diesel_heater.const import (
+    ABBA_MAX_LEVEL,
     CONF_CRONUS_HEATER_MODEL,
     CONF_FORCE_TEMP_UNIT,
     CRONUS_FUEL_PROFILES,
@@ -1627,15 +1628,34 @@ class TestAsyncCommands:
         """ABBA level changes use repeated level-down button commands."""
         coordinator = create_mock_coordinator()
         coordinator._protocol_mode = 5
-        coordinator.data["set_level"] = 7
+        coordinator.data["set_level"] = 6
         coordinator._send_command = AsyncMock(return_value=True)
         coordinator.async_request_refresh = AsyncMock()
 
         with patch("custom_components.diesel_heater.coordinator.asyncio.sleep", AsyncMock()) as sleep_mock:
             await coordinator.async_set_level(4)
 
-        assert coordinator._send_command.call_args_list == [call(5, -1), call(5, -1), call(5, -1)]
-        assert sleep_mock.await_count == 2
+        assert coordinator._send_command.call_args_list == [call(5, -1), call(5, -1)]
+        assert sleep_mock.await_count == 1
+        coordinator.async_request_refresh.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_async_set_level_abba_clamps_to_six_steps(self):
+        """ABBA never requests levels above the app-backed sixth step."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 5
+        coordinator.data["set_level"] = 3
+        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator.async_request_refresh = AsyncMock()
+
+        with patch("custom_components.diesel_heater.coordinator.asyncio.sleep", AsyncMock()):
+            await coordinator.async_set_level(MAX_LEVEL)
+
+        assert coordinator._send_command.call_args_list == [
+            call(5, 1),
+            call(5, 1),
+            call(5, 1),
+        ]
         coordinator.async_request_refresh.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -5302,7 +5322,7 @@ class TestBurnoffOnShutdown:
         coordinator = create_mock_coordinator()
         coordinator._protocol_mode = 5
         _set_heating(coordinator)
-        coordinator.data["set_level"] = 10
+        coordinator.data["set_level"] = 6
         coordinator._send_command = AsyncMock(return_value=True)
         coordinator._burnoff.cycle.phase = BurnoffPhase.RUNNING
         coordinator._burnoff.cycle.saved_mode = RUNNING_MODE_LEVEL
@@ -5312,8 +5332,8 @@ class TestBurnoffOnShutdown:
 
         commands = [call[0] for call in coordinator._send_command.call_args_list]
         assert (2, RUNNING_MODE_LEVEL) in commands
-        # ABBA restores level with up/down steps, from burn-off level 10 back to 4.
-        assert commands.count((5, -1)) == 6
+        # ABBA restores level with down steps, from its sixth step back to 4.
+        assert commands.count((5, -1)) == 2
         assert commands[-1] == (3, 0)
         assert coordinator.burnoff_active is False
 
@@ -6319,6 +6339,19 @@ class TestUnifiedBurnoff:
 
 
 class TestBurnoffProtocolNativePaths:
+    @pytest.mark.asyncio
+    async def test_abba_max_power_uses_sixth_step(self):
+        """ABBA burn-off uses its highest app-backed level, not generic level 10."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 5
+        coordinator.data["running_mode"] = RUNNING_MODE_LEVEL
+        coordinator.async_set_level = AsyncMock(return_value=True)
+
+        assert await coordinator.async_apply_burnoff_max_power(
+            coordinator._burnoff.cycle
+        ) is True
+        coordinator.async_set_level.assert_awaited_once_with(ABBA_MAX_LEVEL)
+
     @pytest.mark.asyncio
     async def test_heatgenie_max_power_uses_manual_raw_mode(self):
         coordinator = create_mock_coordinator()
