@@ -1607,50 +1607,35 @@ class TestAsyncCommands:
         assert call_args[0][1] == 7
 
     @pytest.mark.asyncio
-    async def test_async_set_level_abba_steps_up(self):
-        """ABBA level changes use repeated level-up button commands."""
+    async def test_async_set_level_abba_direct_set(self):
+        """ABBA level uses one direct cmd 4 (0xDB) set, not cmd 5 stepping.
+
+        Cmd 5 (0xA2/0xA3) is TEMP up/down, not level — stepping with it in
+        Level mode has no effect (diesel-heater-ble issue #3).
+        """
         coordinator = create_mock_coordinator()
         coordinator._protocol_mode = 5
         coordinator.data["set_level"] = 3
         coordinator._send_command = AsyncMock(return_value=True)
-        coordinator.async_request_refresh = AsyncMock()
+        coordinator._refresh_after_control_command = AsyncMock()
 
-        with patch("custom_components.diesel_heater.coordinator.asyncio.sleep", AsyncMock()) as sleep_mock:
-            await coordinator.async_set_level(6)
+        await coordinator.async_set_level(4)
 
-        assert coordinator._send_command.call_args_list == [call(5, 1), call(5, 1), call(5, 1)]
-        assert sleep_mock.await_count == 2
-        coordinator.async_request_refresh.assert_awaited_once()
+        coordinator._send_command.assert_awaited_once_with(4, 4)
+        coordinator._refresh_after_control_command.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_async_set_level_abba_steps_down(self):
-        """ABBA level changes use repeated level-down button commands."""
-        coordinator = create_mock_coordinator()
-        coordinator._protocol_mode = 5
-        coordinator.data["set_level"] = 7
-        coordinator._send_command = AsyncMock(return_value=True)
-        coordinator.async_request_refresh = AsyncMock()
-
-        with patch("custom_components.diesel_heater.coordinator.asyncio.sleep", AsyncMock()) as sleep_mock:
-            await coordinator.async_set_level(4)
-
-        assert coordinator._send_command.call_args_list == [call(5, -1), call(5, -1), call(5, -1)]
-        assert sleep_mock.await_count == 2
-        coordinator.async_request_refresh.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_async_set_level_abba_skips_when_current_level_unknown(self):
-        """ABBA level changes require a known current level."""
+    async def test_async_set_level_abba_direct_set_no_current_level_needed(self):
+        """ABBA direct set does not need a known current level."""
         coordinator = create_mock_coordinator()
         coordinator._protocol_mode = 5
         coordinator.data["set_level"] = None
         coordinator._send_command = AsyncMock(return_value=True)
-        coordinator.async_request_refresh = AsyncMock()
+        coordinator._refresh_after_control_command = AsyncMock()
 
         await coordinator.async_set_level(4)
 
-        coordinator._send_command.assert_not_called()
-        coordinator.async_request_refresh.assert_not_called()
+        coordinator._send_command.assert_awaited_once_with(4, 4)
 
     @pytest.mark.asyncio
     async def test_async_set_temperature(self):
@@ -5312,8 +5297,8 @@ class TestBurnoffOnShutdown:
 
         commands = [call[0] for call in coordinator._send_command.call_args_list]
         assert (2, RUNNING_MODE_LEVEL) in commands
-        # ABBA restores level with up/down steps, from burn-off level 10 back to 4.
-        assert commands.count((5, -1)) == 6
+        # ABBA restores level with one direct cmd 4 set, from burn-off level 10 back to 4.
+        assert commands.count((4, 4)) == 1
         assert commands[-1] == (3, 0)
         assert coordinator.burnoff_active is False
 

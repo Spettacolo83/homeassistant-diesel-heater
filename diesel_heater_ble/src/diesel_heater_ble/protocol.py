@@ -1042,13 +1042,18 @@ class ProtocolABBA(HeaterProtocol):
             # by the heater while actively heating.
             return self._build_abba("baab04bba10000")
         elif command == 4:
+            # 0xDB is a DIRECT set: gear in Level mode, temperature in
+            # Temperature mode (status byte 6 is gear/target temp).
             temp_hex = format(argument, '02x')
             return self._build_abba(f"baab04db{temp_hex}0000")
         elif command == 5:
+            # 0xA2/0xA3 are TEMP up/down (ABBA_CMD_TEMP_UP/DOWN), NOT level.
+            # Do not use these to set the level in Level mode — the heater
+            # ignores them there (diesel-heater-ble issue #3).
             if argument > 0:
-                return self._build_abba("baab04bba20000")  # Level up
+                return self._build_abba("baab04bba20000")  # Temp up
             elif argument < 0:
-                return self._build_abba("baab04bba30000")  # Level down
+                return self._build_abba("baab04bba30000")  # Temp down
             return self._build_abba("baab04cc000000")
         elif command == 2:
             if argument == 2:
