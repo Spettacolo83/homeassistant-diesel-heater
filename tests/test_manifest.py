@@ -115,4 +115,4 @@ def test_manifest_requirement_pin_is_concrete():
 
 
 def test_manifest_requires_protocol_release():
-    assert "diesel-heater-ble>=0.3.8" in _load_manifest()["requirements"]
+    assert "diesel-heater-ble>=0.3.9" in _load_manifest()["requirements"]
