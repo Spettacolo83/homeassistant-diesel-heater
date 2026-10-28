@@ -26,6 +26,8 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
 from .const import DOMAIN, OLD_DOMAIN
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 from .coordinator import VevorHeaterCoordinator
 
 DieselHeaterConfigEntry = ConfigEntry[VevorHeaterCoordinator]
