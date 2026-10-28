@@ -12,6 +12,7 @@ from homeassistant.const import EntityCategory, UnitOfTemperature, UnitOfTime, U
 
 from . import VevorHeaterConfigEntry
 from .const import (
+    ABBA_MAX_LEVEL,
     DOMAIN,
     MAX_BURNOFF_AFTER_CYCLES,
     MAX_BURNOFF_AFTER_HOURS,
@@ -77,7 +78,7 @@ async def async_setup_entry(
 class VevorHeaterLevelNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberEntity):
     """Vevor Heater level number entity.
 
-    Beta.36: ALL protocols support levels 1-10 (@Xev, issue #46)
+    Beta.36: Most protocols support levels 1-10 (@Xev, issue #46)
     The beta.33 assumption that Hcalory only supports 1-6 was wrong -
     decompiled APK data was incorrect. Confirmed by @smaj100: levels go 1-9, HH10.
 
@@ -90,7 +91,7 @@ class VevorHeaterLevelNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberEn
     _attr_name = "Level"
     _attr_icon = "mdi:gauge"
     _attr_native_min_value = MIN_LEVEL
-    _attr_native_max_value = MAX_LEVEL  # All protocols support 1-10 levels
+    _attr_native_max_value = MAX_LEVEL
     _attr_native_step = 1
 
     def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
@@ -114,6 +115,8 @@ class VevorHeaterLevelNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberEn
         )
         if coordinator.protocol_mode == 9:
             self._attr_native_max_value = 4
+        elif coordinator.protocol_mode == 5:
+            self._attr_native_max_value = ABBA_MAX_LEVEL
 
     @property
     def available(self) -> bool:
@@ -574,5 +577,4 @@ class VevorBurnoffAfterHoursNumber(CoordinatorEntity[VevorHeaterCoordinator], Nu
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
-
 

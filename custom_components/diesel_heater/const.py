@@ -73,6 +73,9 @@ NOTIFY_UUID_ALT: Final = "0000fff2-0000-1000-8000-00805f9b34fb"
 ABBA_SERVICE_UUID: Final = "0000fff0-0000-1000-8000-00805f9b34fb"
 ABBA_NOTIFY_UUID: Final = "0000fff1-0000-1000-8000-00805f9b34fb"
 ABBA_WRITE_UUID: Final = "0000fff2-0000-1000-8000-00805f9b34fb"
+# AirHeaterCC exposes ABBA power as six relative steps. The controller itself
+# owns the limit; Home Assistant must not advertise the generic 1-10 range.
+ABBA_MAX_LEVEL: Final = 6
 
 # Sunster Neo DZ06 split-FFF0 transport.  Unlike legacy ABBA devices,
 # FFF1 is write-capable and FFF2 is notify-capable.

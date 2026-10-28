@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from . import conftest  # noqa: F401
 
 from custom_components.diesel_heater.fan import (
+    ABBA_ORDERED_LEVELS,
     VevorHeaterFan,
     ORDERED_LEVELS,
     async_setup_entry,
@@ -103,6 +104,32 @@ class TestVevorHeaterFan:
         fan = VevorHeaterFan(coordinator)
 
         assert fan._attr_speed_count == 10
+
+    def test_abba_speed_count(self):
+        """ABBA uses the six app-backed relative level steps."""
+        coordinator = create_mock_coordinator()
+        coordinator.protocol_mode = 5
+
+        fan = VevorHeaterFan(coordinator)
+
+        assert fan._attr_speed_count == 6
+        assert fan._ordered_levels == ABBA_ORDERED_LEVELS
+
+    @pytest.mark.asyncio
+    async def test_abba_full_percentage_selects_sixth_step(self):
+        """100 percent maps to ABBA's sixth and final level."""
+        coordinator = create_mock_coordinator()
+        coordinator.protocol_mode = 5
+        fan = VevorHeaterFan(coordinator)
+
+        with patch(
+            "custom_components.diesel_heater.fan.percentage_to_ordered_list_item",
+            return_value="6",
+        ) as converter:
+            await fan.async_set_percentage(100)
+
+        coordinator.async_set_level.assert_awaited_once_with(6)
+        converter.assert_called_once_with(ABBA_ORDERED_LEVELS, 100)
 
     def test_device_info(self):
         """Test device_info is set correctly."""

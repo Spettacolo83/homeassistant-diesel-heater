@@ -17,6 +17,7 @@ from homeassistant.util.percentage import (
 
 from . import VevorHeaterConfigEntry
 from .const import (
+    ABBA_MAX_LEVEL,
     DOMAIN,
     MAX_LEVEL,
     MIN_LEVEL,
@@ -28,6 +29,7 @@ _LOGGER = logging.getLogger(__name__)
 
 # Ordered list of levels for percentage conversion
 ORDERED_LEVELS = [str(level) for level in range(MIN_LEVEL, MAX_LEVEL + 1)]
+ABBA_ORDERED_LEVELS = [str(level) for level in range(MIN_LEVEL, ABBA_MAX_LEVEL + 1)]
 
 
 async def async_setup_entry(
@@ -70,6 +72,15 @@ class VevorHeaterFan(FanEntity):
             "model": "Diesel Heater",
         }
         self._attr_unique_id = f"{coordinator.address}_heater_level"
+        if coordinator.protocol_mode == 5:
+            self._attr_speed_count = ABBA_MAX_LEVEL
+
+    @property
+    def _ordered_levels(self) -> list[str]:
+        """Return the controller's app-backed level range."""
+        if self.coordinator.protocol_mode == 5:
+            return ABBA_ORDERED_LEVELS
+        return ORDERED_LEVELS
 
     @property
     def available(self) -> bool:
@@ -97,8 +108,7 @@ class VevorHeaterFan(FanEntity):
         if level is None:
             return None
 
-        # Convert level (1-10) to percentage (0-100)
-        return ordered_list_item_to_percentage(ORDERED_LEVELS, str(level))
+        return ordered_list_item_to_percentage(self._ordered_levels, str(level))
 
     async def async_set_percentage(self, percentage: int) -> None:
         """Set the speed percentage."""
@@ -107,8 +117,7 @@ class VevorHeaterFan(FanEntity):
             await self.coordinator.async_turn_off()
             return
 
-        # Convert percentage to level (1-10)
-        level_str = percentage_to_ordered_list_item(ORDERED_LEVELS, percentage)
+        level_str = percentage_to_ordered_list_item(self._ordered_levels, percentage)
         level = int(level_str)
 
         _LOGGER.info("Setting heater level to %d (from %d%%)", level, percentage)
