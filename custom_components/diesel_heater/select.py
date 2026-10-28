@@ -131,8 +131,8 @@ class CronusModeSelect(SelectEntity):
 class VevorHeaterModeSelect(SelectEntity):
     """Select entity for Vevor Heater running mode.
 
-    For ABBA/HeaterCC devices, includes a "Ventilation" option when the heater
-    is in standby or already ventilating. This allows fan-only operation.
+    Includes a "Ventilation" option only when the connected controller
+    explicitly advertises fan-only support.
     """
 
     _attr_has_entity_name = True
@@ -154,19 +154,27 @@ class VevorHeaterModeSelect(SelectEntity):
     def options(self) -> list[str]:
         """Return available running mode options.
 
-        For ABBA devices, include Ventilation when heater is in standby or ventilating.
-        This follows Xev's suggestion in Issue #30 for dynamic options.
+        ABBA exposes fan-only only from standby. AA66 controllers expose it
+        only when their app-advertised motherboard capability says it exists.
         """
         base_options = [
             RUNNING_MODE_NAMES[RUNNING_MODE_LEVEL],
             RUNNING_MODE_NAMES[RUNNING_MODE_TEMPERATURE],
         ]
 
-        # Add Ventilation option for ABBA devices when in standby or already ventilating
+        # ABBA uses a dedicated ventilation command available from standby.
         if self.coordinator.protocol_mode == 5:  # ABBA protocol
             running_step = self.coordinator.data.get("running_step")
             if running_step in (RUNNING_STEP_STANDBY, RUNNING_STEP_VENTILATION):
                 base_options.append(RUNNING_MODE_NAMES[RUNNING_MODE_VENTILATION])
+
+        # Sunster's AA66 app only exposes ventilation for explicitly
+        # advertised controller revisions; do not make it a generic AA66 mode.
+        elif (
+            self.coordinator.protocol_mode == 4
+            and self.coordinator.supports_aa66_ventilation
+        ):
+            base_options.append(RUNNING_MODE_NAMES[RUNNING_MODE_VENTILATION])
 
         return base_options
 

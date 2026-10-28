@@ -98,7 +98,7 @@ Entities are created based on the detected BLE protocol. Only entities supported
 |---|---|---|
 | AA55 / AA66 | Established air-heater entities and local auto-offset | No encrypted-controller settings, timer, component bits, or intake/outlet probes |
 | AA55 Encrypted | Temperature Offset, Backlight, and Timer | No Language, Pump Type, Tank Volume, or unit switches |
-| AA66 Encrypted | Temperature Offset, Backlight, Timer, Language, Pump Type, Tank Volume, Auto Start/Stop, Temperature Unit, and Altitude Unit | Extended telemetry only where reported |
+| AA66 Encrypted | Temperature Offset, Backlight, Timer, Language, Pump Type, Tank Volume, Auto Start/Stop, Temperature Unit, Altitude Unit, and controller-advertised ventilation | Extended telemetry and ventilation only where reported |
 | ABBA / HeaterCC | Auto Start/Stop, Temperature Unit, Altitude Unit, High Altitude, and supported ventilation | No timer, component bits, or intake/outlet probes |
 | CBFF / Sunster | Extended telemetry, controller configuration, unit settings, Auto Start/Stop, and CBFF diagnostics | No component bits or intake/outlet probes |
 | Hcalory MVP1/MVP2 | Auto Start/Stop, Temperature Unit, and three-position High Altitude Mode | No altitude sensor, auto-offset, timer, component bits, or intake/outlet probes |
@@ -179,7 +179,7 @@ Additional sensors for specific protocols:
 
 | Select | Description |
 |--------|-------------|
-| Running Mode | Switch between Level and Temperature modes; ABBA can additionally offer Ventilation |
+| Running Mode | Switch between Level and Temperature modes; ABBA and controller-advertised AA66 controllers can additionally offer Ventilation |
 | Cronus Mode | Air controllers only: Heating, Ventilation, Boost, and Eco |
 | Language | Display language (EN, CN, DE, Silent, RU) |
 | Pump Type | Fuel pump type (16/22/28/32 µl) |

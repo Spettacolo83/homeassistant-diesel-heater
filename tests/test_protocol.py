@@ -853,6 +853,10 @@ class TestProtocolAA66Encrypted:
         assert self.proto.build_command(10, 510, 1234).hex() == "aa550c220afe0137"
         assert self.proto.build_command(19, 1, 1234).hex() == "aa550c2213010042"
 
+    def test_build_command_ventilation_mode(self):
+        """Sunster sends AA66 ventilation as set-mode command 2, value 3."""
+        assert self.proto.build_command(2, 3, 1234).hex() == "aa550c2202030033"
+
     def test_parse_rf433_off(self):
         data = _make_aa66enc_data(pump_byte=20)
         result = self.proto.parse(data)
