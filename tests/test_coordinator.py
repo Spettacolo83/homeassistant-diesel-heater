@@ -3330,6 +3330,24 @@ class TestBLEConnectionCleanup:
         assert coordinator._client is None
 
     @pytest.mark.asyncio
+    async def test_cleanup_connection_resets_cbff_handshake_without_client(self):
+        """CBFF reconnects reset authentication but retain the learned protocol."""
+        coordinator = create_mock_coordinator()
+        protocol = coordinator._protocols[6]
+        protocol.set_v21_mode(True)
+        coordinator._client = None
+        coordinator._protocol_mode = 6
+        coordinator._protocol = protocol
+
+        await coordinator._cleanup_connection()
+
+        assert coordinator._protocol_mode == 6
+        assert coordinator._protocol is protocol
+        assert coordinator._v21_handshake_sent is False
+        assert coordinator._v21_handshake_authenticated is None
+        assert protocol.v21_mode is True
+
+    @pytest.mark.asyncio
     async def test_cleanup_connection_disconnects(self):
         """Test cleanup_connection disconnects active client."""
         coordinator = create_mock_coordinator()
@@ -4162,6 +4180,48 @@ class TestEnsureConnected:
         assert coordinator._is_abba_device is False
         assert coordinator._characteristic == mock_char
         assert coordinator._active_char_uuid == CHARACTERISTIC_UUID
+
+    @pytest.mark.asyncio
+    async def test_cbff_reconnect_restarts_authenticated_session(self):
+        """A known CBFF controller sends its handshake after reconnecting."""
+        from custom_components.diesel_heater.const import (
+            SERVICE_UUID,
+            CHARACTERISTIC_UUID,
+        )
+
+        coordinator = create_mock_coordinator()
+        coordinator._client = None
+        coordinator._ble_device = MagicMock()
+        coordinator._ble_device.address = "AA:BB:CC:DD:EE:FF"
+        coordinator._protocol_mode = 6
+        coordinator._protocol = coordinator._protocols[6]
+        coordinator._send_wake_up_ping = AsyncMock()
+        coordinator._queue_v21_handshake = MagicMock()
+        coordinator._wait_for_v21_handshake = AsyncMock()
+
+        mock_char = MagicMock()
+        mock_char.uuid = CHARACTERISTIC_UUID
+        mock_char.properties = ["notify", "write"]
+        mock_service = MagicMock()
+        mock_service.uuid = SERVICE_UUID
+        mock_service.characteristics = [mock_char]
+        mock_client = MagicMock(is_connected=True, services=[mock_service])
+        mock_client.start_notify = AsyncMock()
+
+        with (
+            patch(
+                "custom_components.diesel_heater.coordinator.establish_connection",
+                new_callable=AsyncMock,
+                return_value=mock_client,
+            ),
+            patch("custom_components.diesel_heater.coordinator.asyncio.sleep", AsyncMock()),
+        ):
+            await coordinator._ensure_connected()
+
+        assert coordinator._protocol_mode == 6
+        coordinator._send_wake_up_ping.assert_not_awaited()
+        coordinator._queue_v21_handshake.assert_called_once_with(coordinator._protocol)
+        coordinator._wait_for_v21_handshake.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_no_services_discovered(self):
