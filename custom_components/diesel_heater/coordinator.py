@@ -1601,6 +1601,20 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 if not status:
                     self._protocol.set_prefer_mvp1_query(True)
 
+            if not status and self._protocol_mode == 6:
+                # The Sunster app abandons a V2.1 connection after its
+                # no-data window and starts a fresh authenticated session.
+                await self._cleanup_connection()
+                try:
+                    await asyncio.wait_for(self._ensure_connected(), timeout=20.0)
+                    connected_this_update = True
+                    status = await asyncio.wait_for(
+                        self._send_command(1, 0), timeout=15.0
+                    )
+                except Exception as err:
+                    self._logger.debug(
+                        "FEAA fresh-session recovery failed: %s", err
+                    )
             if status:
                 self.data["connected"] = True
                 # Reset failure counter and save valid data on success

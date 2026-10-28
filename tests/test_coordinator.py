@@ -2994,6 +2994,30 @@ class TestAsyncUpdateData:
         assert result == coordinator.data
 
     @pytest.mark.asyncio
+    async def test_feaa_no_status_resets_session_before_next_poll(self):
+        """FEAA follows the app by reconnecting after its status query fails."""
+        import time
+
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 6
+        coordinator._check_daily_reset = AsyncMock()
+        coordinator._check_daily_runtime_reset = AsyncMock()
+        coordinator._client = MagicMock(is_connected=True)
+        coordinator._send_command = AsyncMock(return_value=False)
+        coordinator._cleanup_connection = AsyncMock()
+        coordinator._ensure_connected = AsyncMock()
+        coordinator._consecutive_failures = 1
+        coordinator._max_stale_cycles = 3
+        coordinator._last_update_time = time.time()
+
+        await coordinator._async_update_data()
+
+        assert coordinator._consecutive_failures == 2
+        assert coordinator._send_command.await_count == 4
+        coordinator._cleanup_connection.assert_awaited_once()
+        coordinator._ensure_connected.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_update_data_no_status_raises_after_tolerance(self):
         """Test no status raises UpdateFailed after tolerance exceeded."""
         import time
