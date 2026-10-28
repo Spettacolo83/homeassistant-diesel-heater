@@ -268,6 +268,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._internal_recovery_cooldown_s = 60.0
         self._last_valid_data: dict[str, Any] = {}  # Cache of last valid sensor readings
         self._heater_uses_fahrenheit: bool = False  # Detected from heater response
+        # AA66 encrypted controllers always report measured telemetry in Celsius.
+        # Their temperature-unit flag selects only the controller/app display and
+        # setpoint encoding (as verified in AirHeaterBLE).
+        self._aa66_uses_fahrenheit_display: bool = False
         self._force_temp_unit: str = force_temp_unit
 
         # Current state
@@ -2513,7 +2517,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         # Update coordinator state from parsed data
         if "temp_unit" in parsed:
-            if self._force_temp_unit == FORCE_TEMP_UNIT_CELSIUS:
+            if protocol.protocol_mode == 4:
+                # AirHeaterBLE converts AA66's Celsius telemetry only for UI
+                # presentation when this flag is Fahrenheit. Keep HA's native
+                # temperatures Celsius and retain the flag solely for commands.
+                self._aa66_uses_fahrenheit_display = parsed["temp_unit"] == 1
+                self._heater_uses_fahrenheit = False
+            elif self._force_temp_unit == FORCE_TEMP_UNIT_CELSIUS:
                 self._heater_uses_fahrenheit = False
             elif self._force_temp_unit == FORCE_TEMP_UNIT_FAHRENHEIT:
                 self._heater_uses_fahrenheit = True
@@ -3907,6 +3917,16 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             command_temp = int(round(max(minimum, min(maximum, raw_temperature))))
             temperature = self._dz06_neo_display_temperature(command_temp)
             unit_str = "F" if self._heater_uses_fahrenheit else "C"
+        elif self._protocol_mode == 4:
+            # AA66 status telemetry is Celsius. Its display preference affects
+            # only setpoint encoding, matching AirHeaterBLE's converttemp().
+            temperature = max(8, min(36, temperature))
+            command_temp = (
+                int(round((temperature * 9 / 5) + 32))
+                if self._aa66_uses_fahrenheit_display
+                else int(round(temperature))
+            )
+            unit_str = "°C"
         elif self._heater_uses_fahrenheit:
             temperature = max(32, min(104, temperature))
             unit_str = "°F"
@@ -3923,7 +3943,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         )
 
         # Convert to int for command (protocols expect integer temperatures)
-        if not self.is_dz06_neo:
+        if not self.is_dz06_neo and self._protocol_mode != 4:
             command_temp = int(round(temperature))
         if self.is_dz06_neo:
             settings = self._neo_control_settings()
@@ -4214,7 +4234,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         success = await self._send_command(15, value)
         if success:
             self.data["temp_unit"] = value
-            self._heater_uses_fahrenheit = use_fahrenheit
+            if self._protocol_mode == 4:
+                self._aa66_uses_fahrenheit_display = use_fahrenheit
+                self._heater_uses_fahrenheit = False
+            else:
+                self._heater_uses_fahrenheit = use_fahrenheit
             self._logger.info("✅ Temperature unit set to %s", unit_name)
             await self._refresh_after_control_command()
         else:

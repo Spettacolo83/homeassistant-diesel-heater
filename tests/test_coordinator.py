@@ -223,6 +223,7 @@ def create_mock_coordinator() -> VevorHeaterCoordinator:
     coordinator._external_temp_sensor = None
     coordinator._auto_offset_max = 5
     coordinator._heater_uses_fahrenheit = False
+    coordinator._aa66_uses_fahrenheit_display = False
     coordinator._force_temp_unit = "auto"
 
     # Add address property (used by statistics import)
@@ -2029,6 +2030,19 @@ class TestAsyncConfigurationCommands:
         assert call_args[0][1] == 1  # 1 = Fahrenheit
 
     @pytest.mark.asyncio
+    async def test_aa66_temp_unit_change_preserves_celsius_telemetry(self):
+        """AA66's Fahrenheit setting changes command encoding, not telemetry."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 4
+        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator._refresh_after_control_command = AsyncMock()
+
+        await coordinator.async_set_temp_unit(True)
+
+        assert coordinator._aa66_uses_fahrenheit_display is True
+        assert coordinator._heater_uses_fahrenheit is False
+
+    @pytest.mark.asyncio
     async def test_async_set_altitude_unit_meters(self):
         """Test async_set_altitude_unit sets meters."""
         coordinator = create_mock_coordinator()
@@ -3775,6 +3789,20 @@ class TestFahrenheitConversion:
         assert call_args[0][0] == 4
         assert call_args[0][1] == 20
 
+    @pytest.mark.asyncio
+    async def test_aa66_fahrenheit_display_encodes_only_the_setpoint(self):
+        """AA66 keeps HA telemetry Celsius but sends Fahrenheit setpoints."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 4
+        coordinator._heater_uses_fahrenheit = False
+        coordinator._aa66_uses_fahrenheit_display = True
+        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator._refresh_after_control_command = AsyncMock()
+
+        await coordinator.async_set_temperature(20)
+
+        coordinator._send_command.assert_awaited_once_with(4, 68)
+
 
 # ---------------------------------------------------------------------------
 # Additional async command tests
@@ -4507,6 +4535,19 @@ class TestCBFFDecryption:
         coordinator._parse_response(data)
 
         assert coordinator._heater_uses_fahrenheit is False
+
+    def test_aa66_fahrenheit_setting_keeps_telemetry_celsius(self):
+        """AirHeaterBLE uses AA66's flag for display/commands, not telemetry."""
+        coordinator = create_mock_coordinator()
+        mock_protocol = MagicMock()
+        mock_protocol.protocol_mode = 4
+        mock_protocol.parse.return_value = {"temp_unit": 1, "running_state": 1}
+        coordinator._detect_protocol = MagicMock(return_value=(mock_protocol, bytearray(48)))
+
+        coordinator._parse_response(bytearray([0xAA, 0x66] + [0x00] * 46))
+
+        assert coordinator._heater_uses_fahrenheit is False
+        assert coordinator._aa66_uses_fahrenheit_display is True
 
     def test_force_temp_unit_celsius_overrides_firmware_fahrenheit(self):
         """force_temp_unit=celsius ignores a firmware temp_unit=1 (issue #64)."""

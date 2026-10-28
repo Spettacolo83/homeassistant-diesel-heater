@@ -855,6 +855,21 @@ class TestProtocolAA66Encrypted:
         assert result["temp_unit"] == 1
         assert result["set_temp"] == 22
 
+    def test_fahrenheit_display_keeps_measured_telemetry_celsius(self):
+        """AirHeaterBLE converts AA66 Celsius telemetry only while rendering."""
+        data = _make_aa66enc_data(
+            temp_unit=1,
+            set_temp_raw=68,
+            cab_temp_raw=200,
+            case_temp_raw=150,
+        )
+
+        result = self.proto.parse(data)
+
+        assert result["set_temp"] == 20
+        assert result["cab_temperature"] == 20.0
+        assert result["case_temperature"] == 150
+
     def test_parse_fahrenheit_clamped(self):
         """Converted temp clamped to 8-36°C."""
         # 100°F → (100-32)*5/9 = 37.8 → clamped to 36

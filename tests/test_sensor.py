@@ -111,6 +111,16 @@ class TestCabTemperatureSensor:
 
         assert sensor.native_value == 20.5
 
+    def test_aa66_fahrenheit_display_has_celsius_native_telemetry(self):
+        """AA66's display preference must not relabel its Celsius telemetry."""
+        coordinator = create_mock_coordinator(protocol_mode=4)
+        coordinator._heater_uses_fahrenheit = False
+        coordinator.data["cab_temperature"] = 20.0
+        sensor = VevorCabTemperatureSensor(coordinator)
+
+        assert sensor._attr_native_unit_of_measurement == "°C"
+        assert sensor.native_value == 20.0
+
     def test_native_value_none_when_disconnected(self):
         """Test that native_value is None when heater is disconnected."""
         coordinator = create_mock_coordinator()
