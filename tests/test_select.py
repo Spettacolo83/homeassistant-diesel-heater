@@ -30,6 +30,7 @@ def create_mock_coordinator(protocol_mode: int = 1) -> MagicMock:
     coordinator._heater_id = "EE:FF"
     coordinator.last_update_success = True
     coordinator.protocol_mode = protocol_mode
+    coordinator.supports_aa66_ventilation = False
     coordinator.send_command = AsyncMock(return_value=True)
     coordinator.async_set_mode = AsyncMock()
     coordinator.async_set_language = AsyncMock()
@@ -198,14 +199,30 @@ class TestVevorHeaterModeSelect:
         assert len(select.options) == 2
         assert "Ventilation" not in select.options
 
-    def test_non_abba_never_shows_ventilation(self):
-        """Test non-ABBA protocols never show Ventilation option."""
+    def test_unsupported_protocols_never_show_ventilation(self):
+        """Test unsupported controllers never show Ventilation."""
         for protocol in [1, 2, 4, 6]:  # AA55, AA55Encrypted, AA66, CBFF
             coordinator = create_mock_coordinator(protocol_mode=protocol)
             coordinator.data["running_step"] = 0  # Standby
             select = VevorHeaterModeSelect(coordinator)
 
             assert "Ventilation" not in select.options
+
+    def test_aa66_options_include_advertised_ventilation(self):
+        """AA66 fan-only is exposed only when the controller advertises it."""
+        coordinator = create_mock_coordinator(protocol_mode=4)
+        coordinator.supports_aa66_ventilation = True
+        select = VevorHeaterModeSelect(coordinator)
+
+        assert select.options == ["Level", "Temperature", "Ventilation"]
+
+    def test_non_aa66_does_not_use_aa66_capability_flag(self):
+        """The AA66 capability never leaks into another protocol's UI."""
+        coordinator = create_mock_coordinator(protocol_mode=6)
+        coordinator.supports_aa66_ventilation = True
+        select = VevorHeaterModeSelect(coordinator)
+
+        assert "Ventilation" not in select.options
 
     def test_current_option_ventilation_when_ventilating(self):
         """Test current_option returns Ventilation when running_step is ventilation."""

@@ -2258,6 +2258,31 @@ class TestLevelClamp:
 class TestModeCommands:
     """Tests for mode switching commands."""
 
+    @pytest.mark.parametrize("motherboard_version", [3, 4, 5])
+    def test_aa66_advertised_ventilation_revisions(self, motherboard_version):
+        """Only the revisions enumerated by the Sunster app advertise fan-only."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 4
+        coordinator.data["motherboard_version"] = motherboard_version
+
+        assert coordinator.supports_aa66_ventilation is True
+
+    def test_aa66_unadvertised_ventilation_is_not_supported(self):
+        """AA66 without the app's capability marker remains two-mode."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 4
+        coordinator.data["motherboard_version"] = 2
+
+        assert coordinator.supports_aa66_ventilation is False
+
+    def test_aa66_reported_ventilation_remains_selectable(self):
+        """Preserve an already-reported fan-only mode from an older frame."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 4
+        coordinator.data["running_mode"] = RUNNING_MODE_VENTILATION
+
+        assert coordinator.supports_aa66_ventilation is True
+
     @pytest.mark.asyncio
     async def test_set_mode_level(self):
         """Test setting level mode (1)."""
@@ -2279,6 +2304,31 @@ class TestModeCommands:
 
         call_args = coordinator._send_command.call_args
         assert call_args[0][1] == 2
+
+    @pytest.mark.asyncio
+    async def test_aa66_ventilation_uses_set_mode_three_when_advertised(self):
+        """Sunster's AA66 app uses the standard set-mode command for fan-only."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 4
+        coordinator.data["motherboard_version"] = 3
+        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator._refresh_after_control_command = AsyncMock()
+
+        assert await coordinator.async_set_mode(RUNNING_MODE_VENTILATION) is True
+
+        coordinator._send_command.assert_awaited_once_with(2, RUNNING_MODE_VENTILATION)
+        coordinator._refresh_after_control_command.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_aa66_ventilation_is_blocked_without_advertised_capability(self):
+        """AA66 alone is not evidence that the controller supports fan-only."""
+        coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 4
+        coordinator._send_command = AsyncMock(return_value=True)
+
+        assert await coordinator.async_set_mode(RUNNING_MODE_VENTILATION) is False
+
+        coordinator._send_command.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

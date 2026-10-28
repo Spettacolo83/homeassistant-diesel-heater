@@ -272,7 +272,7 @@ The common and extended entity tables below are scoped by this matrix. A control
 |---|---|---|
 | AA55 / AA66 | Established air-heater baseline and local auto-offset | No encrypted-controller configuration, timer, component bits, or intake/outlet probes |
 | AA55 Encrypted | Baseline, Temperature Offset, Backlight, and Timer | No Language, Pump Type, Tank Volume, or unit switches |
-| AA66 Encrypted | Baseline, Temperature Offset, Backlight, Timer, Language, Pump Type, Tank Volume, Auto Start/Stop, Temperature Unit, and Altitude Unit | Extended telemetry is limited to the reported controller fields |
+| AA66 Encrypted | Baseline, Temperature Offset, Backlight, Timer, Language, Pump Type, Tank Volume, Auto Start/Stop, Temperature Unit, Altitude Unit, and controller-advertised ventilation | Extended telemetry and ventilation are limited to the reported controller fields |
 | ABBA / HeaterCC | Baseline, Auto Start/Stop, Temperature Unit, Altitude Unit, High Altitude, and ventilation when the controller supports it | Level changes are relative controller steps; no timer, component bits, or intake/outlet probes |
 | CBFF / Sunster | Baseline, extended telemetry, Language, Pump Type, Tank Volume, Auto Start/Stop, Temperature Unit, Altitude Unit, and CBFF diagnostics | No component bits or intake/outlet probes |
 | Hcalory MVP1/MVP2 | Baseline except Altitude, plus Auto Start/Stop, Temperature Unit, and the three-position High Altitude Mode select | No auto-offset, timer, component bits, or intake/outlet probes |
@@ -295,7 +295,7 @@ The common and extended entity tables below are scoped by this matrix. A control
 | Platform | Entity | Description |
 |----------|--------|-------------|
 | Fan | `fan.diesel_heater_heater_level` | Level control in Level mode |
-| Select | `select.diesel_heater_running_mode` | Level and Temperature modes; ABBA also offers ventilation when supported |
+| Select | `select.diesel_heater_running_mode` | Level and Temperature modes; ABBA and controller-advertised AA66 controllers also offer ventilation |
 | Number | Level, Target Temperature | Values and ranges reported by the active controller |
 | Switch | `switch.diesel_heater_automatic_burnoff` | Enable automatic soot burn-off (in-run, dirty HA Off, deferred external Off; off by default) *(Config)* |
 | Number | `number.diesel_heater_burnoff_duration` | Burn-off duration in minutes (1-30, default 10) *(Config)* |
@@ -597,7 +597,7 @@ This integration communicates via Bluetooth LE and supports nine protocol modes 
 | Command | Function | Argument |
 |---------|----------|----------|
 | 1 | Status query | 0 |
-| 2 | Set running mode | 0=Off, 1=Level, 2=Temperature |
+| 2 | Set running mode | 0=Off, 1=Level, 2=Temperature, 3=Ventilation when advertised by the AA66 controller |
 | 3 | Turn ON/OFF | 0=OFF, 1=ON |
 | 4 | Set level or temperature | 1-10 (level) or 8-36 (temp) |
 | 10 | Time sync | 60 * hours + minutes |

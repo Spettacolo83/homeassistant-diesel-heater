@@ -353,6 +353,22 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         return self._protocol_mode == 7 and self._hcalory_mvp2_device
 
     @property
+    def supports_aa66_ventilation(self) -> bool:
+        """Return whether this AA66 controller advertises fan-only mode.
+
+        Sunster exposes AA66 ventilation only for controller versions 3, 4,
+        and 5. Its app also continues to show the mode when an older status
+        frame already reports running mode 3. Do not infer support from the
+        AA66 protocol alone: many AA66 controllers expose only level and
+        temperature modes.
+        """
+        if self._protocol_mode != 4:
+            return False
+        return self.data.get("motherboard_version") in (3, 4, 5) or (
+            self.data.get("running_mode") == RUNNING_MODE_VENTILATION
+        )
+
+    @property
     def cronus_fuel_profile(self) -> dict[str, object] | None:
         """Return the selected profile when it matches the connected Cronus type."""
         if self._protocol_mode != 9:
@@ -3762,24 +3778,33 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             run_type = 1 if mode == RUNNING_MODE_LEVEL else 2
             return await self._async_set_dz06_neo_control(run_type, target, altitude)
 
-        # Ventilation mode (ABBA only)
+        # Ventilation mode is protocol-specific. ABBA uses its dedicated
+        # 0xA4 command; app-capable AA66 controllers use normal set-mode(3).
         if mode == 3:
-            if self._protocol_mode != 5:
-                self._logger.warning("Ventilation mode is only available for ABBA devices")
-                return False
+            if self._protocol_mode == 5:
+                running_step = self.data.get("running_step", 0)
+                if running_step not in (0, 6):  # STANDBY or VENTILATION
+                    self._logger.warning(
+                        "Ventilation mode only available when heater is off (current step: %d)",
+                        running_step
+                    )
+                    return False
+                self._logger.info("Activating ventilation mode (ABBA 0xA4)")
+                success = await self._send_command(101, 0)
+                if success:
+                    await self.async_request_refresh()
+                return success
 
-            running_step = self.data.get("running_step", 0)
-            if running_step not in (0, 6):  # STANDBY or VENTILATION
+            if not self.supports_aa66_ventilation:
                 self._logger.warning(
-                    "Ventilation mode only available when heater is off (current step: %d)",
-                    running_step
+                    "Ventilation mode is not advertised by this controller"
                 )
                 return False
 
-            self._logger.info("Activating ventilation mode (ABBA 0xA4)")
-            success = await self._send_command(101, 0)  # Command 101 = ventilation
+            self._logger.info("Activating ventilation mode (AA66 set-mode 3)")
+            success = await self._send_command(2, RUNNING_MODE_VENTILATION)
             if success:
-                await self.async_request_refresh()
+                await self._refresh_after_control_command()
             return success
 
         # Standard modes (0-2)
