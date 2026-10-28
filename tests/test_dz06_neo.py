@@ -10,7 +10,6 @@ from custom_components.diesel_heater.burnoff import BurnoffController
 from custom_components.diesel_heater.const import (
     CONF_BURNOFF_ENABLED,
     CONF_NEO_CONTROLLER_TYPE,
-    RUNNING_MODE_LEVEL,
     RUNNING_MODE_TEMPERATURE,
     RUNNING_MODE_VENTILATION,
     RUNNING_STATE_ON,
@@ -63,6 +62,7 @@ def coordinator_for_layout(
     coordinator._burnoff = BurnoffController(coordinator)
     coordinator._notification_data = None
     coordinator._neo_run_settings_received = False
+    coordinator._warm_drive_board_config = None
     coordinator._neo_password = 100000000
     coordinator._logger = MagicMock()
     coordinator.async_request_refresh = AsyncMock()
@@ -102,6 +102,59 @@ def test_warm_drive_uses_cached_advertisement_when_live_name_is_missing() -> Non
             lambda *_args, **_kwargs: cached,
         )
         assert coordinator.is_warm_drive_controller is True
+
+
+@pytest.mark.parametrize(
+    ("device_type", "expected"),
+    [(1, "air"), (2, "water")],
+)
+def test_warm_drive_uses_manufacturer_record_when_name_is_missing(
+    device_type: int, expected: str
+) -> None:
+    """Warm Drive's APK falls back to byte 4 of a 16-byte scan record."""
+    coordinator = coordinator_for_layout(True, name=None)
+    coordinator.address = "C8:17:F5:28:E7:9D"
+    coordinator.hass = MagicMock()
+    cached = SimpleNamespace(
+        manufacturer_data={0xFFFF: bytes((0, 0, 0, 0, device_type)) + bytes(11)}
+    )
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(
+            coordinator_module.bluetooth,
+            "async_last_service_info",
+            lambda *_args, **_kwargs: cached,
+        )
+        assert coordinator._warm_drive_type_from_advertisement() == expected
+
+
+def test_5c16_identifies_an_unnamed_warm_drive_controller() -> None:
+    """Use the observed controller frame when a proxy omits both identity records."""
+    coordinator = coordinator_for_layout(True, name=None)
+    coordinator.address = "C8:17:F5:28:E7:9D"
+    coordinator.hass = MagicMock()
+    coordinator.hass.config_entries = MagicMock()
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(
+            coordinator_module.bluetooth,
+            "async_last_service_info",
+            lambda *_args, **_kwargs: None,
+        )
+        coordinator._notification_callback(FFF2, neo_config_response(device_type=1))
+
+        assert coordinator.is_warm_drive_controller is True
+        assert coordinator.data["neo_controller_type"] == "air"
+    coordinator.hass.config_entries.async_update_entry.assert_called_once()
+
+
+def test_5c16_does_not_reclassify_a_named_non_warm_drive_controller() -> None:
+    """A controller that gives another explicit name keeps its existing path."""
+    coordinator = coordinator_for_layout(True, name="Sunster Neo")
+    coordinator._notification_callback(FFF2, neo_config_response(device_type=1))
+
+    assert coordinator.is_warm_drive_controller is False
+    assert coordinator.data.get("neo_controller_type") is None
+    assert coordinator._warm_drive_board_config is None
 
 
 def test_warm_drive_ignores_a_mac_address_name() -> None:
@@ -350,7 +403,7 @@ async def test_mode_change_uses_native_warm_drive_control() -> None:
 
 @pytest.mark.asyncio
 async def test_level_change_does_not_send_a_legacy_gear_command() -> None:
-    coordinator = coordinator_for_layout(True)
+    coordinator = coordinator_for_layout(True, name="DZ06 Neo")
     coordinator._write_gatt = AsyncMock()
 
     assert await coordinator.async_set_level(2) is False
@@ -530,15 +583,20 @@ def test_bluetooth_config_response_sets_neo_target_range() -> None:
     assert coordinator.data["neo_max_target"] == 36
 
 
-@pytest.mark.parametrize(("device_type", "expected"), [(1, "air"), (2, "water")])
-def test_bluetooth_config_response_sets_warm_drive_controller_type(
-    device_type: int, expected: str,
-) -> None:
+def test_bluetooth_config_response_sets_warm_drive_configuration() -> None:
+    """Parse the same 5C16 fields that Warm Drive writes back in a 2612 frame."""
     coordinator = coordinator_for_layout(True)
-    coordinator._notification_callback(
-        FFF2, neo_config_response(device_type=device_type)
-    )
-    assert coordinator.data["neo_controller_type"] == expected
+    frame = neo_config_response(device_type=2)
+    frame[13:17] = bytes((2, 1, 4, 3))
+
+    coordinator._notification_callback(FFF2, frame)
+
+    assert coordinator.data["neo_controller_type"] == "water"
+    assert coordinator.data["warm_drive_max_heat"] is True
+    assert coordinator.data["auto_start_stop"] is True
+    assert coordinator.data["tank_volume"] == 4
+    assert coordinator.data["pump_type"] == 3
+    assert coordinator._warm_drive_board_config == frame
 
 
 def test_board_info_response_sets_warm_drive_temperature_unit() -> None:
@@ -717,3 +775,176 @@ def test_neo_burnoff_snapshot_captures_the_configured_upper_limit() -> None:
     )
 
     assert coordinator.burnoff_protocol_snapshot()["neo_max_target"] == 35
+
+@pytest.mark.parametrize(
+    ("byte_index", "value"),
+    [(13, 2), (14, 1), (15, 5), (16, 3)],
+)
+def test_warm_drive_config_write_changes_only_requested_field(
+    byte_index: int, value: int
+) -> None:
+    """Warm Drive's 0x26 packet must preserve the cached 5C16 configuration."""
+    coordinator = coordinator_for_layout(True)
+    config = bytearray(range(24))
+    config[:3] = bytes((0x5C, 0x16, 1))
+    coordinator._warm_drive_board_config = config
+
+    packet = coordinator._warm_drive_config_packet({byte_index: value})
+
+    assert packet is not None
+    assert packet[:2] == bytes((0x26, 0x12))
+    for index in range(2, 17):
+        assert packet[index] == (value if index == byte_index else config[index])
+    assert packet[17] == 1
+    assert packet[-2:] == coordinator._modbus_crc16(packet[:-2])
+
+
+def test_warm_drive_config_write_preserves_observed_calibration_bytes() -> None:
+    """A scoped write retains every calibration value from the real 0x26 frame."""
+    # Captured by SilverServerT from a Warm Drive air controller. The values
+    # not exposed by HA are intentionally preserved rather than interpreted or
+    # rewritten: oil type, 1.5-5.5 Hz pump range, 1550-4499 RPM fan range, and
+    # glow setting 5.
+    observed_write = bytes.fromhex(
+        "2612010108230f37060e1193050100000101ea86"
+    )
+    coordinator = coordinator_for_layout(True)
+    coordinator._warm_drive_board_config = bytearray(
+        b"\x5c\x16" + observed_write[2:17] + b"\x00" * 7
+    )
+
+    packet = coordinator._warm_drive_config_packet({14: 1})
+
+    assert packet is not None
+    assert packet[2:14] == observed_write[2:14]
+    assert packet[14] == 1
+    assert packet[15:17] == observed_write[15:17]
+    assert packet[17] == 1
+    assert packet[-2:] == coordinator._modbus_crc16(packet[:-2])
+
+
+@pytest.mark.asyncio
+async def test_warm_drive_config_write_updates_cached_field_after_success() -> None:
+    """Only a successful native config write changes the locally exposed value."""
+    coordinator = coordinator_for_layout(True)
+    config = bytearray(range(24))
+    config[:3] = bytes((0x5C, 0x16, 1))
+    coordinator._warm_drive_board_config = config
+    coordinator._write_gatt = AsyncMock()
+
+    result = await coordinator._async_write_warm_drive_config(
+        {14: 1},
+        {"auto_start_stop": True},
+        "Auto Start/Stop",
+    )
+
+    assert result is True
+    assert coordinator._warm_drive_board_config[14] == 1
+    assert coordinator.data["auto_start_stop"] is True
+    coordinator.async_request_refresh.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_warm_drive_config_write_requires_a_5c16_confirmation() -> None:
+    """A production write does not claim success until the app's readback arrives."""
+    coordinator = coordinator_for_layout(True)
+    config = bytearray(range(24))
+    config[:3] = bytes((0x5C, 0x16, 1))
+    coordinator._warm_drive_board_config = config
+    coordinator._client = object()
+    coordinator._write_gatt = AsyncMock()
+    coordinator._send_dz06_neo_configuration = AsyncMock(return_value=False)
+
+    result = await coordinator._async_write_warm_drive_config(
+        {14: 1},
+        {"auto_start_stop": True},
+        "Auto Start/Stop",
+    )
+
+    assert result is False
+    assert coordinator._warm_drive_board_config[14] == 14
+    assert "auto_start_stop" not in coordinator.data
+    coordinator.async_request_refresh.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_warm_drive_config_write_refreshes_after_5c16_confirmation() -> None:
+    """A confirmed native write refreshes the coordinator state."""
+    coordinator = coordinator_for_layout(True)
+    config = bytearray(range(24))
+    config[:3] = bytes((0x5C, 0x16, 1))
+    coordinator._warm_drive_board_config = config
+    coordinator._client = object()
+    coordinator._write_gatt = AsyncMock()
+    coordinator._send_dz06_neo_configuration = AsyncMock(return_value=True)
+
+    result = await coordinator._async_write_warm_drive_config(
+        {14: 1},
+        {"auto_start_stop": True},
+        "Auto Start/Stop",
+    )
+
+    assert result is True
+    coordinator._send_dz06_neo_configuration.assert_awaited_once()
+    coordinator.async_request_refresh.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_warm_drive_config_write_does_not_update_cache_on_failure() -> None:
+    """Failed writes must not claim a controller-side configuration change."""
+    coordinator = coordinator_for_layout(True)
+    config = bytearray(range(24))
+    config[:3] = bytes((0x5C, 0x16, 1))
+    coordinator._warm_drive_board_config = config
+    coordinator._write_gatt = AsyncMock(side_effect=RuntimeError("write failed"))
+
+    result = await coordinator._async_write_warm_drive_config(
+        {14: 1},
+        {"auto_start_stop": True},
+        "Auto Start/Stop",
+    )
+
+    assert result is False
+    assert coordinator._warm_drive_board_config[14] == 14
+    assert "auto_start_stop" not in coordinator.data
+    coordinator.async_request_refresh.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("level", "target"), [(1, 8), (3, 14), (5, 20), (10, 35)])
+async def test_warm_drive_air_level_uses_apk_target_ladder(
+    level: int, target: int
+) -> None:
+    """Warm Drive presents levels as the app's 8-35°C manual target ladder."""
+    coordinator = coordinator_for_layout(True)
+    coordinator.data.update(
+        {
+            "neo_controller_type": "air",
+            "neo_run_type": 1,
+            "neo_raw_state": 2,
+            "neo_min_target": 8,
+            "neo_max_target": 35,
+            "set_temp": 20,
+            "altitude": 91,
+        }
+    )
+    response = bytearray(39)
+    response[:2], response[15], response[34] = b"Z%", target, 1
+    coordinator._write_gatt = AsyncMock(
+        side_effect=lambda packet: coordinator._notification_callback(FFF2, response)
+    )
+
+    assert await coordinator.async_set_level(level) is True
+    packet = coordinator._write_gatt.await_args.args[0]
+    assert packet[3:9] == bytearray((0x51, 1, target, 0, 91, 1))
+
+
+@pytest.mark.asyncio
+async def test_warm_drive_water_level_change_sends_nothing() -> None:
+    """Warm Drive's water interface has no APK-proven 1-10 level control."""
+    coordinator = coordinator_for_layout(True)
+    coordinator.data["neo_controller_type"] = "water"
+    coordinator._write_gatt = AsyncMock()
+
+    assert await coordinator.async_set_level(5) is False
+    coordinator._write_gatt.assert_not_awaited()

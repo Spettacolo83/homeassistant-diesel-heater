@@ -11,6 +11,7 @@ from custom_components.diesel_heater.switch import (
     VevorHeaterPowerSwitch,
     VevorBurnoffSwitch,
     VevorAutoStartStopSwitch,
+    VevorWarmDriveMaxHeatSwitch,
     VevorAutoOffsetSwitch,
     VevorTempUnitSwitch,
     VevorAltitudeUnitSwitch,
@@ -300,6 +301,46 @@ class TestVevorAutoStartStopSwitch:
         await switch.async_turn_off()
 
         coordinator.async_set_auto_start_stop.assert_called_once_with(False)
+
+
+# ---------------------------------------------------------------------------
+# Warm Drive Max Heat switch tests
+# ---------------------------------------------------------------------------
+
+class TestVevorWarmDriveMaxHeatSwitch:
+    """Tests for the app-backed Warm Drive Max Heat switch."""
+
+    def test_available_after_controller_configuration(self):
+        """Test the control appears only after a 5C16 configuration response."""
+        coordinator = create_mock_coordinator()
+        coordinator.data["warm_drive_max_heat"] = True
+        switch = VevorWarmDriveMaxHeatSwitch(coordinator)
+
+        assert switch.available is True
+        assert switch.is_on is True
+
+    def test_unavailable_before_controller_configuration(self):
+        """Test no state is claimed before the controller reports the field."""
+        coordinator = create_mock_coordinator()
+        switch = VevorWarmDriveMaxHeatSwitch(coordinator)
+
+        assert switch.available is False
+        assert switch.is_on is None
+
+    @pytest.mark.asyncio
+    async def test_turns_max_heat_on_and_off(self):
+        """Test both switch actions use the dedicated coordinator method."""
+        coordinator = create_mock_coordinator()
+        coordinator.async_set_warm_drive_max_heat = AsyncMock()
+        switch = VevorWarmDriveMaxHeatSwitch(coordinator)
+
+        await switch.async_turn_on()
+        await switch.async_turn_off()
+
+        assert coordinator.async_set_warm_drive_max_heat.await_args_list == [
+            ((True,), {}),
+            ((False,), {}),
+        ]
 
 
 # ---------------------------------------------------------------------------

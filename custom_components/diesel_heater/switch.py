@@ -43,6 +43,8 @@ async def async_setup_entry(
     # Auto Start/Stop (AA66Encrypted, ABBA, CBFF, Hcalory)
     if mode in (0, 4, 5, 6, 7):
         entities.append(VevorAutoStartStopSwitch(coordinator))
+    if coordinator.is_warm_drive_controller is True:
+        entities.append(VevorWarmDriveMaxHeatSwitch(coordinator))
 
     # Temperature unit (AA66Encrypted, ABBA, CBFF, Hcalory)
     if mode in (0, 4, 5, 6, 7, 8):
@@ -205,6 +207,43 @@ class VevorAutoStartStopSwitch(CoordinatorEntity[VevorHeaterCoordinator], Switch
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
+
+
+class VevorWarmDriveMaxHeatSwitch(
+    CoordinatorEntity[VevorHeaterCoordinator], SwitchEntity
+):
+    """Warm Drive Max Heat switch backed by its 0x26 configuration field."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Max Heat"
+    _attr_icon = "mdi:fire"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the switch."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_warm_drive_max_heat"
+
+    @property
+    def available(self) -> bool:
+        """Return whether the controller has reported its configuration."""
+        return (
+            self.coordinator.data.get("connected", False)
+            and self.coordinator.data.get("warm_drive_max_heat") is not None
+        )
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return the cached app-backed Max Heat state."""
+        return self.coordinator.data.get("warm_drive_max_heat")
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Enable Max Heat."""
+        await self.coordinator.async_set_warm_drive_max_heat(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Disable Max Heat."""
+        await self.coordinator.async_set_warm_drive_max_heat(False)
 
 
 class VevorAutoOffsetSwitch(CoordinatorEntity[VevorHeaterCoordinator], SwitchEntity):

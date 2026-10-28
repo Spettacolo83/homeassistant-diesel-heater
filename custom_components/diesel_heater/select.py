@@ -24,6 +24,8 @@ from .const import (
     RUNNING_STEP_STANDBY,
     RUNNING_STEP_VENTILATION,
     TANK_VOLUME_OPTIONS,
+    WARM_DRIVE_PUMP_FLOW_OPTIONS,
+    WARM_DRIVE_TANK_VOLUME_OPTIONS,
 )
 from .coordinator import VevorHeaterCoordinator
 
@@ -54,8 +56,13 @@ async def async_setup_entry(
     else:
         entities = [VevorHeaterModeSelect(coordinator)]
 
-    # Config selects (AA66Encrypted + CBFF: language, pump_type, tank_volume)
-    if mode in (0, 4, 6):
+    # Warm Drive has its own app-defined tank/pump configuration fields.
+    if coordinator.is_warm_drive_controller is True:
+        entities.extend([
+            VevorHeaterPumpTypeSelect(coordinator),
+            VevorHeaterTankVolumeSelect(coordinator),
+        ])
+    elif mode in (0, 4, 6):
         entities.extend([
             VevorHeaterLanguageSelect(coordinator),
             VevorHeaterPumpTypeSelect(coordinator),
@@ -284,6 +291,9 @@ class VevorHeaterPumpTypeSelect(SelectEntity):
     def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
         """Initialize the select entity."""
         self.coordinator = coordinator
+        if coordinator.is_warm_drive_controller is True:
+            self._attr_name = "Pump Flow"
+            self._attr_options = list(WARM_DRIVE_PUMP_FLOW_OPTIONS.values())
         self._attr_device_info = {
             "identifiers": {(DOMAIN, coordinator.address)},
             "name": "Vevor Heater",
@@ -306,14 +316,24 @@ class VevorHeaterPumpTypeSelect(SelectEntity):
         """Return the current pump type."""
         pump_type = self.coordinator.data.get("pump_type")
         if pump_type is not None:
-            return PUMP_TYPE_OPTIONS.get(pump_type, f"Type {pump_type}")
+            options = (
+                WARM_DRIVE_PUMP_FLOW_OPTIONS
+                if self.coordinator.is_warm_drive_controller is True
+                else PUMP_TYPE_OPTIONS
+            )
+            return options.get(pump_type, f"Type {pump_type}")
         return None
 
     async def async_select_option(self, option: str) -> None:
         """Change the pump type."""
         # Find the pump type code for the selected option
         pump_code = None
-        for code, name in PUMP_TYPE_OPTIONS.items():
+        options = (
+            WARM_DRIVE_PUMP_FLOW_OPTIONS
+            if self.coordinator.is_warm_drive_controller is True
+            else PUMP_TYPE_OPTIONS
+        )
+        for code, name in options.items():
             if name == option:
                 pump_code = code
                 break
@@ -347,6 +367,8 @@ class VevorHeaterTankVolumeSelect(SelectEntity):
     def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
         """Initialize the select entity."""
         self.coordinator = coordinator
+        if coordinator.is_warm_drive_controller is True:
+            self._attr_options = list(WARM_DRIVE_TANK_VOLUME_OPTIONS.values())
         self._attr_device_info = {
             "identifiers": {(DOMAIN, coordinator.address)},
             "name": "Vevor Heater",
@@ -366,8 +388,13 @@ class VevorHeaterTankVolumeSelect(SelectEntity):
         tank_volume = self.coordinator.data.get("tank_volume")
         if tank_volume is not None:
             # Return exact match or closest option
-            if tank_volume in TANK_VOLUME_OPTIONS:
-                return TANK_VOLUME_OPTIONS[tank_volume]
+            options = (
+                WARM_DRIVE_TANK_VOLUME_OPTIONS
+                if self.coordinator.is_warm_drive_controller is True
+                else TANK_VOLUME_OPTIONS
+            )
+            if tank_volume in options:
+                return options[tank_volume]
             # If not an exact match, show the raw value
             return f"{tank_volume} L"
         return None
@@ -376,7 +403,12 @@ class VevorHeaterTankVolumeSelect(SelectEntity):
         """Change the tank volume."""
         # Find the volume value for the selected option
         volume = None
-        for vol, name in TANK_VOLUME_OPTIONS.items():
+        options = (
+            WARM_DRIVE_TANK_VOLUME_OPTIONS
+            if self.coordinator.is_warm_drive_controller is True
+            else TANK_VOLUME_OPTIONS
+        )
+        for vol, name in options.items():
             if name == option:
                 volume = vol
                 break
