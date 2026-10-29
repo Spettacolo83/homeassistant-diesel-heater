@@ -2101,14 +2101,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             elif self._is_cronus_device:
                 self._logger.debug("Cronus ready; polling record cache")
             else:
-                # The Sunster app waits for AA77, completes the encrypted
-                # V2.1 handshake, then asks for status. Give an unsolicited
-                # AA77 marker a chance to arrive before our legacy discovery
-                # probe, which is still needed for initially unknown devices.
+                # The Sunster app retains the known V2.1 protocol across a
+                # reconnect, then sends a fresh handshake after notifications
+                # are enabled. Unknown controllers still need discovery.
                 await asyncio.sleep(0.3)
                 if self._protocol_mode != 6:
                     await self._send_wake_up_ping()
-                if self._protocol_mode == 6:
+                else:
+                    self._queue_v21_handshake(self._protocol)
                     await self._wait_for_v21_handshake()
 
             self._connection_attempts = 0  # Reset on successful connection
@@ -2649,21 +2649,21 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     self._logger.debug("Disconnected from heater")
             except Exception as err:
                 self._logger.debug("Error during cleanup: %s", err)
-            finally:
-                self._client = None
-                self._characteristic = None
-                self._active_char_uuid = None
-                # Reset Hcalory MVP2 password state on disconnect
-                if self._protocol and hasattr(self._protocol, 'reset_password_state'):
-                    self._protocol.reset_password_state()
-                # Reset V2.1 handshake state on reconnect
-                self._v21_handshake_sent = False
-                self._v21_handshake_event.clear()
-                self._v21_handshake_authenticated = None
-                self._warm_drive_board_config = None
-                # Keep the V2.1 initial settings write one-shot across reconnects.
-                self._time_synced_this_connection = False
-                # The Sunster app retains its equivalent first-send guard per device.
+
+        self._client = None
+        self._characteristic = None
+        self._active_char_uuid = None
+        # Reset Hcalory MVP2 password state on disconnect
+        if self._protocol and hasattr(self._protocol, 'reset_password_state'):
+            self._protocol.reset_password_state()
+        # Reset V2.1 handshake state on reconnect.
+        self._v21_handshake_sent = False
+        self._v21_handshake_event.clear()
+        self._v21_handshake_authenticated = None
+        self._warm_drive_board_config = None
+        # Keep the V2.1 initial settings write one-shot across reconnects.
+        self._time_synced_this_connection = False
+        # The Sunster app retains its equivalent first-send guard per device.
 
     async def _async_password_handshake(self, max_retries: int = 3) -> bool:
         """Send password handshake with retry logic (@Xev optimizations, issue #34).
