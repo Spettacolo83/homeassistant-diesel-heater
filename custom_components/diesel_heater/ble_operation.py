@@ -1,78 +1,42 @@
-"""Serialize Diesel Heater operations without changing BLE connection lifetime."""
+"""Serialize one heater's operations without changing BLE connection lifetime."""
 
 from __future__ import annotations
 
 import asyncio
-import heapq
-import itertools
 from contextlib import asynccontextmanager
 from functools import wraps
 
-SCHEDULER_KEY = "diesel_heater_operation_scheduler_v1"
 
-
-class BleOperationScheduler:
-    """Task-owned FIFO operations, with controls ahead of pending polls."""
+class BleOperationLock:
+    """A per-coordinator lock reentrant only in its owning asyncio task."""
 
     def __init__(self):
+        self._lock = asyncio.Lock()
         self.owner = None
-        self.participant = None
-        self._pending = []
-        self._sequence = itertools.count()
-        self._commands = 0
 
-    def owned_by(self, participant):
-        return self.owner is asyncio.current_task() and self.participant is participant
-
-    def _dispatch(self):
-        if self.owner is not None:
-            return
-        self._pending[:] = [item for item in self._pending if not item[2].done()]
-        heapq.heapify(self._pending)
-        if not self._pending:
-            return
-        if self._commands >= 3 and any(item[0] == 1 for item in self._pending):
-            item = min((i for i in self._pending if i[0] == 1), key=lambda i: i[1])
-            self._pending.remove(item)
-            heapq.heapify(self._pending)
-        else:
-            item = heapq.heappop(self._pending)
-        priority, _, future, task, participant = item
-        self.owner, self.participant = task, participant
-        self._commands = self._commands + 1 if priority == 0 else 0
-        future.set_result(None)
+    def owned_by_current_task(self):
+        return self.owner is asyncio.current_task()
 
     @asynccontextmanager
-    async def operation(self, participant, *, poll=False):
-        task = asyncio.current_task()
-        if self.owner is task:
-            if self.participant is not participant:
-                raise RuntimeError("Cannot nest another heater's operation")
+    async def operation(self):
+        if self.owned_by_current_task():
             yield
             return
-        future = asyncio.get_running_loop().create_future()
-        item = (1 if poll else 0, next(self._sequence), future, task, participant)
-        heapq.heappush(self._pending, item)
-        self._dispatch()
-        try:
-            await future
-            yield
-        finally:
-            future.cancel()
-            if self.owner is task:
-                self.owner = self.participant = None
-            self._pending[:] = [i for i in self._pending if i is not item]
-            heapq.heapify(self._pending)
-            self._dispatch()
+        async with self._lock:
+            self.owner = asyncio.current_task()
+            try:
+                yield
+            finally:
+                self.owner = None
 
 
 @asynccontextmanager
-async def transaction_context(coordinator, *, poll=False):
+async def transaction_context(coordinator):
     """Schedule a refresh only after the outer operation has released."""
-    scheduler = coordinator._ble_scheduler
-    outer = not scheduler.owned_by(coordinator)
+    lock = coordinator._ble_operation_lock
+    outer = not lock.owned_by_current_task()
     try:
-        async with scheduler.operation(coordinator, poll=poll):
+        async with lock.operation():
             yield
     finally:
         if outer and coordinator._ble_refresh_pending:
@@ -80,15 +44,15 @@ async def transaction_context(coordinator, *, poll=False):
             coordinator.hass.async_create_task(coordinator.async_request_refresh())
 
 
-def ble_transaction(method=None, *, poll=False):
+def ble_transaction(method):
     """Order hardware operations; leave connection policy to protocol methods."""
 
     def decorate(function):
         @wraps(function)
         async def wrapped(self, *args, **kwargs):
-            async with transaction_context(self, poll=poll):
+            async with transaction_context(self):
                 return await function(self, *args, **kwargs)
 
         return wrapped
 
-    return decorate(method) if method is not None else decorate
+    return decorate(method)

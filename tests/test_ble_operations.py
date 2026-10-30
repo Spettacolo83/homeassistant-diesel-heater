@@ -12,16 +12,14 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from custom_components.diesel_heater import coordinator as source
-from custom_components.diesel_heater.ble_operation import BleOperationScheduler, ble_transaction
+from custom_components.diesel_heater.ble_operation import BleOperationLock, ble_transaction
 from diesel_heater_ble import ProtocolHcalory
 
 from .test_coordinator import create_mock_coordinator
 
 
-def heater(scheduler=None):
+def heater():
     h = create_mock_coordinator()
-    if scheduler is not None:
-        h._ble_scheduler = scheduler
     h._last_update_time = h._last_save_time = time.time()
     return h
 
@@ -157,41 +155,35 @@ def test_all_async_methods_are_full_production_coroutines():
 
 
 @pytest.mark.asyncio
-async def test_fifo_priority_and_bounded_poll_fairness_do_not_touch_connections():
-    scheduler = BleOperationScheduler()
-    order = []
-    participants = [SimpleNamespace(_client=object()) for _ in range(7)]
-    originals = [p._client for p in participants]
+async def test_different_heaters_operate_concurrently():
+    first, second = heater(), heater()
+    entered = asyncio.Event()
 
-    async def job(i, poll=False):
-        async with scheduler.operation(participants[i], poll=poll):
-            order.append(i)
-            await asyncio.sleep(0)
+    async def second_operation():
+        async with second.ble_operation():
+            entered.set()
 
-    async with scheduler.operation(participants[0]):
-        jobs = [asyncio.create_task(job(1, poll=True))]
-        jobs += [asyncio.create_task(job(i)) for i in range(2, 7)]
-        await asyncio.sleep(0)
-    await asyncio.gather(*jobs)
-    assert order == [2, 3, 1, 4, 5, 6]  # Owning control already counts as one.
-    assert [p._client for p in participants] == originals
+    async with first.ble_operation():
+        task = asyncio.create_task(second_operation())
+        await asyncio.wait_for(entered.wait(), 1)
+        await task
+        assert first._ble_operation_lock.owned_by_current_task()
 
 
 @pytest.mark.asyncio
 async def test_cancelled_waiter_and_owner_release_without_connection_side_effects():
-    scheduler = BleOperationScheduler()
-    a, b = object(), object()
-    async with scheduler.operation(a):
-        waiter = asyncio.create_task(scheduled_wait(scheduler, b))
+    scheduler = BleOperationLock()
+    async with scheduler.operation():
+        waiter = asyncio.create_task(scheduled_wait(scheduler))
         await asyncio.sleep(0)
         waiter.cancel()
         with pytest.raises(asyncio.CancelledError):
             await waiter
-        assert scheduler.owned_by(a)
+        assert scheduler.owned_by_current_task()
     entered = asyncio.Event()
 
     async def owner():
-        async with scheduler.operation(b):
+        async with scheduler.operation():
             entered.set()
             await asyncio.sleep(60)
 
@@ -201,22 +193,21 @@ async def test_cancelled_waiter_and_owner_release_without_connection_side_effect
     with pytest.raises(asyncio.CancelledError):
         await task
     assert scheduler.owner is None
-    assert not scheduler._pending
+    assert not scheduler._lock.locked()
 
 
-async def scheduled_wait(scheduler, participant):
-    async with scheduler.operation(participant):
+async def scheduled_wait(scheduler):
+    async with scheduler.operation():
         pass
 
 
 @pytest.mark.asyncio
 async def test_same_task_reentry_and_callback_task_independent_ownership():
-    scheduler = BleOperationScheduler()
-    h = object()
-    async with scheduler.operation(h):
-        async with scheduler.operation(h):
-            assert scheduler.owned_by(h)
-        task = asyncio.create_task(scheduled_wait(scheduler, h))
+    scheduler = BleOperationLock()
+    async with scheduler.operation():
+        async with scheduler.operation():
+            assert scheduler.owned_by_current_task()
+        task = asyncio.create_task(scheduled_wait(scheduler))
         await asyncio.sleep(0)
         assert not task.done()
     await task
@@ -246,12 +237,12 @@ async def test_cross_task_coordinator_refresh_runs_after_operation_release():
 
 @pytest.mark.asyncio
 async def test_recovery_and_shutdown_wait_for_operation_without_connecting():
-    scheduler = BleOperationScheduler()
-    blocker, h = heater(scheduler), heater(scheduler)
+    h = heater()
+    scheduler = h._ble_operation_lock
     h._ensure_connected = AsyncMock()
     h._cleanup_connection = AsyncMock()
     h._auto_offset_unsub = None
-    async with scheduler.operation(blocker):
+    async with scheduler.operation():
         task = asyncio.create_task(h.async_shutdown())
         await asyncio.sleep(0)
         assert not task.done()
@@ -270,7 +261,7 @@ async def test_recovery_and_shutdown_wait_for_operation_without_connecting():
         },
     ):
         h._resolve_local_hci_for_heater = lambda adapters: None
-        async with scheduler.operation(blocker):
+        async with scheduler.operation():
             task = asyncio.create_task(h._async_recover_internally())
             await asyncio.sleep(0)
             assert not task.done()
@@ -302,7 +293,7 @@ async def test_burnoff_restore_and_off_are_atomic_after_burnoff_lock():
 
         async def restore_saved_mode(self):
             assert self.lock.locked()
-            assert h._ble_scheduler.owned_by(h)
+            assert h._ble_operation_lock.owned_by_current_task()
             order.append("restore")
             await asyncio.sleep(0.01)
             return True
@@ -311,7 +302,7 @@ async def test_burnoff_restore_and_off_are_atomic_after_burnoff_lock():
             pass
 
     async def off():
-        assert h._ble_scheduler.owned_by(h)
+        assert h._ble_operation_lock.owned_by_current_task()
         order.append("off")
 
     h._power_off = off
@@ -332,8 +323,8 @@ async def test_burnoff_restore_and_off_are_atomic_after_burnoff_lock():
 async def test_select_direct_configuration_write_waits_for_scheduled_poll(kind, field, index):
     from custom_components.diesel_heater import select as platform
 
-    scheduler = BleOperationScheduler()
-    blocker, h = heater(scheduler), heater(scheduler)
+    h = heater()
+    scheduler = h._ble_operation_lock
     h._ble_device.name = "Air Heater"
     h._is_abba_device = True
     h._characteristic = characteristic(source.DZ06_NEO_NOTIFY_UUID, "notify")
@@ -357,7 +348,7 @@ async def test_select_direct_configuration_write_waits_for_scheduled_poll(kind, 
         entity = platform.VevorHeaterPumpTypeSelect(h)
         option = platform.WARM_DRIVE_PUMP_FLOW_OPTIONS[2]
     assert h.is_warm_drive_controller
-    async with scheduler.operation(blocker, poll=True):
+    async with scheduler.operation():
         task = asyncio.create_task(entity.async_select_option(option))
         await asyncio.sleep(0)
         assert not task.done()

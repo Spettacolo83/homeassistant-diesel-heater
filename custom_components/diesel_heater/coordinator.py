@@ -28,7 +28,7 @@ from homeassistant.util import dt as dt_util
 
 from homeassistant.helpers.event import async_track_state_change_event
 
-from .ble_operation import SCHEDULER_KEY, BleOperationScheduler, ble_transaction, transaction_context
+from .ble_operation import BleOperationLock, ble_transaction, transaction_context
 from .burnoff import BurnoffController, BurnoffPhase
 from .hcalory import HcaloryVariant, hcalory_variant_from_discovery, uses_mvp2_commands
 from .const import (
@@ -166,7 +166,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             update_interval=timedelta(seconds=UPDATE_INTERVAL),
         )
 
-        self._ble_scheduler = hass.data.setdefault(SCHEDULER_KEY, BleOperationScheduler())
+        self._ble_operation_lock = BleOperationLock()
         self._ble_refresh_pending = False
         self.address = ble_device.address
         self._ble_device = ble_device
@@ -1586,12 +1586,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
     async def async_request_refresh(self) -> None:
         """HA can refresh in another task; defer until operation release."""
-        if self._ble_scheduler.owned_by(self):
+        if self._ble_operation_lock.owned_by_current_task():
             self._ble_refresh_pending = True
             return
         await super().async_request_refresh()
 
-    @ble_transaction(poll=True)
+    @ble_transaction
     async def _async_update_data(self) -> dict[str, Any]:
         """Update data from the heater."""
         # Check for daily reset FIRST, even if heater is offline
