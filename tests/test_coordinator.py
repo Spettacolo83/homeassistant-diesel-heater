@@ -101,6 +101,9 @@ def create_mock_coordinator() -> VevorHeaterCoordinator:
     coordinator = object.__new__(VevorHeaterCoordinator)
     coordinator._stopping = False
     coordinator._background_tasks = set()
+    from custom_components.diesel_heater.ble_operation import BleOperationLock
+    coordinator._ble_operation_lock = BleOperationLock()
+    coordinator._ble_refresh_pending = False
 
     # Set up minimum required attributes
     coordinator.hass = hass
