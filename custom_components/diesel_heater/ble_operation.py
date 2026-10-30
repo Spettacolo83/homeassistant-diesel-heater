@@ -35,11 +35,13 @@ async def transaction_context(coordinator):
     """Schedule a refresh only after the outer operation has released."""
     lock = coordinator._ble_operation_lock
     outer = not lock.owned_by_current_task()
+    entered = False
     try:
         async with lock.operation():
+            entered = True
             yield
     finally:
-        if outer and coordinator._ble_refresh_pending:
+        if outer and entered and coordinator._ble_refresh_pending:
             coordinator._ble_refresh_pending = False
             coordinator.hass.async_create_task(coordinator.async_request_refresh())
 

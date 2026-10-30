@@ -362,3 +362,33 @@ async def test_select_direct_configuration_write_waits_for_scheduled_poll(kind, 
     h._send_dz06_neo_configuration.assert_awaited_once()
     assert h.data[field] == 2
     h._send_command.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_waiter_does_not_consume_owners_pending_refresh():
+    h = heater()
+    h.async_request_refresh = source.VevorHeaterCoordinator.async_request_refresh.__get__(h)
+    h._async_update_data = AsyncMock(return_value={})
+    tasks = []
+    h.hass.async_create_task = lambda coro: tasks.append(asyncio.create_task(coro))
+
+    async def base_refresh(host):
+        await asyncio.create_task(host._async_update_data())
+
+    async def waiting_operation():
+        async with h.ble_operation():
+            pass
+
+    with patch.object(source.VevorHeaterCoordinator.__bases__[0], "async_request_refresh", base_refresh):
+        async with h.ble_operation():
+            await h.async_request_refresh()
+            waiter = asyncio.create_task(waiting_operation())
+            await asyncio.sleep(0)
+            waiter.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await waiter
+            assert h._ble_refresh_pending
+            assert tasks == []
+        assert len(tasks) == 1
+        await asyncio.gather(*tasks)
+    h._async_update_data.assert_awaited_once()
