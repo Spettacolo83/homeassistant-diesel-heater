@@ -4393,6 +4393,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._logger.info("✅ High altitude mode set to %s", mode_names.get(target))
         await self.async_request_refresh()
 
+    @ble_transaction
     async def async_set_tank_volume(self, volume_index: int) -> None:
         """Set tank volume by index (cmd 16).
 
@@ -4424,6 +4425,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         else:
             self._logger.warning("❌ Failed to set tank volume")
 
+    @ble_transaction
     async def async_set_pump_type(self, pump_type: int) -> None:
         """Set oil pump type (cmd 17).
 

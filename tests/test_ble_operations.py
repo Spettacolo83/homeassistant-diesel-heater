@@ -325,3 +325,49 @@ async def test_burnoff_restore_and_off_are_atomic_after_burnoff_lock():
 
     await asyncio.gather(task, control())
     assert order == ["restore", "off", "control"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind,field,index", [("tank", "tank_volume", 15), ("pump", "pump_type", 16)])
+async def test_select_direct_configuration_write_waits_for_scheduled_poll(kind, field, index):
+    from custom_components.diesel_heater import select as platform
+
+    scheduler = BleOperationScheduler()
+    blocker, h = heater(scheduler), heater(scheduler)
+    h._ble_device.name = "Air Heater"
+    h._is_abba_device = True
+    h._characteristic = characteristic(source.DZ06_NEO_NOTIFY_UUID, "notify")
+    h._abba_write_char = characteristic(source.DZ06_NEO_WRITE_UUID, "write")
+    h._warm_drive_board_config = bytearray(range(24))
+    h._warm_drive_board_config[:3] = bytes((0x5C, 0x16, 1))
+    h._client = SimpleNamespace(is_connected=True, write_gatt_char=AsyncMock())
+
+    async def confirm_configuration():
+        frame = h._warm_drive_board_config.copy()
+        frame[index] = 2
+        h._notification_callback(0, frame)
+        return True
+
+    h._send_dz06_neo_configuration = AsyncMock(side_effect=confirm_configuration)
+    h._send_command = AsyncMock(side_effect=AssertionError("Must exercise direct configuration write"))
+    if kind == "tank":
+        entity = platform.VevorHeaterTankVolumeSelect(h)
+        option = platform.WARM_DRIVE_TANK_VOLUME_OPTIONS[2]
+    else:
+        entity = platform.VevorHeaterPumpTypeSelect(h)
+        option = platform.WARM_DRIVE_PUMP_FLOW_OPTIONS[2]
+    assert h.is_warm_drive_controller
+    async with scheduler.operation(blocker, poll=True):
+        task = asyncio.create_task(entity.async_select_option(option))
+        await asyncio.sleep(0)
+        assert not task.done()
+        h._client.write_gatt_char.assert_not_awaited()
+        h._send_dz06_neo_configuration.assert_not_awaited()
+    await asyncio.wait_for(task, 1)
+    h._client.write_gatt_char.assert_awaited_once()
+    packet = h._client.write_gatt_char.await_args.args[1]
+    assert packet[:2] == bytes((0x26, 0x12))
+    assert packet[index] == 2
+    h._send_dz06_neo_configuration.assert_awaited_once()
+    assert h.data[field] == 2
+    h._send_command.assert_not_awaited()
