@@ -756,7 +756,7 @@ class BurnoffController:
 
     async def complete(self) -> None:
         """Finish burn-off: restore previous mode, then power off if requested."""
-        async with self.lock:
+        async with self.lock, self._host.ble_operation():
             if not self.active:
                 return
             # Don't send Off if the ECU already stopped (ABBA toggle would restart).
@@ -772,12 +772,12 @@ class BurnoffController:
                 await self.mark_restoring()
                 return
             await self.clear_state()
-        if shutdown_after:
-            await self._host._power_off()
+            if shutdown_after:
+                await self._host._power_off()
 
     async def start(self, *, shutdown_after: bool = True) -> None:
         """Run at max power, optionally shutting down when the timer expires."""
-        async with self.lock:
+        async with self.lock, self._host.ble_operation():
             if self.active:
                 if shutdown_after and not self.cycle.shutdown_after:
                     self.cycle.shutdown_after = True

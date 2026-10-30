@@ -527,8 +527,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: DieselHeaterConfigEntry)
             for coord in target_coords:
                 _LOGGER.info("Setting timer on heater: %s", coord.address)
                 try:
-                    await coord.async_set_timer_start(start_minutes)
-                    await coord.async_set_timer_duration(duration)
+                    async with coord.ble_operation():
+                        await coord.async_set_timer_start(start_minutes)
+                        await coord.async_set_timer_duration(duration)
                 except Exception as err:
                     raise HomeAssistantError(
                         translation_domain=DOMAIN,

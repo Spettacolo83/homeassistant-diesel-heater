@@ -28,6 +28,7 @@ from homeassistant.util import dt as dt_util
 
 from homeassistant.helpers.event import async_track_state_change_event
 
+from .ble_operation import BleOperationLock, ble_transaction, transaction_context
 from .burnoff import BurnoffController, BurnoffPhase
 from .hcalory import HcaloryVariant, hcalory_variant_from_discovery, uses_mvp2_commands
 from .const import (
@@ -165,6 +166,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             update_interval=timedelta(seconds=UPDATE_INTERVAL),
         )
 
+        self._ble_operation_lock = BleOperationLock()
+        self._ble_refresh_pending = False
         self.address = ble_device.address
         self._ble_device = ble_device
         self.config_entry = config_entry
@@ -713,6 +716,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._cronus_records[name] = bytes(self._cronus_pending_data)
         return True
 
+    @ble_transaction
     async def _async_write_cronus_record(self, name: str, payload: bytes) -> bool:
         """Write one documented ThermoConnect record and wait for its matching ack."""
         protocol = self._protocols[9]
@@ -1500,6 +1504,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     return None
         return None
 
+    @ble_transaction
     async def _async_recover_internally(self) -> bool:
         """Reset the one local BT adapter serving this heater, then drop our
         stale BLE client. Returns True iff that adapter reported recovery.
@@ -1575,6 +1580,18 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             )
         return recovered
 
+    def ble_operation(self):
+        """Group ordered writes after acquiring the burnoff lock."""
+        return transaction_context(self)
+
+    async def async_request_refresh(self) -> None:
+        """HA can refresh in another task; defer until operation release."""
+        if self._ble_operation_lock.owned_by_current_task():
+            self._ble_refresh_pending = True
+            return
+        await super().async_request_refresh()
+
+    @ble_transaction
     async def _async_update_data(self) -> dict[str, Any]:
         """Update data from the heater."""
         # Check for daily reset FIRST, even if heater is offline
@@ -1592,7 +1609,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 # stays at 0, and the beta.14/15 auto-recovery hook never
                 # fires. Observed live on 2026-10-13 against @Spettacolo83's
                 # BCM43438 after the first poll wedges the GATT subscription.
-                await asyncio.wait_for(self._ensure_connected(), timeout=20.0)
+                await self._ensure_connected_with_timeout()
                 connected_this_update = True
             except asyncio.TimeoutError as err:
                 self._logger.debug(
@@ -1626,10 +1643,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 status = False
                 for attempt in range(max_retries):
                     try:
-                        status = await asyncio.wait_for(
-                            self._send_command(1, 0),
-                            timeout=15.0,
-                        )
+                        async with asyncio.timeout(15.0):
+                            status = await self._send_command(1, 0)
                     except asyncio.TimeoutError:
                         self._logger.debug(
                             "Status request hard-timeout (attempt %d/%d) — bleak "
@@ -1686,11 +1701,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 # no-data window and starts a fresh authenticated session.
                 await self._cleanup_connection()
                 try:
-                    await asyncio.wait_for(self._ensure_connected(), timeout=20.0)
+                    await self._ensure_connected_with_timeout()
                     connected_this_update = True
-                    status = await asyncio.wait_for(
-                        self._send_command(1, 0), timeout=15.0
-                    )
+                    async with asyncio.timeout(15.0):
+                        status = await self._send_command(1, 0)
                 except Exception as err:
                     self._logger.debug(
                         "FEAA fresh-session recovery failed: %s", err
@@ -1760,6 +1774,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             if self._consecutive_failures <= self._max_stale_cycles:
                 return self.data
             raise UpdateFailed(f"Error updating data: {err}")
+
+    async def _ensure_connected_with_timeout(self) -> None:
+        """Retain the upstream connect deadline in the owning task."""
+        async with asyncio.timeout(20.0):
+            await self._ensure_connected()
 
     async def _ensure_connected(self) -> None:
         """Ensure BLE connection is established with exponential backoff."""
@@ -3151,6 +3170,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             return False
         return True
 
+    @ble_transaction
     async def _send_command(self, command: int, argument: int, timeout: float = 5.0, max_retries: int = 1) -> bool:
         """Serialize protocol-specific commands."""
         if self._protocol_mode == 6:
@@ -3551,6 +3571,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 )
         return snapshot
 
+    @ble_transaction
     async def async_apply_burnoff_max_power(self, cycle: Any) -> bool:
         """Apply the app-backed maximum-power operation for this protocol."""
         if self._protocol_mode == 8:
@@ -3577,6 +3598,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         max_level = ABBA_MAX_LEVEL if self._protocol_mode == 5 else MAX_LEVEL
         return bool(await self.async_set_level(max_level)) and mode_ok
 
+    @ble_transaction
     async def async_restore_burnoff_snapshot(self, cycle: Any) -> bool:
         """Restore the app-native mode and target captured before burn-off."""
         mode = cycle.saved_mode
@@ -3621,6 +3643,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             return
         await self.async_request_refresh()
 
+    @ble_transaction
     async def _power_off(self) -> None:
         """Send the real power-off command."""
         # ABBA uses a toggle command (0xA1) for both ON and OFF.
@@ -3665,6 +3688,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """Skip burn-off and power off immediately."""
         await self.async_turn_off(immediate=True)
 
+    @ble_transaction
     async def _send_dz06_neo_power(self, turn_on: bool) -> bool:
         """Send and confirm a captured Neo ON/OFF command."""
         if not self.is_dz06_neo:
@@ -3699,16 +3723,20 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
     async def async_turn_on(self) -> None:
         """Turn heater on."""
+        if self._protocol_mode != 9:
+            await self._burnoff.cancel(restore=not self.is_dz06_neo)
+        await self._async_turn_on_scheduled()
+
+    @ble_transaction
+    async def _async_turn_on_scheduled(self) -> None:
         if self._protocol_mode == 9:
             if await self._async_write_cronus_record("power", bytes((1, 1))):
                 await self.async_request_refresh()
             return
         if self.is_dz06_neo:
-            await self._burnoff.cancel(restore=False)
             if await self._send_dz06_neo_power(True):
                 await self.async_request_refresh()
             return
-        await self._burnoff.cancel(restore=True)
         # ABBA uses a toggle command (0xA1) for both ON and OFF.
         # Guard against accidental toggle while already running or cooling down.
         if self._protocol_mode == 5:
@@ -3765,6 +3793,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         await self._power_off()
 
+    @ble_transaction
     async def async_set_level(self, level: int) -> None:
         """Set heater level (1-10).
 
@@ -3876,6 +3905,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._logger.warning("❌ SET LEVEL FAILED: level=%d", level)
         return success
 
+    @ble_transaction
     async def async_set_temperature(self, temperature: float) -> None:
         """Set target temperature in heater's native unit (no conversions).
 
@@ -3984,6 +4014,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._logger.warning("🌡️ SET TEMPERATURE FAILED: command not sent successfully")
         return success
 
+    @ble_transaction
     async def async_set_cronus_mode(self, mode_name: str) -> None:
         """Set a controller mode exposed by ThermoConnect."""
         controller_type = self.data.get("cronus_controller_type")
@@ -4001,6 +4032,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if await self._async_write_cronus_record(f"{controller_type}_mode", bytes((mode_value,))):
             await self.async_request_refresh()
 
+    @ble_transaction
     async def async_set_mode(self, mode: int) -> None:
         """Set running mode (0=Manual, 1=Level, 2=Temperature, 3=Ventilation).
 
@@ -4070,6 +4102,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             await self._refresh_after_control_command()
         return success
 
+    @ble_transaction
     async def async_set_auto_start_stop(self, enabled: bool) -> None:
         """Set Automatic Start/Stop mode (cmd 18).
 
@@ -4103,6 +4136,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if success:
             await self.async_request_refresh()
 
+    @ble_transaction
     async def async_set_warm_drive_max_heat(self, enabled: bool) -> None:
         """Set the APK-defined Warm Drive Max Heat configuration flag."""
         if not self.is_warm_drive_controller:
@@ -4113,6 +4147,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             "Max Heat",
         )
 
+    @ble_transaction
     async def async_sync_time(self) -> bool:
         """Synchronize time only through a protocol's app-backed command."""
         if not self.supports_time_sync:
@@ -4200,6 +4235,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         return success
 
+    @ble_transaction
     async def async_set_heater_offset(self, offset: int) -> None:
         """Set temperature offset on the heater (cmd 20).
 
@@ -4232,6 +4268,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         else:
             self._logger.warning("❌ Failed to set heater offset")
 
+    @ble_transaction
     async def async_set_language(self, language: int) -> None:
         """Set voice notification language (cmd 14).
 
@@ -4247,6 +4284,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         else:
             self._logger.warning("❌ Failed to set language")
 
+    @ble_transaction
     async def async_set_temp_unit(self, use_fahrenheit: bool) -> None:
         """Set temperature unit (cmd 15).
 
@@ -4269,6 +4307,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         else:
             self._logger.warning("❌ Failed to set temperature unit")
 
+    @ble_transaction
     async def async_set_altitude_unit(self, use_feet: bool) -> None:
         """Set altitude unit (cmd 19).
 
@@ -4286,6 +4325,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         else:
             self._logger.warning("❌ Failed to set altitude unit")
 
+    @ble_transaction
     async def async_set_high_altitude(self, enabled: bool) -> None:
         """Toggle high altitude mode (ABBA-only, cmd 99).
 
@@ -4304,6 +4344,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         else:
             self._logger.warning("❌ Failed to set high altitude mode")
 
+    @ble_transaction
     async def async_set_altitude_mode(self, mode: int) -> None:
         """Set high altitude mode for Hcalory MVP2 (0=Disabled, 1=Mode 1, 2=Mode 2).
 
@@ -4352,6 +4393,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._logger.info("✅ High altitude mode set to %s", mode_names.get(target))
         await self.async_request_refresh()
 
+    @ble_transaction
     async def async_set_tank_volume(self, volume_index: int) -> None:
         """Set tank volume by index (cmd 16).
 
@@ -4383,6 +4425,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         else:
             self._logger.warning("❌ Failed to set tank volume")
 
+    @ble_transaction
     async def async_set_pump_type(self, pump_type: int) -> None:
         """Set oil pump type (cmd 17).
 
@@ -4408,6 +4451,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         else:
             self._logger.warning("❌ Failed to set pump type")
 
+    @ble_transaction
     async def async_set_backlight(self, level: int) -> None:
         """Set display backlight brightness (cmd 21).
 
@@ -4452,6 +4496,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 self._logger.info("Resetting heater offset to 0")
                 await self.async_set_heater_offset(0)
 
+    @ble_transaction
     async def async_set_timer_enabled(self, enabled: bool) -> None:
         """Enable or disable timer (command 13, issue #48).
 
@@ -4471,6 +4516,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if success:
             await self.async_request_refresh()
 
+    @ble_transaction
     async def async_set_timer_start(self, minutes_from_midnight: int) -> None:
         """Set timer start time (command 11, issue #48).
 
@@ -4491,6 +4537,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if success:
             await self.async_request_refresh()
 
+    @ble_transaction
     async def async_set_timer_duration(self, minutes: int) -> None:
         """Set timer duration (command 12, issue #48).
 
@@ -4511,6 +4558,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if success:
             await self.async_request_refresh()
 
+    @ble_transaction
     async def async_send_raw_command(self, command: int, argument: int) -> bool:
         """Send a raw command to the heater for debugging purposes.
 
@@ -4539,6 +4587,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         return success
 
+    @ble_transaction
     async def async_shutdown(self) -> None:
         """Shutdown coordinator."""
         self._logger.debug("Shutting down Vevor Heater coordinator")

@@ -48,6 +48,9 @@ def coordinator_for_layout(
     neo: bool, name: str = "Air Heater"
 ) -> VevorHeaterCoordinator:
     coordinator = VevorHeaterCoordinator.__new__(VevorHeaterCoordinator)
+    from custom_components.diesel_heater.ble_operation import BleOperationLock
+    coordinator._ble_operation_lock = BleOperationLock()
+    coordinator._ble_refresh_pending = False
     coordinator._protocol_mode = 0
     coordinator._ble_device = SimpleNamespace(name=name)
     coordinator._heater_uses_fahrenheit = False
