@@ -15,6 +15,7 @@ import pytest
 
 # Import stubs first
 from . import conftest  # noqa: F401
+from .ble_test_helpers import initialize_leased_fixture
 
 # Now we can import the coordinator
 from custom_components.diesel_heater.burnoff import BurnoffController, BurnoffPhase
@@ -99,6 +100,7 @@ def create_mock_coordinator() -> VevorHeaterCoordinator:
 
     # Create coordinator without calling __init__ using object.__new__
     coordinator = object.__new__(VevorHeaterCoordinator)
+    initialize_leased_fixture(coordinator)
 
     # Set up minimum required attributes
     coordinator.hass = hass
@@ -2978,6 +2980,9 @@ class TestAsyncUpdateData:
         coordinator._client = None  # Not connected
         coordinator._ensure_connected = AsyncMock(side_effect=Exception("Cannot connect"))
         coordinator._handle_connection_failure = MagicMock()
+        from custom_components.diesel_heater.ble_session import BleSessionBroker
+        coordinator._ble_broker = BleSessionBroker()
+        coordinator._cleanup_connection = AsyncMock()
 
         from homeassistant.helpers.update_coordinator import UpdateFailed
         with pytest.raises(UpdateFailed):
@@ -3353,7 +3358,7 @@ class TestBLEConnectionCleanup:
         coordinator = create_mock_coordinator()
         mock_client = MagicMock()
         mock_client.is_connected = True
-        mock_client.disconnect = AsyncMock()
+        mock_client.disconnect = AsyncMock(side_effect=lambda: setattr(mock_client, "is_connected", False))
         mock_client.stop_notify = AsyncMock()
         coordinator._client = mock_client
         coordinator._characteristic = MagicMock()
@@ -3380,10 +3385,11 @@ class TestBLEConnectionCleanup:
         coordinator._characteristic = None
         coordinator._active_char_uuid = None
 
-        await coordinator._cleanup_connection()
+        with pytest.raises(Exception, match="Disconnect failed"):
+            await coordinator._cleanup_connection()
 
-        # Should still clean up
-        assert coordinator._client is None
+        # Retain the client so the broker can quarantine/retry cleanup.
+        assert coordinator._client is mock_client
 
     @pytest.mark.asyncio
     async def test_cleanup_connection_handles_stop_notify_error(self):
@@ -3391,7 +3397,7 @@ class TestBLEConnectionCleanup:
         coordinator = create_mock_coordinator()
         mock_client = MagicMock()
         mock_client.is_connected = True
-        mock_client.disconnect = AsyncMock()
+        mock_client.disconnect = AsyncMock(side_effect=lambda: setattr(mock_client, "is_connected", False))
         mock_client.stop_notify = AsyncMock(side_effect=Exception("Stop notify failed"))
         coordinator._client = mock_client
         coordinator._characteristic = MagicMock()
@@ -3715,7 +3721,8 @@ class TestABBAToggleGuard:
         await coordinator.async_turn_on()
 
         # Should not send command
-        coordinator._send_command.assert_not_called()
+        coordinator._send_command.assert_any_call(1, 0)
+        assert not any(call.args[0] == 3 for call in coordinator._send_command.call_args_list)
 
     @pytest.mark.asyncio
     async def test_turn_on_proceeds_when_off_abba(self):
@@ -3728,7 +3735,7 @@ class TestABBAToggleGuard:
 
         await coordinator.async_turn_on()
 
-        coordinator._send_command.assert_called_once_with(3, 1)
+        coordinator._send_command.assert_any_call(3, 1)
         coordinator.async_request_refresh.assert_called_once()
 
     @pytest.mark.asyncio
@@ -3742,7 +3749,8 @@ class TestABBAToggleGuard:
         await coordinator.async_turn_off()
 
         # Should not send command
-        coordinator._send_command.assert_not_called()
+        coordinator._send_command.assert_any_call(1, 0)
+        assert not any(call.args[0] == 3 for call in coordinator._send_command.call_args_list)
 
     @pytest.mark.asyncio
     async def test_turn_off_proceeds_when_on_abba(self):
@@ -3755,7 +3763,7 @@ class TestABBAToggleGuard:
 
         await coordinator.async_turn_off(immediate=True)
 
-        coordinator._send_command.assert_called_once_with(3, 0)
+        coordinator._send_command.assert_any_call(3, 0)
         coordinator.async_request_refresh.assert_called_once()
 
     @pytest.mark.asyncio
@@ -3769,7 +3777,8 @@ class TestABBAToggleGuard:
 
         await coordinator.async_turn_on()
 
-        coordinator._send_command.assert_not_called()
+        coordinator._send_command.assert_any_call(1, 0)
+        assert not any(call.args[0] == 3 for call in coordinator._send_command.call_args_list)
 
     @pytest.mark.asyncio
     async def test_turn_off_skipped_during_cooldown_abba(self):
@@ -3782,7 +3791,8 @@ class TestABBAToggleGuard:
 
         await coordinator.async_turn_off()
 
-        coordinator._send_command.assert_not_called()
+        coordinator._send_command.assert_any_call(1, 0)
+        assert not any(call.args[0] == 3 for call in coordinator._send_command.call_args_list)
 
     @pytest.mark.asyncio
     async def test_turn_on_proceeds_non_abba_protocol(self):
@@ -3796,7 +3806,7 @@ class TestABBAToggleGuard:
         await coordinator.async_turn_on()
 
         # Should still send command for non-ABBA
-        coordinator._send_command.assert_called_once_with(3, 1)
+        coordinator._send_command.assert_any_call(3, 1)
 
 
 # ---------------------------------------------------------------------------
@@ -4335,7 +4345,7 @@ class TestNotificationCallback:
         data = bytearray([0xAA, 0x55, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00])
         coordinator._notification_callback(0, data)
 
-        coordinator._logger.info.assert_called()
+        coordinator._logger.debug.assert_called()
         coordinator._parse_response.assert_called_once_with(data)
 
     def test_notification_callback_catches_parse_errors(self):
@@ -4593,7 +4603,7 @@ class TestCBFFDecryption:
         coordinator._parse_response(data)
 
         # Should log decryption success
-        coordinator._logger.info.assert_called()
+        coordinator._logger.debug.assert_called()
 
     def test_cbff_suspect_data_logged(self):
         """Test CBFF suspect data triggers warning log."""
@@ -4874,6 +4884,8 @@ class TestAsyncShutdown:
     async def test_shutdown_cleans_up_auto_offset_listener(self):
         """Test shutdown cleans up external sensor listener."""
         coordinator = create_mock_coordinator()
+        from custom_components.diesel_heater.ble_session import BleSessionBroker
+        coordinator._ble_broker = BleSessionBroker()
         mock_unsub = MagicMock()
         coordinator._auto_offset_unsub = mock_unsub
         coordinator._cleanup_connection = AsyncMock()
@@ -4887,6 +4899,8 @@ class TestAsyncShutdown:
     async def test_shutdown_without_listener(self):
         """Test shutdown works when no listener registered."""
         coordinator = create_mock_coordinator()
+        from custom_components.diesel_heater.ble_session import BleSessionBroker
+        coordinator._ble_broker = BleSessionBroker()
         coordinator._auto_offset_unsub = None
         coordinator._cleanup_connection = AsyncMock()
 
@@ -4898,6 +4912,8 @@ class TestAsyncShutdown:
     async def test_shutdown_cleans_up_connection(self):
         """Test shutdown cleans up BLE connection."""
         coordinator = create_mock_coordinator()
+        from custom_components.diesel_heater.ble_session import BleSessionBroker
+        coordinator._ble_broker = BleSessionBroker()
         coordinator._auto_offset_unsub = None
         coordinator._cleanup_connection = AsyncMock()
 
@@ -6624,7 +6640,7 @@ class TestCronusTransactionSafety:
         assert not coordinator._cronus_write_succeeded
 
     @pytest.mark.asyncio
-    async def test_cronus_snapshot_auto_syncs_app_clock_once_per_connection(self):
+    async def test_cronus_snapshot_auto_syncs_app_clock_once_per_day(self):
         """The app writes record 97 after its initial Cronus record exchange."""
         coordinator = create_mock_coordinator()
         coordinator._protocol_mode = 9
@@ -6647,6 +6663,9 @@ class TestCronusTransactionSafety:
         with patch(
             "custom_components.diesel_heater.coordinator.dt_util.utcnow",
             return_value=datetime(2026, 10, 24, 15, 4, 5),
+        ), patch(
+            "custom_components.diesel_heater.coordinator.dt_util.now",
+            return_value=datetime(2026, 10, 24, 15, 4, 5),
         ):
             await coordinator._async_update_cronus_data()
             await coordinator._async_update_cronus_data()
@@ -6654,7 +6673,7 @@ class TestCronusTransactionSafety:
         coordinator._async_write_cronus_record.assert_awaited_once_with(
             "time", bytes((15, 4, 5, 24, 10, 26))
         )
-        assert coordinator._time_synced_this_connection
+        assert coordinator._last_auto_time_sync_date is not None
 
     @pytest.mark.asyncio
     async def test_rejects_partial_poll_instead_of_reusing_cached_state(self):

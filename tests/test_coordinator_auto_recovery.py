@@ -6,7 +6,7 @@ Validates the inline recovery path added to `VevorHeaterCoordinator`:
   heater (issue #104). Never touch unrelated adapters just to chase this
   heater's silent-stall.
 - Trigger gate: 2 consecutive failed polls + 60s cooldown.
-- Timeout wrapper: `_async_update_data` applies `asyncio.wait_for(..., 15)`
+- Timeout wrapper: `_async_update_data` applies `asyncio.timeout(15)`
   around every status request so a wedged bleak write cannot block the
   update loop forever (which would prevent the auto-recovery from ever
   firing — observed live on 2026-10-11).
@@ -351,12 +351,12 @@ class TestSendCommandTimeoutWrapper:
 
         # Shrink the wrapper timeout from 15s to 0.05s via monkey-patch of
         # asyncio.wait_for inside coord_module scope.
-        orig_wait_for = asyncio.wait_for
+        original_timeout = asyncio.timeout
 
-        async def _fast_wait_for(aw, timeout):
-            return await orig_wait_for(aw, timeout=0.05)
+        def fast_timeout(delay):
+            return original_timeout(0.05)
 
-        with patch.object(coord_module.asyncio, "wait_for", side_effect=_fast_wait_for):
+        with patch.object(coord_module.asyncio, "timeout", side_effect=fast_timeout):
             try:
                 self._run(c._async_update_data())
             except Exception:
@@ -375,8 +375,6 @@ class TestSendCommandTimeoutWrapper:
         which hangs BEFORE the status poll — so the beta.15 wrapper never got
         a chance to fire.
         """
-        from custom_components.diesel_heater import coordinator as coord_module
-
         _install_bt_stubs({"hci0": {"address": "AA:AA:AA:AA:AA:AA"}})
         c = create_mock_coordinator()
         c._consecutive_failures = 0
@@ -392,12 +390,11 @@ class TestSendCommandTimeoutWrapper:
             wraps=lambda err: setattr(c, "_consecutive_failures", c._consecutive_failures + 1)
         )
 
-        orig_wait_for = asyncio.wait_for
+        from custom_components.diesel_heater import ble_session
+        c._ble_broker = ble_session.BleSessionBroker()
+        c._cleanup_connection = AsyncMock()
 
-        async def _fast_wait_for(aw, timeout):
-            return await orig_wait_for(aw, timeout=0.05)
-
-        with patch.object(coord_module.asyncio, "wait_for", side_effect=_fast_wait_for):
+        with patch.object(ble_session, "POLL_TIMEOUT", 0.05):
             try:
                 self._run(c._async_update_data())
             except Exception:
