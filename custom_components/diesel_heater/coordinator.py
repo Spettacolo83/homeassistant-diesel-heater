@@ -29,7 +29,8 @@ from homeassistant.util import dt as dt_util
 from homeassistant.helpers.event import async_track_state_change_event
 
 from .burnoff import BurnoffController, BurnoffPhase
-from .hcalory import HcaloryVariant, hcalory_variant_from_discovery, uses_mvp2_commands
+from .temperature import convert_native_temperature
+from .hcalory import HcaloryVariant, hcalory_variant_from_discovery, uses_mvp2_commands, is_abba_named_controller
 from .const import (
     ABBA_MAX_LEVEL,
     ABBA_NOTIFY_UUID,
@@ -97,6 +98,7 @@ from .const import (
     RUNNING_STATE_OFF,
     RUNNING_STATE_ON,
     RUNNING_STEP_COOLDOWN,
+    RUNNING_STEP_SELF_TEST,
     RUNNING_STEP_RUNNING,
     RUNNING_STEP_STANDBY,
     RUNNING_STEP_VENTILATION,
@@ -163,6 +165,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             _LOGGER,
             name=DOMAIN,
             update_interval=timedelta(seconds=UPDATE_INTERVAL),
+            config_entry=config_entry,
         )
 
         self.address = ble_device.address
@@ -180,6 +183,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._neo_run_settings_received = False
         self._warm_drive_board_config: bytearray | None = None
         # Get passkey from config, default to 1234 (factory default for most heaters)
+        self._stopping = False
+        self._background_tasks: set[asyncio.Task] = set()
         self._passkey = config_entry.data.get(CONF_PIN, DEFAULT_PIN)
         self._neo_password = config_entry.data.get(CONF_NEO_PASSWORD, DEFAULT_NEO_PASSWORD)
         self._protocol_mode = 0  # Will be detected from response (1-6)
@@ -251,7 +256,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 self._hcalory_variant = hcalory_variant_from_discovery(discovery_info)
         # Hcalory returns set_value=None when heater is OFF (@Xev's discovery, issue #34)
         # Remember last known values to restore when heater turns off
+        self._hcalory_auth_response: bytearray | None = None
         self._hcalory_last_set_temp: int | None = None
+        # Re-evaluate legacy cached MVP1 identities that collided with ABBA.
+        if is_abba_named_controller(self._advertised_heater_name()):
+            self._hcalory_variant = None
         self._hcalory_last_set_level: int | None = None
         self._connection_attempts = 0
         self._last_connection_attempt = 0.0
@@ -328,13 +337,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._daily_fuel_history: dict[str, float] = {}  # date -> liters consumed
         self._fuel_consumed_since_reset: float = 0.0  # Fuel since last refuel reset
         self._last_save_time: float = time.time()
-        self._last_reset_date: str = datetime.now().date().isoformat()
+        self._last_reset_date: str = dt_util.now().date().isoformat()
 
         # Runtime tracking
         self._total_runtime_seconds: float = 0.0
         self._daily_runtime_seconds: float = 0.0
         self._daily_runtime_history: dict[str, float] = {}  # date -> hours running
-        self._last_runtime_reset_date: str = datetime.now().date().isoformat()
+        self._last_runtime_reset_date: str = dt_util.now().date().isoformat()
 
         # Auto temperature offset from external sensor
         self._auto_offset_unsub: callable | None = None
@@ -356,7 +365,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """Return whether this controller has an app-backed clock-write command."""
         if self.is_dz06_neo:
             return True
-        if self._protocol_mode in (1, 2, 3, 4, 5, 8, 9):
+        if self._protocol_mode in (1, 2, 3, 4, 5, 6, 8, 9):
             return True
         if self._protocol_mode != 7:
             return False
@@ -448,6 +457,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
     def _warm_drive_type_from_advertisement(self) -> str | None:
         """Return the APK-defined controller type from Warm Drive's scan record."""
+        if self._advertised_heater_name() != "Air Heater":
+            return None
         hass = getattr(self, "hass", None)
         if not hass:
             return None
@@ -461,8 +472,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             if info is None:
                 continue
             for payload in (getattr(info, "manufacturer_data", None) or {}).values():
-                if len(payload) == 16:
-                    return "air" if payload[4] == 1 else "water"
+                if len(payload) == 14:
+                    return "air" if payload[2] == 1 else "water"
         return None
 
     def _remember_warm_drive_identity(self) -> None:
@@ -546,7 +557,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 # Check if we need to reset daily fuel counter
                 saved_date = data.get(STORAGE_KEY_DAILY_DATE)
                 if saved_date:
-                    today = datetime.now().date().isoformat()
+                    today = dt_util.now().date().isoformat()
                     if saved_date != today:
                         self._logger.info("New day detected at startup, resetting daily fuel counter")
                         # Save yesterday's consumption to history before resetting
@@ -559,12 +570,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                         self._last_reset_date = saved_date
                 else:
                     # No saved date, use today
-                    self._last_reset_date = datetime.now().date().isoformat()
+                    self._last_reset_date = dt_util.now().date().isoformat()
 
                 # Check if we need to reset daily runtime counter
                 saved_runtime_date = data.get(STORAGE_KEY_DAILY_RUNTIME_DATE)
                 if saved_runtime_date:
-                    today = datetime.now().date().isoformat()
+                    today = dt_util.now().date().isoformat()
                     if saved_runtime_date != today:
                         self._logger.info("New day detected at startup, resetting daily runtime counter")
                         # Save yesterday's runtime to history before resetting
@@ -578,7 +589,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                         self._last_runtime_reset_date = saved_runtime_date
                 else:
                     # No saved date, use today
-                    self._last_runtime_reset_date = datetime.now().date().isoformat()
+                    self._last_runtime_reset_date = dt_util.now().date().isoformat()
 
                 # Update data dictionary with loaded values
                 self.data["total_fuel_consumed"] = round(self._total_fuel_consumed, 2)
@@ -723,7 +734,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._cronus_write_succeeded = False
             self._cronus_write_event.clear()
             try:
-                await self._write_gatt(protocol.build_write_record(record_id, payload))
+                for frame in protocol.build_write_frames(record_id, payload):
+                    await self._write_gatt(frame)
                 await asyncio.wait_for(self._cronus_write_event.wait(), timeout=3)
             except TimeoutError:
                 self._logger.debug("Cronus write %s did not acknowledge", name)
@@ -813,7 +825,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     def _async_external_temp_changed(self, event) -> None:
         """Handle external temperature sensor state changes."""
         # Schedule the async calculation
-        self.hass.async_create_task(self._async_calculate_auto_offset())
+        self.create_background_task(self._async_calculate_auto_offset())
 
     async def _async_calculate_auto_offset(self) -> None:
         """Calculate and apply auto temperature offset based on external sensor.
@@ -826,6 +838,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         The offset is limited by CONF_AUTO_OFFSET_MAX and throttled to avoid
         frequent BLE commands.
         """
+        if self._protocol_mode not in (1, 2, 3, 4, 6) or self._stopping:
+            return
         # Check if auto offset is enabled
         if not self.data.get("auto_offset_enabled", False):
             self._logger.debug("Auto offset disabled")
@@ -873,6 +887,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._logger.debug("Heater raw temperature not available yet")
             return
 
+        if self._heater_uses_fahrenheit:
+            raw_heater_temp = (raw_heater_temp - 32) * 5 / 9
+
         # Round external temp to nearest integer (heater only accepts integer offset)
         external_temp_rounded = round(external_temp)
 
@@ -916,12 +933,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 # Fuel data
                 STORAGE_KEY_TOTAL_FUEL: self._total_fuel_consumed,
                 STORAGE_KEY_DAILY_FUEL: self._daily_fuel_consumed,
-                STORAGE_KEY_DAILY_DATE: datetime.now().date().isoformat(),
+                STORAGE_KEY_DAILY_DATE: self._last_reset_date,
                 STORAGE_KEY_DAILY_HISTORY: self._daily_fuel_history,
                 # Runtime data
                 STORAGE_KEY_TOTAL_RUNTIME: self._total_runtime_seconds,
                 STORAGE_KEY_DAILY_RUNTIME: self._daily_runtime_seconds,
-                STORAGE_KEY_DAILY_RUNTIME_DATE: datetime.now().date().isoformat(),
+                STORAGE_KEY_DAILY_RUNTIME_DATE: self._last_runtime_reset_date,
                 STORAGE_KEY_DAILY_RUNTIME_HISTORY: self._daily_runtime_history,
                 # Fuel level tracking
                 STORAGE_KEY_FUEL_SINCE_RESET: self._fuel_consumed_since_reset,
@@ -947,7 +964,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if not self._daily_fuel_history:
             return
 
-        cutoff_date = (datetime.now().date() - timedelta(days=MAX_HISTORY_DAYS)).isoformat()
+        cutoff_date = (dt_util.now().date() - timedelta(days=MAX_HISTORY_DAYS)).isoformat()
         old_keys = [date for date in self._daily_fuel_history if date < cutoff_date]
 
         for date in old_keys:
@@ -961,7 +978,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if not self._daily_runtime_history:
             return
 
-        cutoff_date = (datetime.now().date() - timedelta(days=MAX_HISTORY_DAYS)).isoformat()
+        cutoff_date = (dt_util.now().date() - timedelta(days=MAX_HISTORY_DAYS)).isoformat()
         old_keys = [date for date in self._daily_runtime_history if date < cutoff_date]
 
         for date in old_keys:
@@ -1329,7 +1346,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
     async def _check_daily_reset(self) -> None:
         """Check if we need to reset daily fuel counter (runs every update, even if offline)."""
-        current_date = datetime.now().date().isoformat()
+        current_date = dt_util.now().date().isoformat()
         if current_date != self._last_reset_date:
             # Save yesterday's consumption to history before resetting
             if self._daily_fuel_consumed > 0:
@@ -1364,7 +1381,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
     async def _check_daily_runtime_reset(self) -> None:
         """Check if we need to reset daily runtime counter (runs every update, even if offline)."""
-        current_date = datetime.now().date().isoformat()
+        current_date = dt_util.now().date().isoformat()
         if current_date != self._last_runtime_reset_date:
             # Save yesterday's runtime to history before resetting
             if self._daily_runtime_seconds > 0:
@@ -1404,6 +1421,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         "set_level", "set_temp", "altitude", "error_code",
         "hourly_fuel_consumption", "co_ppm", "remain_run_time", "motor_speed",
         "fire_temperature", "hot_water_temperature", "water_temperature",
+        "intake_temperature", "outlet_temperature", "pump_active", "fan_active",
+        "glow_plug_active", "cronus_external_temperature", "cronus_coolant_temperature",
     )
 
     def _clear_sensor_values(self) -> None:
@@ -1452,7 +1471,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         # Fires once per cooldown window regardless of total failure count.
         if self._should_auto_recover():
             self._last_internal_recovery_at = time.time()
-            self.hass.async_create_task(self._async_recover_internally())
+            self.create_background_task(self._async_recover_internally())
 
     def _should_auto_recover(self) -> bool:
         """Decide whether to trigger an in-process kernel BT recovery now.
@@ -1511,6 +1530,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         cannot determine the adapter at all, we skip the kernel reset and
         only clean up our own BleakClient.
         """
+        if self._stopping:
+            return False
         try:
             from bluetooth_adapters import get_adapters as _get_adapters
             from bluetooth_auto_recovery import recover_adapter
@@ -1577,6 +1598,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Update data from the heater."""
+        if self._stopping:
+            raise UpdateFailed("Heater integration is unloading")
         # Check for daily reset FIRST, even if heater is offline
         # This ensures the daily counters reset at midnight regardless of connection status
         await self._check_daily_reset()
@@ -1645,41 +1668,6 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                             attempt + 1, max_retries
                         )
                         await asyncio.sleep(1.0)
-
-            # MVP1 -> MVP2 fallback: If MVP1 query failed (now the default) and
-            # protocol is Hcalory with bd39 service, try MVP2 query as fallback.
-            # The library now defaults to MVP1 query since Acropolis9064 proves it works.
-            if (not status and
-                self._protocol and
-                hasattr(self._protocol, '_is_mvp2') and
-                self._protocol._is_mvp2 and
-                hasattr(self._protocol, 'prefer_mvp1_query') and
-                self._protocol.prefer_mvp1_query):
-                self._logger.info(
-                    "🔄 MVP1 query failed, trying MVP2 fallback (dpID 0A0A)..."
-                )
-                # Temporarily switch to MVP2 query style
-                self._protocol.set_prefer_mvp1_query(False)
-                mvp2_packet = self._protocol.build_command(1, 0, self._passkey)
-                self._notification_data = None
-                try:
-                    await self._write_gatt(mvp2_packet)
-                    self._logger.debug("MVP2 fallback packet: %s", mvp2_packet.hex())
-                    # Wait for response
-                    for _ in range(50):  # 5 seconds
-                        await asyncio.sleep(0.1)
-                        if self._notification_data:
-                            self._logger.info(
-                                "✅ MVP2 fallback succeeded! Using MVP2 query style."
-                            )
-                            # Keep prefer_mvp1_query=False for future queries
-                            status = True
-                            break
-                except Exception as e:
-                    self._logger.debug("MVP2 fallback write failed: %s", e)
-                # If MVP2 also failed, restore MVP1 preference for next attempt
-                if not status:
-                    self._protocol.set_prefer_mvp1_query(True)
 
             if not status and self._protocol_mode == 6:
                 # The Sunster app abandons a V2.1 connection after its
@@ -1763,6 +1751,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
     async def _ensure_connected(self) -> None:
         """Ensure BLE connection is established with exponential backoff."""
+        if self._stopping:
+            raise UpdateFailed("Heater integration is unloading")
         # Check if already connected
         if self._client and self._client.is_connected:
             self._connection_attempts = 0  # Reset on successful connection
@@ -1851,6 +1841,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                             or uses_mvp2_commands(hcalory_variant)
                         )
 
+                    self._protocol.set_transport(bd39=True)
+
                     # Optimize update interval for Hcalory (@Xev: 15s → 5s)
                     # Hcalory needs faster polling for stability (app polls ~2s)
                     self.update_interval = timedelta(seconds=UPDATE_INTERVAL_HCALORY)
@@ -1895,6 +1887,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                         self._protocol.set_mvp_version(
                             uses_mvp2_commands(hcalory_variant)
                         )
+                    self._protocol.set_transport(bd39=False)
                     self.update_interval = timedelta(seconds=UPDATE_INTERVAL_HCALORY)
                     for char in service.characteristics:
                         if char.uuid.lower() == HCALORY_MVP1_NOTIFY_UUID.lower():
@@ -2122,7 +2115,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     @callback
     def _notification_callback(self, _sender: int, data: bytearray) -> None:
         """Handle notification from heater."""
+        if self._stopping:
+            return
         if self.is_dz06_neo:
+            if len(data) < 4 or data[1] != len(data) - 2 or data[0] not in (0xA5, 0x5A, 0x5C, 0x5D):
+                return
             self._notification_data = bytearray(data)
             # WindMachineActivity.readSetData() sends 29 0D FF during startup.
             # Its A5 response provides the initial run type, target, and altitude
@@ -2136,7 +2133,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 self.data.update(
                     {
                         "neo_run_type": run_type,
-                        "set_temp": float(data[5]),
+                        "set_temp": (
+                            self._dz06_neo_display_temperature(data[5])
+                            if self.is_warm_drive_controller else float(data[5])
+                        ),
                         "altitude": int.from_bytes(data[6:8], "big"),
                     }
                 )
@@ -2190,7 +2190,19 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 self._neo_config_received = True
             if len(data) >= 21 and data[0] == 0x5D:
                 if data[17] in (1, 2):
+                    previous_fahrenheit = self._heater_uses_fahrenheit
                     self._heater_uses_fahrenheit = data[17] == 2
+                    if self.is_warm_drive_controller and previous_fahrenheit != self._heater_uses_fahrenheit:
+                        # Warm Drive's measured and target wire values are whole
+                        # Celsius degrees; its display conversion truncates F.
+                        for key in (
+                            "set_temp", "cab_temperature", "fire_temperature",
+                            "hot_water_temperature", "water_temperature",
+                        ):
+                            value = self.data.get(key)
+                            if isinstance(value, (int, float)):
+                                celsius = round((value - 32) * 5 / 9) if previous_fahrenheit else value
+                                self.data[key] = self._dz06_neo_display_temperature(celsius)
             if len(data) == 39 and data[:2] == bytearray((0x5A, 0x25)):
                 if not self.is_warm_drive_controller:
                     self._handle_legacy_dz06_neo_status(data)
@@ -2224,7 +2236,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 if raw_state == 1:
                     # The Neo app labels state 1 as self-check, before heating.
                     self.data["running_state"] = RUNNING_STATE_ON
-                    self.data["running_step"] = None
+                    self.data["running_step"] = RUNNING_STEP_SELF_TEST
                 elif raw_state in (2, 3, 4, 5):
                     self.data["running_state"] = RUNNING_STATE_ON
                     self.data["running_step"] = RUNNING_STEP_RUNNING
@@ -2256,7 +2268,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._logger.info(
             "📩 Received BLE data (%d bytes): %s",
             len(data),
-            data.hex()
+            self._packet_for_log(data)
         )
         try:
             self._parse_response(data)
@@ -2280,7 +2292,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self.data["neo_raw_state"] = raw_state
         if raw_state == 1:
             self.data["running_state"] = RUNNING_STATE_ON
-            self.data["running_step"] = None
+            self.data["running_step"] = RUNNING_STEP_SELF_TEST
         elif raw_state in (2, 3, 4, 5):
             self.data["running_state"] = RUNNING_STATE_ON
             self.data["running_step"] = RUNNING_STEP_RUNNING
@@ -2391,6 +2403,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._notification_data = data
             return
 
+        if isinstance(self._protocol, ProtocolHcalory):
+            auth_result = self._protocol.parse_password_response(data)
+            if auth_result is not None:
+                self._hcalory_auth_response = bytearray(data)
+                return
+
         old_mode = self._protocol_mode
 
         # Detect protocol and get data to parse (may be decrypted)
@@ -2400,9 +2418,6 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 "Unknown protocol, length: %d, header: 0x%04X", len(data), header
             )
             return
-
-        self._protocol_mode = protocol.protocol_mode
-        self._protocol = protocol
 
         if isinstance(protocol, ProtocolCBFF):
             handshake_result = protocol.v21_handshake_result(parse_data)
@@ -2415,6 +2430,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 else:
                     self._logger.warning("Sunster V2.1 handshake rejected by heater")
                 return
+
+        if isinstance(protocol, ProtocolCBFF) and protocol.is_control_response(parse_data):
+            self._notification_data = data
+            return
 
         # The APK acknowledges button writes separately as AA 00 41 result nonce.
         # It is not a register-area status report, so handle it before parsing F2.
@@ -2441,18 +2460,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             parsed = protocol.parse(parse_data)
         except Exception as err:
             self._logger.error("%s parse error: %s", protocol.name, err)
-            self.data.update({
-                "connected": True,
-                "running_state": 0,
-                "running_step": 0,
-                "error_code": 0,
-            })
-            self._notification_data = data
+            # A malformed reply must not invent a valid Off/no-fault snapshot.
             return
 
         if parsed is None:
-            self.data["connected"] = True
-            self._notification_data = data
             return
 
         # CBFF decryption status logging
@@ -2473,8 +2484,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 "CBFF data appears encrypted or corrupt (protocol_version=%s, "
                 "raw=%s). Sensor values discarded — only connection state kept. "
                 "Please report this on GitHub Issue #24 with your heater model.",
-                proto_ver, data.hex(),
+                proto_ver, self._packet_for_log(data),
             )
+
+            return  # Corrupt/decryption-failed bytes are not a fresh status.
 
         if isinstance(protocol, ProtocolHeatGenie):
             self._heatgenie_last_status_at = time.monotonic()
@@ -2490,6 +2503,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 )
                 return
 
+        # Only a validated status may replace the selected protocol.
+        self._protocol_mode = protocol.protocol_mode
+        self._protocol = protocol
         self.data.update(parsed)
 
         # Beta.34: Keep temperatures in native unit (no F→C conversion for Hcalory)
@@ -2533,7 +2549,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         # Update coordinator state from parsed data
         if "temp_unit" in parsed:
-            if protocol.protocol_mode == 4:
+            previous_fahrenheit = self._heater_uses_fahrenheit
+            if protocol.protocol_mode == 8:
+                self._heater_uses_fahrenheit = False
+            elif protocol.protocol_mode == 4:
                 # AirHeaterBLE converts AA66's Celsius telemetry only for UI
                 # presentation when this flag is Fahrenheit. Keep HA's native
                 # temperatures Celsius and retain the flag solely for commands.
@@ -2545,8 +2564,19 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 self._heater_uses_fahrenheit = True
             else:
                 self._heater_uses_fahrenheit = (parsed["temp_unit"] == 1)
+            if previous_fahrenheit != self._heater_uses_fahrenheit and "set_temp" not in parsed:
+                cached_target = self.data.get("set_temp")
+                if isinstance(cached_target, (int, float)):
+                    self.data["set_temp"] = convert_native_temperature(
+                        cached_target, previous_fahrenheit, self._heater_uses_fahrenheit
+                    )
+                if self._protocol_mode == 7 and isinstance(self._hcalory_last_set_temp, (int, float)):
+                    self._hcalory_last_set_temp = convert_native_temperature(
+                        self._hcalory_last_set_temp, previous_fahrenheit, self._heater_uses_fahrenheit
+                    )
+
             # Sync Fahrenheit flag to Hcalory protocol handler for correct command building
-            if self._protocol_mode in (7, 8) and self._protocol and hasattr(self._protocol, "_uses_fahrenheit"):
+            if self._protocol_mode in (5, 7) and self._protocol and hasattr(self._protocol, "_uses_fahrenheit"):
                 self._protocol._uses_fahrenheit = self._heater_uses_fahrenheit
 
         # Apply temperature calibration (ABBA handles it internally)
@@ -2597,10 +2627,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             return
 
         # Calculate the TRUE raw sensor temperature (before heater's internal offset)
-        # Formula: raw_sensor_temp = reported_temp - heater_offset
+        # Stored calibration offsets are Celsius differences.
         # Example: reported=18°C, heater_offset=-2°C → raw_sensor=18-(-2)=20°C
         heater_offset = self.data.get("heater_offset", 0)
-        raw_sensor_temp = reported_temp - heater_offset
+        delta_scale = 1.8 if self._heater_uses_fahrenheit else 1.0
+        raw_sensor_temp = reported_temp - heater_offset * delta_scale
         self.data["cab_temperature_raw"] = raw_sensor_temp
 
         # Get configured manual offset (default to 0.0 if not set)
@@ -2609,7 +2640,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         # Apply manual offset for display purposes
         if manual_offset != 0.0:
-            calibrated_temp = reported_temp + manual_offset
+            calibrated_temp = reported_temp + manual_offset * delta_scale
 
             # Clamp to sensor range
             calibrated_temp = max(SENSOR_TEMP_MIN, min(SENSOR_TEMP_MAX, calibrated_temp))
@@ -2653,6 +2684,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._client = None
         self._characteristic = None
         self._active_char_uuid = None
+        self._hcalory_auth_response = None
         # Reset Hcalory MVP2 password state on disconnect
         if self._protocol and hasattr(self._protocol, 'reset_password_state'):
             self._protocol.reset_password_state()
@@ -2690,12 +2722,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         for attempt in range(1, max_retries + 1):
             try:
                 self._logger.info(
-                    "🔑 Sending MVP2 password handshake (attempt %d/%d): %s (PIN=%d)",
-                    attempt, max_retries, password_packet.hex(), self._passkey
+                    "Sending Hcalory authentication (attempt %d/%d)",
+                    attempt, max_retries
                 )
 
                 # Clear notification buffer before sending password
-                self._notification_data = None
+                self._hcalory_auth_response = None
                 await self._write_gatt(password_packet)
 
                 # Wait for handshake response 0B0C (header 0x0003)
@@ -2708,17 +2740,17 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 for i in range(iterations):
                     await asyncio.sleep(0.05)
                     # Need at least 18 bytes (0-17) to read the result byte.
-                    if self._notification_data and len(self._notification_data) >= 18:
+                    if self._hcalory_auth_response and len(self._hcalory_auth_response) >= 18:
                         # Check for response header 0x0003 and command 0x0B0C
                         # Format: 00 03 00 01 00 01 00 0b 0c 00 00 06 01 [password] [authenticated] [checksum]
-                        header = (self._notification_data[0] << 8) | self._notification_data[1]
+                        header = (self._hcalory_auth_response[0] << 8) | self._hcalory_auth_response[1]
                         # Beta.32 fix: Command is at byte 7-8, not 6-7 (@Xev, issue #34)
-                        cmd = (self._notification_data[7] << 8) | self._notification_data[8]
+                        cmd = (self._hcalory_auth_response[7] << 8) | self._hcalory_auth_response[8]
 
                         if header == 0x0003 and cmd == 0x0B0C:
                             # The Hcalory app parses four PIN digits at 13-16 and
                             # the authentication result at byte 17.
-                            auth_byte = self._notification_data[17]
+                            auth_byte = self._hcalory_auth_response[17]
                             auth_status = "authenticated ✅" if auth_byte == 0x01 else "unauthenticated ❌" if auth_byte == 0x00 else f"unknown (0x{auth_byte:02X})"
 
                             self._logger.info(
@@ -2776,17 +2808,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._v21_handshake_sent = True
         self._v21_handshake_event.clear()
         self._v21_handshake_authenticated = None
-        self._logger.info("🔑 Sending Sunster V2.1 handshake (PIN=%d)...", self._passkey)
-        asyncio.create_task(self._send_v21_handshake(handshake_pkt))
+        self._logger.debug("Sending Sunster V2.1 handshake")
+        self.create_background_task(self._send_v21_handshake(handshake_pkt))
 
     async def _send_v21_handshake(self, packet: bytearray) -> None:
         """Send Sunster V2.1 handshake packet asynchronously."""
         try:
             await self._write_gatt(packet)
-            self._logger.info(
-                "Sunster V2.1 handshake sent; awaiting authenticated reply: %s",
-                packet.hex()
-            )
+            self._logger.debug("Sunster V2.1 handshake sent; awaiting authenticated reply")
         except Exception as err:
             self._v21_handshake_sent = False
             self._logger.warning("⚠️ V2.1 handshake failed: %s", err)
@@ -2802,12 +2831,30 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if not self._v21_handshake_authenticated:
             raise BleakError("Sunster V2.1 handshake was rejected")
 
+    def _packet_for_log(self, packet: bytes | bytearray) -> str:
+        """Keep diagnostic payloads while excluding credentials from every log level."""
+        if self._protocol_mode == 6:
+            return "<FEAA encrypted/authentication payload redacted>"
+        if len(packet) >= 9 and packet[7:9] in (bytes((0x0A, 0x0C)), bytes((0x0B, 0x0C))):
+            return "<Hcalory authentication redacted>"
+        safe = bytearray(packet)
+        if len(safe) == 8 and safe[:2] == bytes((0xAA, 0x55)):
+            safe[2:4] = b"\x00\x00"
+            safe[-1] = sum(safe[2:7]) & 255
+        if len(safe) == 15 and safe[0] == 0x29:
+            safe[8:12] = bytes(4)
+        if len(safe) == 24 and safe[:2] == bytes((0x5C, 0x16)):
+            safe[17:21] = bytes(4)
+        return safe.hex()
+
     async def _write_gatt(self, packet: bytearray) -> None:
         """Write a packet to the appropriate BLE characteristic.
 
         Uses response=False to avoid authorization issues with BLE
         proxies (e.g., ESPHome BLE proxy). The heater sends a notification as response.
         """
+        if self._stopping:
+            raise BleakError("Heater integration is unloading")
         if getattr(self, "_is_cronus_device", False) and getattr(self, "_cronus_write_char", None):
             write_char = self._cronus_write_char
             char_uuid = write_char.uuid
@@ -2830,9 +2877,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             protocol_name = "Vevor/Sunster"
 
         await self._client.write_gatt_char(write_char, packet, response=False)
-        self._logger.info(
-            "📤 Sent %d bytes to %s (char %s): %s",
-            len(packet), protocol_name, char_uuid[-4:], packet.hex()
+        self._logger.debug(
+            "Sent %d bytes to %s (char %s)",
+            len(packet), protocol_name, char_uuid[-4:]
         )
 
     async def _send_wake_up_ping(self) -> None:
@@ -2864,9 +2911,18 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             protocol = self._protocols[5]
         else:
             protocol = self._protocols[1]
-        packet = protocol.build_command(command, argument, self._passkey)
+        if isinstance(protocol, ProtocolHcalory) and command in (0, 1, 10):
+            # Every 0A0A poll also carries a clock. Use HA's configured local
+            # time here, not the development/container host's timezone.
+            protocol.set_query_timestamp(dt_util.now())
+            try:
+                packet = protocol.build_command(command, argument, self._passkey)
+            finally:
+                protocol.set_query_timestamp(None)
+        else:
+            packet = protocol.build_command(command, argument, self._passkey)
         self._logger.debug(
-            "Command packet (%d bytes, %s): %s", len(packet), protocol.name, packet.hex()
+            "Command packet (%d bytes, %s): %s", len(packet), protocol.name, self._packet_for_log(packet)
         )
         return packet
 
@@ -2921,7 +2977,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             "Warm Drive %s: writing 2612 overrides=%s packet=%s",
             action,
             overrides,
-            packet.hex(),
+            self._packet_for_log(packet),
         )
         try:
             await self._write_gatt(packet)
@@ -3185,7 +3241,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if command == 2:
             return self.data.get("heatgenie_run_mode") == argument
         if command == 4:
-            return self.data.get("set_temp") == argument
+            target = (argument - 32) * 5 / 9 if self.data.get("temp_unit") == 1 else argument
+            actual = self.data.get("set_temp")
+            return isinstance(actual, (int, float)) and abs(actual - target) < 0.1
         if command == 5:
             return self.data.get("set_level") == argument
         if command == 15:
@@ -3206,7 +3264,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._heatgenie_acknowledged_button = None
         self._logger.info(
             "Sending HeatGenie command: %s (cmd=%d, arg=%d)",
-            packet.hex(), command, argument,
+            self._packet_for_log(packet), command, argument,
         )
         try:
             await self._write_gatt(packet)
@@ -3265,6 +3323,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             - Retry 2-3 times if no response
             - Android app completes commands in ~1.5s total
         """
+        if self._stopping:
+            return False
         # Optimize timeout and retries for Hcalory (@Xev: 5s too slow)
         if self._protocol_mode == 7:
             timeout = 0.5  # seconds (@Xev: app completes in ~1.5s, 0.5s per attempt)
@@ -3328,17 +3388,21 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         # Retry loop for command sending (@Xev: retry on timeout)
         for attempt in range(1, max_retries + 1):
             # Build protocol-aware command packet
-            packet = self._build_command_packet(command, argument)
+            try:
+                packet = self._build_command_packet(command, argument)
+            except ValueError as err:
+                self._logger.warning("Command unavailable: %s", err)
+                return False
 
             if max_retries > 1:
                 self._logger.info(
                     "📤 Sending command (attempt %d/%d): %s (cmd=%d, arg=%d, protocol=%d, timeout=%.1fs)",
-                    attempt, max_retries, packet.hex(), command, argument, self._protocol_mode, timeout
+                    attempt, max_retries, self._packet_for_log(packet), command, argument, self._protocol_mode, timeout
                 )
             else:
                 self._logger.info(
                     "📤 Sending command: %s (cmd=%d, arg=%d, protocol=%d, len=%d)",
-                    packet.hex(), command, argument, self._protocol_mode, len(packet)
+                    self._packet_for_log(packet), command, argument, self._protocol_mode, len(packet)
                 )
 
             try:
@@ -3361,14 +3425,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     if self._notification_data:
                         if (
                             self._protocol_mode == 6
-                            and command == 1
                             and isinstance(self._protocol, ProtocolCBFF)
-                            and not self._protocol.is_v21_status_response(
-                                self._notification_data
-                            )
+                            and not self._protocol.matches_response(self._notification_data, command)
                         ):
                             self._logger.debug(
-                                "Ignoring non-status FEAA notification while waiting for status"
+                                "Ignoring FEAA notification from a different command family"
                             )
                             self._notification_data = None
                             continue
@@ -3689,9 +3750,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 continue
             if len(response) == 39 and response[:2] == bytearray((0x5A, 0x25)):
                 raw_state = response[3]
-                if raw_state in (1, 2, 4, 5):
+                powered_states = (
+                    (1, 2, 3, 4, 5, 170, 171) if self.is_warm_drive_controller
+                    else (1, 2, 3, 4, 5, 160, 171)
+                )
+                off_states = (0, 6, 7, 8, 160) if self.is_warm_drive_controller else (0, 6, 7, 8)
+                if raw_state in powered_states:
                     return turn_on
-                if raw_state in (0, 7, 8):
+                if raw_state in off_states:
                     return not turn_on
                 return False
             self._notification_data = None
@@ -3911,12 +3977,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         # Per-protocol clamping
         if self._protocol_mode == 8:
-            if self._heater_uses_fahrenheit:
-                temperature = max(50, min(104, temperature))
-                unit_str = "°F"
-            else:
-                temperature = max(10, min(40, temperature))
-                unit_str = "°C"
+            temperature = max(10, min(40, temperature))
+            command_temp = (
+                int(round(temperature * 9 / 5 + 32))
+                if self.data.get("temp_unit") == 1 else int(round(temperature))
+            )
+            unit_str = "°C"
         elif self.is_dz06_neo:
             minimum = self.data.get("neo_min_target")
             maximum = self.data.get("neo_max_target")
@@ -3944,7 +4010,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             )
             unit_str = "°C"
         elif self._heater_uses_fahrenheit:
-            temperature = max(32, min(104, temperature))
+            minimum, maximum = (32, 104) if self._protocol_mode == 7 else (46, 97)
+            temperature = max(minimum, min(maximum, temperature))
             unit_str = "°F"
         elif self._protocol_mode == 7:
             temperature = max(0, min(40, temperature))
@@ -3959,7 +4026,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         )
 
         # Convert to int for command (protocols expect integer temperatures)
-        if not self.is_dz06_neo and self._protocol_mode != 4:
+        if not self.is_dz06_neo and self._protocol_mode not in (4, 8):
             command_temp = int(round(temperature))
         if self.is_dz06_neo:
             settings = self._neo_control_settings()
@@ -3978,7 +4045,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._logger.info(
                 "🌡️ SET TEMPERATURE RESULT: requested=%.1f%s, heater_reports=%s%s, %s",
                 temperature, unit_str, new_temp, unit_str,
-                "✅ SUCCESS" if abs(new_temp - temperature) < 1 else "❌ MISMATCH"
+                "✅ SUCCESS"
+                if isinstance(new_temp, (int, float)) and abs(new_temp - temperature) < 1
+                else "❌ MISMATCH"
             )
         else:
             self._logger.warning("🌡️ SET TEMPERATURE FAILED: command not sent successfully")
@@ -4098,6 +4167,16 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._logger.warning("FEAA auto start/stop is not supported by this controller")
             return
 
+        if self._protocol_mode in (5, 7):
+            if self.data.get("auto_start_stop") is None:
+                await self.async_request_refresh()
+            current = self.data.get("auto_start_stop")
+            if current is None:
+                self._logger.warning("Auto Start/Stop toggle blocked without a known state")
+                return False
+            if bool(current) == enabled:
+                return True
+
         # Command 18, arg=1 for enabled, arg=0 for disabled
         success = await self._send_command(18, 1 if enabled else 0)
         if success:
@@ -4143,7 +4222,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 self._logger.info("Sunster V2.1 time sync successful")
             else:
                 self._logger.warning("Sunster V2.1 time sync failed")
-            return
+            return success
 
         if self._protocol_mode == 5:
             # AirHeaterCC uses JavaScript Date.getDay(): Sunday=0 through Saturday=6.
@@ -4258,12 +4337,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._logger.info("🌡️ Setting temperature unit to %s (cmd 15, value=%d)", unit_name, value)
         success = await self._send_command(15, value)
         if success:
-            self.data["temp_unit"] = value
+            # Native measurements keep the unit of their last validated frame.
+            # AA66's display preference is separate from its Celsius telemetry.
             if self._protocol_mode == 4:
                 self._aa66_uses_fahrenheit_display = use_fahrenheit
                 self._heater_uses_fahrenheit = False
-            else:
-                self._heater_uses_fahrenheit = use_fahrenheit
             self._logger.info("✅ Temperature unit set to %s", unit_name)
             await self._refresh_after_control_command()
         else:
@@ -4539,9 +4617,27 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         return success
 
+    def create_background_task(self, coroutine):
+        """Own background work so unload cannot leave a writer or reconnect alive."""
+        if self._stopping:
+            coroutine.close()
+            return None
+        task = self.hass.async_create_task(coroutine)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
+
     async def async_shutdown(self) -> None:
         """Shutdown coordinator."""
         self._logger.debug("Shutting down Vevor Heater coordinator")
+        self._stopping = True
+        await super().async_shutdown()
+        tasks = [task for task in self._background_tasks if task is not asyncio.current_task()]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._background_tasks.clear()
 
         # Stop the burn-off wait task; in-progress state is already persisted.
         # Also cancel a queued in-run start so it cannot warn after unload.

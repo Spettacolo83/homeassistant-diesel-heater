@@ -454,8 +454,8 @@ class TestAsyncSetupEntry:
         }
 
     @pytest.mark.asyncio
-    async def test_setup_entry_timeout_continues(self):
-        """Test setup continues even after connection timeout."""
+    async def test_setup_entry_timeout_retries_before_adding_entities(self):
+        """Test setup retries after connection timeout."""
         import asyncio
 
         hass = MagicMock()
@@ -468,6 +468,7 @@ class TestAsyncSetupEntry:
         mock_ble_device = MagicMock()
         mock_coordinator = MagicMock()
         mock_coordinator.async_load_data = AsyncMock()
+        mock_coordinator.async_shutdown = AsyncMock()
         mock_coordinator.async_config_entry_first_refresh = AsyncMock(
             side_effect=asyncio.TimeoutError()
         )
@@ -482,15 +483,16 @@ class TestAsyncSetupEntry:
         ):
             mock_bt.async_ble_device_from_address.return_value = mock_ble_device
 
-            result = await async_setup_entry(hass, entry)
+            from homeassistant.exceptions import ConfigEntryNotReady
+            with pytest.raises(ConfigEntryNotReady):
+                await async_setup_entry(hass, entry)
 
-        # Should succeed despite timeout
-        assert result is True
-        assert entry.runtime_data == mock_coordinator
+        mock_coordinator.async_shutdown.assert_awaited_once()
+        hass.config_entries.async_forward_entry_setups.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_setup_entry_connection_error_continues(self):
-        """Test setup continues even after connection error."""
+    async def test_setup_entry_connection_error_retries_before_adding_entities(self):
+        """Test setup retries after connection error."""
         hass = MagicMock()
         hass.config_entries.async_forward_entry_setups = AsyncMock()
         hass.services.has_service.return_value = True
@@ -501,6 +503,7 @@ class TestAsyncSetupEntry:
         mock_ble_device = MagicMock()
         mock_coordinator = MagicMock()
         mock_coordinator.async_load_data = AsyncMock()
+        mock_coordinator.async_shutdown = AsyncMock()
         mock_coordinator.async_config_entry_first_refresh = AsyncMock(
             side_effect=Exception("Connection failed")
         )
@@ -515,9 +518,12 @@ class TestAsyncSetupEntry:
         ):
             mock_bt.async_ble_device_from_address.return_value = mock_ble_device
 
-            result = await async_setup_entry(hass, entry)
+            from homeassistant.exceptions import ConfigEntryNotReady
+            with pytest.raises(ConfigEntryNotReady):
+                await async_setup_entry(hass, entry)
 
-        assert result is True
+        mock_coordinator.async_shutdown.assert_awaited_once()
+        hass.config_entries.async_forward_entry_setups.assert_not_awaited()
 
 
 class TestSendCommandService:

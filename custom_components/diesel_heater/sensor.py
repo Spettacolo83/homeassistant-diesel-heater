@@ -1,8 +1,6 @@
 """Sensor platform for Vevor Diesel Heater."""
 from __future__ import annotations
 
-PARALLEL_UPDATES = 1
-
 from datetime import datetime
 
 from homeassistant.components.sensor import (
@@ -32,8 +30,11 @@ from .const import (
     RUNNING_STEP_NAMES,
     CONF_NEO_CONTROLLER_TYPE,
 )
+from .temperature import NativeTemperatureMixin
 from .coordinator import VevorHeaterCoordinator
 
+
+PARALLEL_UPDATES = 1
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -60,7 +61,6 @@ async def async_setup_entry(
 
     if mode != 9:
         entities.extend([
-            VevorCaseTemperatureSensor(coordinator),
             VevorErrorCodeSensor(coordinator),
             VevorRunningStepSensor(coordinator),
             VevorRunningModeSensor(coordinator),
@@ -68,6 +68,9 @@ async def async_setup_entry(
             VevorBurnoffCyclesSensor(coordinator),
             VevorBurnoffHoursSensor(coordinator),
         ])
+
+    if mode != 9 and coordinator.is_dz06_neo is not True:
+        entities.append(VevorCaseTemperatureSensor(coordinator))
 
     # These are integration-local estimates. Cronus exposes them only after a
     # matching, user-selected model profile supplies the documented fuel curve.
@@ -102,7 +105,7 @@ async def async_setup_entry(
         entities.append(VevorAltitudeSensor(coordinator))
 
     # Extended sensors (encrypted protocols + CBFF: heater_offset, CO, raw temp)
-    if mode in (0, 2, 4, 6):
+    if mode in (0, 2, 4, 6) and coordinator.is_dz06_neo is not True:
         entities.extend([
             VevorRawInteriorTemperatureSensor(coordinator),
             VevorHeaterOffsetSensor(coordinator),
@@ -110,7 +113,7 @@ async def async_setup_entry(
         ])
 
     # CBFF-only sensors (HW/SW version, remaining run time, temp diff)
-    if mode in (0, 6):
+    if mode in (0, 6) and coordinator.is_dz06_neo is not True:
         entities.extend([
             VevorHardwareVersionSensor(coordinator),
             VevorSoftwareVersionSensor(coordinator),
@@ -147,9 +150,9 @@ async def async_setup_entry(
         ])
 
     # A HeatGenie frame omits each probe that the controller marks unsupported.
-    if mode == 8 and "intake_temperature" in coordinator.data:
+    if mode == 8 and coordinator.data.get("intake_temperature") is not None:
         entities.append(VevorAuxTemperatureSensor(coordinator, "intake_temperature", "Intake Temperature"))
-    if mode == 8 and "outlet_temperature" in coordinator.data:
+    if mode == 8 and coordinator.data.get("outlet_temperature") is not None:
         entities.append(VevorAuxTemperatureSensor(coordinator, "outlet_temperature", "Outlet Temperature"))
     async_add_entities(entities)
 
@@ -197,7 +200,7 @@ class VevorSensorBase(CoordinatorEntity[VevorHeaterCoordinator], SensorEntity):
         self.async_write_ha_state()
 
 
-class VevorCaseTemperatureSensor(VevorSensorBase):
+class VevorCaseTemperatureSensor(NativeTemperatureMixin, VevorSensorBase):
     """Case temperature sensor.
 
     Beta.37: Reports temperature in heater's native unit (issue #43).
@@ -223,7 +226,7 @@ class VevorCaseTemperatureSensor(VevorSensorBase):
         return self.coordinator.data.get("case_temperature")
 
 
-class VevorCabTemperatureSensor(VevorSensorBase):
+class VevorCabTemperatureSensor(NativeTemperatureMixin, VevorSensorBase):
     """Cab/interior temperature sensor.
 
     Beta.37: Reports temperature in heater's native unit (issue #43).
@@ -248,7 +251,7 @@ class VevorCabTemperatureSensor(VevorSensorBase):
         return self.coordinator.data.get("cab_temperature")
 
 
-class VevorAuxTemperatureSensor(VevorSensorBase):
+class VevorAuxTemperatureSensor(NativeTemperatureMixin, VevorSensorBase):
     """Temperature sensor exposed only by protocols that report it."""
 
     _attr_device_class = SensorDeviceClass.TEMPERATURE
@@ -316,7 +319,7 @@ class VevorCronusAirPressureSensor(VevorSensorBase):
         return self.coordinator.data.get("cronus_air_pressure")
 
 
-class VevorRawInteriorTemperatureSensor(VevorSensorBase):
+class VevorRawInteriorTemperatureSensor(NativeTemperatureMixin, VevorSensorBase):
     """Raw interior temperature sensor (before any offset).
 
     This shows the actual temperature reading from the heater's internal

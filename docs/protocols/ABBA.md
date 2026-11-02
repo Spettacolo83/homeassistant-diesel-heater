@@ -64,3 +64,10 @@ universal six-level ABBA range.
 ABBA is selected after the FFF0 service and legacy characteristic layout have
 been established, or when a notification begins `AB BA`. It is not identified
 by the AA-family FFE0/FFE1 transport.
+
+## Target units and toggle controls
+
+The `DB` target command is `BA AB 04 DB target 00 unit checksum`, where unit is
+0 for Celsius and 1 for Fahrenheit. The received target is retained in that
+native unit. Auto Start/Stop uses the app's `A6` toggle; Home Assistant checks
+the current state before issuing a desired-state switch action.

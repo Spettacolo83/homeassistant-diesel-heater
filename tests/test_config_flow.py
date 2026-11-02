@@ -316,7 +316,7 @@ class TestConfirmStep:
         flow = VevorHeaterConfigFlow()
         flow._discovery_info = _make_ble_discovery(
             name="Air Heater",
-            manufacturer_data={0xFFFF: b"\x00\x00\x00\x00\x01" + b"\x00" * 11},
+            manufacturer_data={0xFFFF: b"\x00\x00\x01" + b"\x00" * 11},
         )
 
         result = await flow.async_step_confirm(user_input={})
@@ -329,7 +329,7 @@ class TestConfirmStep:
         flow = VevorHeaterConfigFlow()
         flow._discovery_info = _make_ble_discovery(
             name="Air Heater",
-            manufacturer_data={0xFFFF: b"\x00\x00\x00\x00\x02" + b"\x00" * 11},
+            manufacturer_data={0xFFFF: b"\x00\x00\x02" + b"\x00" * 11},
         )
 
         result = await flow.async_step_confirm(user_input={})

@@ -1,12 +1,20 @@
 """Hcalory controller identification from the Air Heater app advertisement format."""
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from enum import StrEnum
 
 from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
 
 from .const import HCALORY_MVP1_SERVICE_UUID, HCALORY_MVP2_SERVICE_UUID
+
+ABBA_NAME_PATTERN = re.compile(r"Heater[0-9]{4}-(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}")
+
+
+def is_abba_named_controller(name: str | None) -> bool:
+    """Recognize the PIN/MAC controller identity reported in issue #156."""
+    return isinstance(name, str) and bool(ABBA_NAME_PATTERN.fullmatch(name))
 
 
 class HcaloryVariant(StrEnum):
@@ -61,6 +69,8 @@ def hcalory_variant_from_discovery(
     discovery_info: BluetoothServiceInfoBleak,
 ) -> HcaloryVariant | None:
     """Return an app-recognized Hcalory variant only on an Hcalory GATT transport."""
+    if is_abba_named_controller(discovery_info.name):
+        return None
     service_uuids = {uuid.lower() for uuid in discovery_info.service_uuids}
     if not service_uuids.intersection(
         {HCALORY_MVP1_SERVICE_UUID, HCALORY_MVP2_SERVICE_UUID}

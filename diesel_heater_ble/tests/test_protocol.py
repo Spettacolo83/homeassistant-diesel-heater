@@ -489,11 +489,11 @@ class TestProtocolAA66:
         assert result["case_temperature"] == 150.0
 
     def test_parse_case_temperature_scaled(self):
-        """case_temp > 350 → divided by 10 (0.1°C scale)."""
+        """Plain AA66 uses signed whole degrees regardless of magnitude."""
         # 1500 = 0x05DC → lo=0xDC, hi=0x05 → 1500/10 = 150.0
         data = _make_aa66_data(case_lo=0xDC, case_hi=0x05)
         result = self.proto.parse(data)
-        assert result["case_temperature"] == 150.0
+        assert result["case_temperature"] == 1500
 
     def test_parse_case_temperature_boundary(self):
         """350 exactly → treated as direct value."""
@@ -503,11 +503,11 @@ class TestProtocolAA66:
         assert result["case_temperature"] == 350.0
 
     def test_parse_case_temperature_above_boundary(self):
-        """351 → treated as 0.1°C scale → 35.1."""
+        """351 remains 351 whole degrees as decoded by AirHeaterBLE."""
         # 351 = lo=0x5F, hi=0x01
         data = _make_aa66_data(case_lo=0x5F, case_hi=0x01)
         result = self.proto.parse(data)
-        assert result["case_temperature"] == 35.1
+        assert result["case_temperature"] == 351
 
     def test_parse_cab_temperature(self):
         data = _make_aa66_data(cab_temp=25)
@@ -1423,7 +1423,7 @@ class TestProtocolCBFF:
     def test_parse_language_255_omitted(self):
         data = _make_cbff_data(language=255)
         result = self.proto.parse(data)
-        assert "language" not in result
+        assert result["language"] is None
 
     def test_parse_tank_volume(self):
         data = _make_cbff_data(tank_volume=5)
@@ -1433,7 +1433,7 @@ class TestProtocolCBFF:
     def test_parse_tank_volume_255_omitted(self):
         data = _make_cbff_data(tank_volume=255)
         result = self.proto.parse(data)
-        assert "tank_volume" not in result
+        assert result["tank_volume"] is None
 
     def test_parse_pump_type(self):
         data = _make_cbff_data(pump_byte=2)
@@ -1456,8 +1456,8 @@ class TestProtocolCBFF:
     def test_parse_pump_255_omitted(self):
         data = _make_cbff_data(pump_byte=255)
         result = self.proto.parse(data)
-        assert "pump_type" not in result
-        assert "rf433_enabled" not in result
+        assert result["pump_type"] is None
+        assert result["rf433_enabled"] is None
 
     def test_parse_backlight(self):
         data = _make_cbff_data(backlight=50)
@@ -1467,7 +1467,7 @@ class TestProtocolCBFF:
     def test_parse_backlight_255_omitted(self):
         data = _make_cbff_data(backlight=255)
         result = self.proto.parse(data)
-        assert "backlight" not in result
+        assert result["backlight"] is None
 
     def test_parse_wifi_enabled(self):
         data = _make_cbff_data(wifi=1)
@@ -1482,7 +1482,7 @@ class TestProtocolCBFF:
     def test_parse_wifi_255_omitted(self):
         data = _make_cbff_data(wifi=255)
         result = self.proto.parse(data)
-        assert "wifi_enabled" not in result
+        assert result["wifi_enabled"] is None
 
     def test_parse_auto_start_stop(self):
         data = _make_cbff_data(auto_start_stop=1)
@@ -1493,7 +1493,7 @@ class TestProtocolCBFF:
         """A 255 capability marker means auto start/stop is unsupported."""
         data = _make_cbff_data(auto_start_stop=255)
         result = self.proto.parse(data)
-        assert "auto_start_stop" not in result
+        assert result["auto_start_stop"] is None
         assert self.proto.supports_auto_start_stop is False
 
     def test_parse_remain_run_time(self):
@@ -1515,8 +1515,8 @@ class TestProtocolCBFF:
     def test_parse_hw_sw_zero_omitted(self):
         data = _make_cbff_data(hw_version=0, sw_version=0)
         result = self.proto.parse(data)
-        assert "hardware_version" not in result
-        assert "software_version" not in result
+        assert result["hardware_version"] is None
+        assert result["software_version"] is None
 
     def test_parse_protocol_version(self):
         data = _make_cbff_data(protocol_version=0x45)
@@ -1546,7 +1546,7 @@ class TestProtocolCBFF:
             "running_state": 1, "running_step": 3, "running_mode": 2,
             "set_temp": 25, "set_level": 7, "error_code": 3,
             "temp_unit": 1, "cab_temperature": -5.0, "altitude_unit": 1,
-            "altitude": 123.4, "supply_voltage": 12.6,
+            "altitude": 1234.0, "supply_voltage": 12.6,
             "case_temperature": 151.2, "co_ppm": 11.0,
             "heater_offset": -4, "language": 2, "tank_volume": 5,
             "rf433_enabled": True, "pump_type": None, "pwr_onoff": 1,
@@ -1567,11 +1567,12 @@ class TestProtocolCBFF:
         assert self.proto.parse(data) == {
             "connected": True, "cbff_protocol_version": 0,
             "running_state": 0, "running_step": 0, "running_mode": 0,
-            "set_temp": 8, "error_code": 0, "temp_unit": 0,
+            "set_temp": 0, "error_code": 0, "temp_unit": 0,
             "cab_temperature": 19.0, "altitude_unit": 1, "altitude": 330.0,
             "supply_voltage": 12.7, "case_temperature": 0.0, "co_ppm": 0.0,
             "heater_offset": 0, "language": 0, "pwr_onoff": 110,
-            "hardware_version": 1, "backlight": 10,
+            "hardware_version": 1, "software_version": None, "tank_volume": None,
+            "pump_type": None, "rf433_enabled": None, "backlight": 10,
             "startup_temp_diff": 2, "shutdown_temp_diff": 2,
             "wifi_enabled": True, "auto_start_stop": False,
             "heater_mode": 0, "remain_run_time": 33172,
@@ -1728,9 +1729,6 @@ class TestProtocolCBFF:
             (5, 7): "feaa00000d0001010107ffffbd",
             (2, 1): "feaa00000d0001010105ffffbb",
             (2, 2): "feaa00000d0001010215ffffcc",
-            (10, 0): "feaa000009000000b1",
-            (21, 0): "feaa000009000000b1",
-            (99, 0): "feaa000009000000b1",
         }
 
         for (command, argument), expected in expected_packets.items():
@@ -1817,11 +1815,9 @@ class TestProtocolCBFF:
         expected = bytes.fromhex("ca8840414c5d405072008ffcbd")
         assert pkt == bytearray(expected)
 
-    def test_feaa_config_commands_not_implemented(self):
-        """FEAA config commands (10-21) return status query instead of AA55."""
-        pkt = self.proto.build_command(14, 2, 1234)
-        # Should be FEAA status query, not AA55 fallback
-        assert pkt[0:2] != bytes([0xAA, 0x55])
+    def test_feaa_setting_without_snapshot_is_rejected(self):
+        with pytest.raises(ValueError):
+            self.proto.build_command(14, 2, 1234)
 
     def test_feaa_set_mode_level(self):
         """Set mode to level uses cmd1=0x01, cmd2=0x01 with level payload."""
@@ -1852,13 +1848,10 @@ class TestProtocolCBFF:
         assert pkt[8] == 1
         assert pkt[9] == 5  # default because last_mode was temp, not level
 
-    def test_feaa_config_commands_return_status_query(self):
-        """FEAA config commands (10-21) return FEAA status query."""
-        for cmd in (10, 14, 21):
-            pkt = self.proto.build_command(cmd, 0, 1234)
-            assert pkt[0:2] == bytes([0xFE, 0xAA])
-            assert pkt[6] == 0x00  # cmd_1 = status
-            assert pkt[7] == 0x00  # cmd_2 = read
+    def test_feaa_unsupported_commands_are_not_queries(self):
+        for command in (10, 11, 12, 13):
+            with pytest.raises(ValueError):
+                self.proto.build_command(command, 0, 1234)
     def test_feaa_auto_start_stop_uses_native_settings_write(self):
         """CBFF carries the app's retained settings into the 03/01 write."""
         self.proto.parse(
@@ -1884,13 +1877,10 @@ class TestProtocolCBFF:
         assert pkt[8:21] == bytes((128, 129, 0, 0, 254, 3, 5, 7, 40, 4, 6, 1, 1))
         assert pkt[-1] == sum(pkt[:-1]) & 0xFF
 
-    def test_feaa_auto_start_stop_without_capability_is_not_a_write(self):
-        """An unsupported FEAA setting must not be guessed or written."""
+    def test_feaa_auto_start_stop_without_capability_is_rejected(self):
         self.proto.parse(_make_cbff_data(auto_start_stop=255))
-
-        pkt = self.proto.build_command(18, 1, 1234)
-
-        assert pkt[6:8] == bytes((0x00, 0x00))
+        with pytest.raises(ValueError):
+            self.proto.build_command(18, 1, 1234)
 
 
     def test_feaa_update_last_state_level(self):
@@ -1987,6 +1977,7 @@ class TestProtocolHeatGenie:
         assert self.proto.build_command(4, 20, 0)[:6] == bytearray((0xAA, 0, 0x66, 1, 0, 20))
         assert self.proto.build_command(5, 6, 0)[:6] == bytearray((0xAA, 0, 0x66, 2, 0, 6))
         assert self.proto.build_command(15, 1, 0).hex() == "aa00610a00008f8d"
+        self.proto.parse(_make_heatgenie_status(flags=0x3F))
         assert self.proto.build_command(4, 68, 0)[:6] == bytearray((0xAA, 0, 0x66, 1, 1, 68))
         assert self.proto.build_time_sync(0, 12, 34)[:6] == bytearray((0xAA, 0, 0x66, 3, 12, 34))
 
@@ -2105,8 +2096,8 @@ class TestProtocolHeatGenie:
         assert parsed["case_temperature"] == 207.6
         assert parsed["set_level"] == 5
         assert parsed["set_temp"] == 16
-        assert "intake_temperature" not in parsed
-        assert "outlet_temperature" not in parsed
+        assert parsed["intake_temperature"] is None
+        assert parsed["outlet_temperature"] is None
 
     def test_rejects_corrupted_52_byte_controller_status_frame(self):
         """The extended report must retain its full-frame CRC validation."""
@@ -2140,5 +2131,5 @@ class TestProtocolHeatGenie:
         frame[-2:] = self.proto.crc16(frame[:-2]).to_bytes(2, "big")
         parsed = self.proto.parse(frame)
         assert parsed is not None
-        assert "intake_temperature" not in parsed
-        assert "outlet_temperature" not in parsed
+        assert parsed["intake_temperature"] is None
+        assert parsed["outlet_temperature"] is None

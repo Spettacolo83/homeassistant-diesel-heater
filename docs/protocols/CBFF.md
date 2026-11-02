@@ -40,7 +40,7 @@ CBFF status frames are 47 bytes when unencrypted or after decryption.
 | 17 | Temperature unit | Low nibble: `0` Celsius, `1` Fahrenheit |
 | 18-19 | Cabin temperature | Little-endian signed 16-bit value |
 | 20 | Altitude unit | Low nibble: `0` metres, `1` feet |
-| 21-22 | Altitude | Little-endian unsigned value |
+| 21-22 | Altitude | Little-endian unsigned value; protocol version 1 uses whole units, other versions divide by 10 |
 | 23-24 | Supply voltage | Little-endian unsigned value, divided by 10 |
 | 25-26 | Case temperature | Little-endian signed value, divided by 10 |
 | 27-28 | CO | Little-endian unsigned value, divided by 10 |
@@ -65,8 +65,11 @@ semantics are:
 
 The heater requires mode and parameter together. For power and mode changes,
 the integration preserves the last controller-reported mode and parameter.
-FEAA settings commands are a separate command family and are not implemented;
-the integration safely falls back to a FEAA status query, never to AA55.
+FEAA settings use the app's `03/01` command and a complete cached 13-byte
+settings snapshot. The writer changes only the requested supported field;
+unknown (`255`) fields and missing snapshots are rejected. Clock sync replaces
+only the two clock bytes with local minutes plus `0x8000`. Unsupported generic
+commands raise an error instead of silently becoming status queries.
 
 ## Detection
 

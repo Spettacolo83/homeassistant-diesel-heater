@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
+
 from diesel_heater_ble import (
     HeaterProtocol,
     ProtocolAA55,
@@ -407,11 +409,11 @@ class TestProtocolAA66:
         assert result["case_temperature"] == 150.0
 
     def test_parse_case_temperature_scaled(self):
-        """case_temp > 350 → divided by 10 (0.1°C scale)."""
+        """Plain AA66 uses signed whole degrees regardless of magnitude."""
         # 1500 = 0x05DC → lo=0xDC, hi=0x05 → 1500/10 = 150.0
         data = _make_aa66_data(case_lo=0xDC, case_hi=0x05)
         result = self.proto.parse(data)
-        assert result["case_temperature"] == 150.0
+        assert result["case_temperature"] == 1500
 
     def test_parse_case_temperature_boundary(self):
         """350 exactly → treated as direct value."""
@@ -421,11 +423,11 @@ class TestProtocolAA66:
         assert result["case_temperature"] == 350.0
 
     def test_parse_case_temperature_above_boundary(self):
-        """351 → treated as 0.1°C scale → 35.1."""
+        """351 remains 351 whole degrees as decoded by AirHeaterBLE."""
         # 351 = lo=0x5F, hi=0x01
         data = _make_aa66_data(case_lo=0x5F, case_hi=0x01)
         result = self.proto.parse(data)
-        assert result["case_temperature"] == 35.1
+        assert result["case_temperature"] == 351
 
     def test_parse_cab_temperature(self):
         data = _make_aa66_data(cab_temp=25)
@@ -1425,7 +1427,7 @@ class TestProtocolCBFF:
     def test_parse_language_255_omitted(self):
         data = _make_cbff_data(language=255)
         result = self.proto.parse(data)
-        assert "language" not in result
+        assert result["language"] is None
 
     def test_parse_tank_volume(self):
         data = _make_cbff_data(tank_volume=5)
@@ -1435,7 +1437,7 @@ class TestProtocolCBFF:
     def test_parse_tank_volume_255_omitted(self):
         data = _make_cbff_data(tank_volume=255)
         result = self.proto.parse(data)
-        assert "tank_volume" not in result
+        assert result["tank_volume"] is None
 
     def test_parse_pump_type(self):
         data = _make_cbff_data(pump_byte=2)
@@ -1458,8 +1460,8 @@ class TestProtocolCBFF:
     def test_parse_pump_255_omitted(self):
         data = _make_cbff_data(pump_byte=255)
         result = self.proto.parse(data)
-        assert "pump_type" not in result
-        assert "rf433_enabled" not in result
+        assert result["pump_type"] is None
+        assert result["rf433_enabled"] is None
 
     def test_parse_backlight(self):
         data = _make_cbff_data(backlight=50)
@@ -1469,7 +1471,7 @@ class TestProtocolCBFF:
     def test_parse_backlight_255_omitted(self):
         data = _make_cbff_data(backlight=255)
         result = self.proto.parse(data)
-        assert "backlight" not in result
+        assert result["backlight"] is None
 
     def test_parse_wifi_enabled(self):
         data = _make_cbff_data(wifi=1)
@@ -1484,7 +1486,7 @@ class TestProtocolCBFF:
     def test_parse_wifi_255_omitted(self):
         data = _make_cbff_data(wifi=255)
         result = self.proto.parse(data)
-        assert "wifi_enabled" not in result
+        assert result["wifi_enabled"] is None
 
     def test_parse_auto_start_stop(self):
         data = _make_cbff_data(auto_start_stop=1)
@@ -1510,8 +1512,8 @@ class TestProtocolCBFF:
     def test_parse_hw_sw_zero_omitted(self):
         data = _make_cbff_data(hw_version=0, sw_version=0)
         result = self.proto.parse(data)
-        assert "hardware_version" not in result
-        assert "software_version" not in result
+        assert result["hardware_version"] is None
+        assert result["software_version"] is None
 
     def test_parse_protocol_version(self):
         data = _make_cbff_data(protocol_version=0x45)
@@ -1541,7 +1543,7 @@ class TestProtocolCBFF:
             "running_state": 1, "running_step": 3, "running_mode": 2,
             "set_temp": 25, "set_level": 7, "error_code": 3,
             "temp_unit": 1, "cab_temperature": -5.0, "altitude_unit": 1,
-            "altitude": 123.4, "supply_voltage": 12.6,
+            "altitude": 1234.0, "supply_voltage": 12.6,
             "case_temperature": 151.2, "co_ppm": 11.0,
             "heater_offset": -4, "language": 2, "tank_volume": 5,
             "rf433_enabled": True, "pump_type": None, "pwr_onoff": 1,
@@ -1562,11 +1564,12 @@ class TestProtocolCBFF:
         assert self.proto.parse(data) == {
             "connected": True, "cbff_protocol_version": 0,
             "running_state": 0, "running_step": 0, "running_mode": 0,
-            "set_temp": 8, "error_code": 0, "temp_unit": 0,
+            "set_temp": 0, "error_code": 0, "temp_unit": 0,
             "cab_temperature": 19.0, "altitude_unit": 1, "altitude": 330.0,
             "supply_voltage": 12.7, "case_temperature": 0.0, "co_ppm": 0.0,
             "heater_offset": 0, "language": 0, "pwr_onoff": 110,
-            "hardware_version": 1, "backlight": 10,
+            "hardware_version": 1, "software_version": None, "tank_volume": None,
+            "pump_type": None, "rf433_enabled": None, "backlight": 10,
             "startup_temp_diff": 2, "shutdown_temp_diff": 2,
             "wifi_enabled": True, "auto_start_stop": False,
             "heater_mode": 0, "remain_run_time": 33172,
@@ -1697,19 +1700,14 @@ class TestProtocolCBFF:
         assert pkt[8:12] == bytes([1, 5, 0xFF, 0xFF])
         assert pkt[-1] == sum(pkt[:-1]) & 0xFF
 
-    def test_build_command_config_uses_aa55_fallback(self):
-        """Config commands (14-21) fall back to the FEAA status query."""
+    def test_settings_require_a_supported_snapshot(self):
         for cmd in (14, 15, 16, 17, 19, 20, 21):
-            pkt = self.proto.build_command(cmd, 0, 1234)
-            assert pkt == self.proto.build_command(1, 0, 1234)
+            with pytest.raises(ValueError):
+                self.proto.build_command(cmd, 0, 1234)
 
-    def test_build_command_unknown_defaults_to_status(self):
-        """Unknown command defaults to status request."""
-        pkt = self.proto.build_command(99, 0, 1234)
-        assert pkt[0] == 0xFE
-        assert pkt[1] == 0xAA
-        assert pkt[6] == 0x00  # status query
-        assert pkt[7] == 0x00  # read
+    def test_unknown_command_is_rejected(self):
+        with pytest.raises(ValueError):
+            self.proto.build_command(99, 0, 1234)
 
     def test_feaa_packet_length_field(self):
         """FEAA packet length field is correct (uint16 LE)."""
@@ -1734,9 +1732,6 @@ class TestProtocolCBFF:
             (5, 7): "feaa00000d0001010107ffffbd",
             (2, 1): "feaa00000d0001010105ffffbb",
             (2, 2): "feaa00000d0001010215ffffcc",
-            (10, 0): "feaa000009000000b1",
-            (21, 0): "feaa000009000000b1",
-            (99, 0): "feaa000009000000b1",
         }
 
         for (command, argument), expected in expected_packets.items():

@@ -57,18 +57,18 @@ This integration supports **multiple protocols** and has been tested with variou
 
 ### Supported Protocols
 
-| Protocol | Completion | Apps | Notes |
-|----------|-----------|------|-------|
-| AA55 Unencrypted | 95% | AirHeaterBLE | Original Vevor protocol |
-| AA55 Encrypted | 99% | AirHeaterBLE | XOR encrypted variant |
-| AA66 Unencrypted | 95% | AirHeaterBLE | 20-byte variant |
-| AA66 Encrypted | 95% | AirHeaterBLE | XOR encrypted, Fahrenheit internal |
-| ABBA | 80% | AirHeaterCC | Different command structure |
-| CBFF/FEAA | 60% | Sunster | Double XOR encryption variant |
-| Hcalory MVP1/MVP2 | 95% | Hcalory | Hcalory controller variants, including HBU1S |
-| HeatGenie / Boygu | 95% | Heat Genie | Register protocol with optional probes and component state bits |
-| Webasto Cronus | 95% | ThermoConnect | Record protocol for air and water controllers |
-| Warm Drive / MUDIRO | APK-backed | Warm Drive | Exact `Air Heater` identity; air and water variants |
+| Protocol | Apps | Notes |
+|----------|------|-------|
+| AA55 Unencrypted | AirHeaterBLE | Original Vevor protocol |
+| AA55 Encrypted | AirHeaterBLE | XOR encrypted variant |
+| AA66 Unencrypted | AirHeaterBLE | 20-byte variant |
+| AA66 Encrypted | AirHeaterBLE | XOR encrypted; Celsius telemetry, selectable display unit |
+| ABBA | AirHeaterCC | Different command structure |
+| CBFF/FEAA | Sunster | Double XOR encryption variant |
+| Hcalory MVP1/MVP2 | Hcalory | Hcalory controller variants, including HBU1S |
+| HeatGenie / Boygu | Heat Genie | Register protocol with optional probes and component state bits |
+| Webasto Cronus | ThermoConnect | Record protocol for air and water controllers |
+| Warm Drive / MUDIRO | Warm Drive | Exact `Air Heater` identity; air and water variants |
 
 ABBA, CBFF, and Hcalory protocols are used by various heater brands. Warm Drive support is intentionally narrower: it applies only to controllers advertising the exact `Air Heater` identity and using the verified split FFF0 transport. If you own a heater that uses one of these families, please check the [Issues](https://github.com/Spettacolo83/homeassistant-diesel-heater/issues), beta test, and report any problems.
 
@@ -188,8 +188,9 @@ logger:
 - In "Level Mode", the heater uses fixed power levels instead
 
 **2. Protocol Compatibility**
-> Some heaters use Fahrenheit internally (AA66 encrypted).
-- The integration auto-detects and converts temperatures
+> Temperature encoding differs by controller family.
+- AA66 encrypted and HeatGenie report measured temperatures in Celsius even when their displays use Fahrenheit.
+- ABBA and Hcalory can report native Fahrenheit; entity units follow validated controller status.
 - If issues persist, check the logs for "protocol" messages
 
 ### Burn-off
@@ -270,7 +271,7 @@ The common and extended entity tables below are scoped by this matrix. A control
 
 | Controller family | Additional controls and entities | Important limits |
 |---|---|---|
-| AA55 / AA66 | Established air-heater baseline and local auto-offset | No encrypted-controller configuration, timer, component bits, or intake/outlet probes |
+| AA55 / AA66 | Established air-heater baseline and existing local auto-offset | No encrypted-controller configuration, timer, component bits, or intake/outlet probes |
 | AA55 Encrypted | Baseline, Temperature Offset, Backlight, and Timer | No Language, Pump Type, Tank Volume, or unit switches |
 | AA66 Encrypted | Baseline, Temperature Offset, Backlight, Timer, Language, Pump Type, Tank Volume, Auto Start/Stop, Temperature Unit, Altitude Unit, and controller-advertised ventilation | Extended telemetry and ventilation are limited to the reported controller fields |
 | ABBA / HeaterCC | Baseline, Auto Start/Stop, Temperature Unit, Altitude Unit, High Altitude, and ventilation when the controller supports it | Level changes are relative controller steps; no timer, component bits, or intake/outlet probes |
@@ -301,7 +302,7 @@ The common and extended entity tables below are scoped by this matrix. A control
 | Number | `number.diesel_heater_burnoff_duration` | Burn-off duration in minutes (1-30, default 10) *(Config)* |
 | Number | `number.diesel_heater_burnoff_after_cycles` | In-run burn-off after N controller heat cycles (0 = off) *(Config)* |
 | Number | `number.diesel_heater_burnoff_after_hours` | In-run burn-off after N RUNNING hours (0 = off) *(Config)* |
-| Button | Sync Time, Reset Estimated Fuel Remaining | Sync Time is available only for AA55/AA66, Hcalory MVP2, and HeatGenie; fuel reset is local *(Config)* |
+| Button | Sync Time, Reset Estimated Fuel Remaining | Sync Time uses the app-defined clock path for AA55/AA66, ABBA, CBFF, nonlegacy Hcalory, HeatGenie, Warm Drive, and Cronus; fuel reset is local *(Config)* |
 | Button | `button.diesel_heater_power_off_now` | Skip burn-off and power off immediately |
 | Button | `button.diesel_heater_run_burnoff` | Run max-power burn-off without shutting down *(Config)* |
 | Sensor | Case Temperature, Error Code, Running Step/Mode, Set Level | Air-heater status fields |

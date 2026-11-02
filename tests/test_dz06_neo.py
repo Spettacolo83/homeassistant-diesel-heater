@@ -14,6 +14,7 @@ from custom_components.diesel_heater.const import (
     RUNNING_MODE_VENTILATION,
     RUNNING_STATE_ON,
     RUNNING_STEP_COOLDOWN,
+    RUNNING_STEP_SELF_TEST,
     RUNNING_STEP_RUNNING,
     RUNNING_STEP_STANDBY,
     RUNNING_STEP_VENTILATION,
@@ -48,6 +49,8 @@ def coordinator_for_layout(
     neo: bool, name: str = "Air Heater"
 ) -> VevorHeaterCoordinator:
     coordinator = VevorHeaterCoordinator.__new__(VevorHeaterCoordinator)
+    coordinator._stopping = False
+    coordinator._background_tasks = set()
     coordinator._protocol_mode = 0
     coordinator._ble_device = SimpleNamespace(name=name)
     coordinator._heater_uses_fahrenheit = False
@@ -111,12 +114,13 @@ def test_warm_drive_uses_cached_advertisement_when_live_name_is_missing() -> Non
 def test_warm_drive_uses_manufacturer_record_when_name_is_missing(
     device_type: int, expected: str
 ) -> None:
-    """Warm Drive's APK falls back to byte 4 of a 16-byte scan record."""
+    """Anonymous records cannot identify a Warm Drive controller."""
     coordinator = coordinator_for_layout(True, name=None)
     coordinator.address = "C8:17:F5:28:E7:9D"
     coordinator.hass = MagicMock()
     cached = SimpleNamespace(
-        manufacturer_data={0xFFFF: bytes((0, 0, 0, 0, device_type)) + bytes(11)}
+        name=None,
+        manufacturer_data={0xFFFF: bytes((0, 0, device_type)) + bytes(11)},
     )
 
     with pytest.MonkeyPatch.context() as monkeypatch:
@@ -125,7 +129,7 @@ def test_warm_drive_uses_manufacturer_record_when_name_is_missing(
             "async_last_service_info",
             lambda *_args, **_kwargs: cached,
         )
-        assert coordinator._warm_drive_type_from_advertisement() == expected
+        assert coordinator._warm_drive_type_from_advertisement() is None
 
 
 def test_5c16_identifies_an_unnamed_warm_drive_controller() -> None:
@@ -186,7 +190,7 @@ def test_5a25_maps_only_observed_states(raw_state: int, expected: int) -> None:
 @pytest.mark.parametrize(
     ("raw_state", "expected_step"),
     [
-        (1, None),
+        (1, RUNNING_STEP_SELF_TEST),
         (2, RUNNING_STEP_RUNNING),
         (3, RUNNING_STEP_RUNNING),
         (4, RUNNING_STEP_RUNNING),
@@ -273,7 +277,7 @@ def test_5a25_parses_warm_drive_status_layout() -> None:
 def test_5a25_uses_warm_drive_fahrenheit_display_conversion() -> None:
     coordinator = coordinator_for_layout(True)
     board_info = bytearray(21)
-    board_info[0], board_info[17] = 0x5D, 2
+    board_info[0], board_info[1], board_info[17] = 0x5D, len(board_info) - 2, 2
     coordinator._notification_callback(FFF2, board_info)
     frame = bytearray(39)
     frame[:2] = b"Z%"
@@ -602,7 +606,7 @@ def test_bluetooth_config_response_sets_warm_drive_configuration() -> None:
 def test_board_info_response_sets_warm_drive_temperature_unit() -> None:
     coordinator = coordinator_for_layout(True)
     frame = bytearray(21)
-    frame[0] = 0x5D
+    frame[0], frame[1] = 0x5D, len(frame) - 2
     frame[17] = 2
     coordinator._notification_callback(FFF2, frame)
     assert coordinator._heater_uses_fahrenheit is True
@@ -612,7 +616,7 @@ def test_board_info_response_sets_warm_drive_temperature_unit() -> None:
 async def test_board_info_request_uses_warm_drive_command() -> None:
     coordinator = coordinator_for_layout(True)
     response = bytearray(21)
-    response[0] = 0x5D
+    response[0], response[1] = 0x5D, len(response) - 2
     response[17] = 1
     coordinator._write_gatt = AsyncMock(
         side_effect=lambda packet: coordinator._notification_callback(FFF2, response)
