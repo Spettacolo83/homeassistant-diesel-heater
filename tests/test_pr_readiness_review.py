@@ -239,3 +239,79 @@ def test_warm_drive_board_unit_change_converts_cached_whole_celsius_values():
     assert coordinator.data["cab_temperature"] == 21
     assert coordinator.data["fire_temperature"] == -10
     assert coordinator.data["hot_water_temperature"] == 30
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", [0, 1, 2])
+@pytest.mark.parametrize("accepted", [False, True])
+@pytest.mark.parametrize("desired", [1, 2])
+async def test_abba_mode_change_requires_reported_mode(monkeypatch, state, accepted, desired):
+    coordinator = create_mock_coordinator()
+    coordinator._protocol_mode = 5
+    coordinator._protocol = ProtocolABBA()
+    coordinator._client = MagicMock(is_connected=True)
+    coordinator._characteristic = "write"
+    coordinator._write_gatt = AsyncMock()
+    coordinator.async_request_refresh = AsyncMock()
+    frame = abba_status(unit=0, target=20)
+    frame[4] = state
+    previous = 2 if desired == 1 else 1
+    frame[5] = previous - 1
+    coordinator._parse_response(frame)
+
+    async def report(_delay):
+        reply = bytearray(frame)
+        reply[5] = (desired if accepted else previous) - 1
+        coordinator._parse_response(reply)
+
+    monkeypatch.setattr("custom_components.diesel_heater.coordinator.asyncio.sleep", report)
+    assert await coordinator.async_set_mode(desired) is accepted
+    assert coordinator.data["running_mode"] == (desired if accepted else previous)
+    # Only the mode button and status query may be written, never heat toggle A1.
+    assert [call.args[0][3] for call in coordinator._write_gatt.await_args_list] == [0xBB, 0xCC]
+    assert coordinator._write_gatt.await_args_list[0].args[0][4] == (0xAD if desired == 2 else 0xAC)
+    assert coordinator.async_request_refresh.await_count == int(accepted)
+
+
+@pytest.mark.asyncio
+async def test_abba_mode_change_waits_past_unchanged_status(monkeypatch):
+    coordinator = create_mock_coordinator()
+    coordinator._protocol_mode = 5
+    coordinator._protocol = ProtocolABBA()
+    coordinator._client = MagicMock(is_connected=True)
+    coordinator._characteristic = "write"
+    coordinator._write_gatt = AsyncMock()
+    reports = 0
+
+    async def report(_delay):
+        nonlocal reports
+        reports += 1
+        frame = abba_status(unit=0, target=20)
+        frame[5] = int(reports >= 3)
+        coordinator._parse_response(frame)
+
+    monkeypatch.setattr("custom_components.diesel_heater.coordinator.asyncio.sleep", report)
+    assert await coordinator._send_command(2, 2) is True
+    assert reports == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["max", "restore_level", "restore_temperature"])
+async def test_abba_burnoff_does_not_write_target_after_failed_mode(operation):
+    coordinator = create_mock_coordinator()
+    coordinator._protocol_mode = 5
+    coordinator.data["running_mode"] = 2
+    coordinator.async_set_mode = AsyncMock(return_value=False)
+    coordinator.async_set_level = AsyncMock(return_value=True)
+    coordinator.async_set_temperature = AsyncMock(return_value=True)
+    cycle = coordinator._burnoff.cycle
+    if operation == "max":
+        result = await coordinator.async_apply_burnoff_max_power(cycle)
+    else:
+        cycle.saved_mode = 1 if operation == "restore_level" else 2
+        cycle.saved_level = 3
+        cycle.saved_temp = 20
+        result = await coordinator.async_restore_burnoff_snapshot(cycle)
+    assert result is False
+    coordinator.async_set_level.assert_not_awaited()
+    coordinator.async_set_temperature.assert_not_awaited()

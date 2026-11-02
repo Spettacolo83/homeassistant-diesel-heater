@@ -3433,6 +3433,17 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                             )
                             self._notification_data = None
                             continue
+                        if (
+                            self._protocol_mode == 5
+                            and command == 2
+                            and self.data.get("running_mode") != (argument if argument in (2, 3) else 1)
+                        ):
+                            self._logger.debug(
+                                "ABBA mode %d not confirmed; controller still reports %s",
+                                argument, self.data.get("running_mode"),
+                            )
+                            self._notification_data = None
+                            continue
                         self._logger.info(
                             "✅ Received response after %.2fs (protocol=%d%s)",
                             i * 0.05, self._protocol_mode,
@@ -3635,6 +3646,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         mode_ok = True
         if self.data.get("running_mode") != RUNNING_MODE_LEVEL:
             mode_ok = bool(await self.async_set_mode(RUNNING_MODE_LEVEL))
+        if self._protocol_mode == 5 and not mode_ok:
+            return False
         max_level = ABBA_MAX_LEVEL if self._protocol_mode == 5 else MAX_LEVEL
         return bool(await self.async_set_level(max_level)) and mode_ok
 
@@ -3669,6 +3682,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             return mode_ok
 
         mode_ok = bool(await self.async_set_mode(int(mode)))
+        if self._protocol_mode == 5 and not mode_ok:
+            return False
         if mode == RUNNING_MODE_LEVEL and cycle.saved_level is not None:
             return bool(await self.async_set_level(int(cycle.saved_level))) and mode_ok
         if mode == RUNNING_MODE_TEMPERATURE and cycle.saved_temp is not None:
@@ -4070,7 +4085,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if await self._async_write_cronus_record(f"{controller_type}_mode", bytes((mode_value,))):
             await self.async_request_refresh()
 
-    async def async_set_mode(self, mode: int) -> None:
+    async def async_set_mode(self, mode: int) -> bool:
         """Set running mode (0=Manual, 1=Level, 2=Temperature, 3=Ventilation).
 
         Mode 3 (Ventilation) is ABBA-only and only works when heater is in standby.
