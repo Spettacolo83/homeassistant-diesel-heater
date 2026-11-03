@@ -243,6 +243,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._is_hcalory_device = False  # True if using Hcalory MVP1/MVP2 protocol
         self._hcalory_mvp2_device = False  # Confirmed by the BD39 GATT service
         self._hcalory_write_char = None  # Hcalory devices use separate write characteristic
+        self._legacy_fff0_probe = False
         self._hcalory_variant: HcaloryVariant | None = None
         try:
             self._hcalory_variant = HcaloryVariant(
@@ -1877,7 +1878,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     if service.uuid.lower() != HCALORY_MVP1_SERVICE_UUID.lower():
                         continue
                     self._logger.info(
-                        "Detected Hcalory %s heater on FFF0 transport",
+                        "Hcalory %s advertisement candidate on FFF0 transport",
                         hcalory_variant.value,
                     )
                     self._is_hcalory_device = True
@@ -2066,6 +2067,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 self._logger.debug("Started notifications on %s", self._active_char_uuid)
             else:
                 self._logger.warning("Characteristic does not support notify")
+
+            if (
+                self._is_hcalory_device
+                and not self._hcalory_mvp2_device
+                and hcalory_variant == HcaloryVariant.MVP1
+            ):
+                await self._identify_legacy_fff0_response()
 
             # CRITICAL: For Hcalory MVP2, send password handshake BEFORE any other command
             # The heater requires authentication before accepting any commands
@@ -2324,6 +2332,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """
         if getattr(self, "_is_heatgenie_device", False):
             return self._protocols[8], data
+
+        # The legacy six-byte ECB advertisement and GATT pair are shared.
+        # During the read-only probe, an ABBA status header overrides that hint.
+        if getattr(self, "_legacy_fff0_probe", False) and header == PROTOCOL_HEADER_ABBA:
+            return self._protocols[5], data
 
         # Hcalory protocol (MVP1/MVP2) - detected by service UUID or header 0x0002
         if self._is_hcalory_device or header == 0x0002:
@@ -2881,6 +2894,32 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             "Sent %d bytes to %s (char %s)",
             len(packet), protocol_name, char_uuid[-4:]
         )
+
+    async def _identify_legacy_fff0_response(self) -> None:
+        """Disambiguate the six-byte ECB hint with an APK-defined ABBA read."""
+        self._legacy_fff0_probe = True
+        self._notification_data = None
+        try:
+            # AirHeaterCC's CC is a status read, never a mode or power toggle.
+            await self._write_gatt(self._protocols[5].build_command(1, 0, self._passkey))
+            for _ in range(100):
+                if self._notification_data is not None:
+                    if self._protocol_mode == 5:
+                        self._is_abba_device = True
+                        self._abba_write_char = self._hcalory_write_char
+                        self._hcalory_write_char = None
+                        self._is_hcalory_device = False
+                        self._hcalory_variant = None
+                        self.update_interval = timedelta(seconds=UPDATE_INTERVAL)
+                        self._logger.info("Confirmed ABBA/HeaterCC from FFF0 status response")
+                        return
+                    if self._protocol_mode == 7:
+                        return
+                await asyncio.sleep(0.05)
+            # A silent ABBA read is not confirmation of Hcalory. The existing
+            # MVP1 status query still has to validate before setup can finish.
+        finally:
+            self._legacy_fff0_probe = False
 
     async def _send_wake_up_ping(self) -> None:
         """Send a wake-up ping to the device to ensure it's responsive."""
