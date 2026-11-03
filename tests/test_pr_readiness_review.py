@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from custom_components.diesel_heater.climate import VevorHeaterClimate
+from custom_components.diesel_heater.const import RUNNING_MODE_TEMPERATURE
 from custom_components.diesel_heater.temperature import temperature_bounds
 from diesel_heater_ble import ProtocolABBA, ProtocolCBFF, ProtocolHcalory, ProtocolHeatGenie
 from tests.test_audit_repairs import abba_status
@@ -67,10 +68,14 @@ def test_abba_level_report_converts_cached_target_when_unit_changes():
     frame[5], frame[6] = 0, 5  # Level mode omits the temperature target.
     coordinator._parse_response(frame)
     assert coordinator.data["set_temp"] == 68
+    assert climate.target_temperature is None  # Level mode hides the cached target.
+    coordinator.data["running_mode"] = RUNNING_MODE_TEMPERATURE
     assert climate.target_temperature == 68
     frame[10], frame[11] = 0, 50
     coordinator._parse_response(frame)
     assert coordinator.data["set_temp"] == 20
+    assert climate.target_temperature is None
+    coordinator.data["running_mode"] = RUNNING_MODE_TEMPERATURE
     assert climate.target_temperature == 20
 
 
@@ -78,6 +83,7 @@ def test_abba_restored_target_tracks_unit_when_no_wire_target_is_available():
     coordinator = create_mock_coordinator()
     coordinator._protocol_mode = 5
     coordinator.data["set_temp"] = None
+    coordinator.data["running_mode"] = RUNNING_MODE_TEMPERATURE
     climate = VevorHeaterClimate(coordinator, coordinator.config_entry)
     climate._restored_abba_target = 20
     coordinator._heater_uses_fahrenheit = True

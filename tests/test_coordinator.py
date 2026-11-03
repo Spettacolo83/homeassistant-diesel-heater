@@ -231,6 +231,7 @@ def create_mock_coordinator() -> VevorHeaterCoordinator:
 
     # Add async_set_updated_data method (from DataUpdateCoordinator parent)
     coordinator.async_set_updated_data = MagicMock()
+    coordinator.async_update_listeners = MagicMock()
     coordinator.async_request_refresh = AsyncMock()
 
     # Max-power burn-off (normally constructed in __init__; seeds entity fields)
