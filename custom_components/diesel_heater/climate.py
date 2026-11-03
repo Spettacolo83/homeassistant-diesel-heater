@@ -15,6 +15,7 @@ from homeassistant.components.climate import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
+from homeassistant.exceptions import HomeAssistantError
 
 from . import VevorHeaterConfigEntry
 from homeassistant.core import HomeAssistant, callback
@@ -28,6 +29,7 @@ from .const import (
     DEFAULT_PRESET_AWAY_TEMP,
     DEFAULT_PRESET_COMFORT_TEMP,
     DOMAIN,
+    RUNNING_MODE_TEMPERATURE,
     RUNNING_STEP_STANDBY,
     RUNNING_STEP_SELF_TEST,
     RUNNING_STEP_IGNITION,
@@ -165,6 +167,21 @@ class VevorHeaterClimate(
 
 
     @property
+    def _temperature_control_available(self) -> bool:
+        """A power level or ventilation setting is not a room-temperature target."""
+        if self.coordinator.burnoff_active:
+            return False
+        if self.coordinator.protocol_mode == 9:
+            return (
+                self.coordinator.data.get("cronus_controller_type") == "air"
+                and self.coordinator.data.get("cronus_mode") != "ventilation"
+            )
+        return (
+            self.coordinator.data.get("running_mode") == RUNNING_MODE_TEMPERATURE
+            and self.coordinator.data.get("running_step") != RUNNING_STEP_VENTILATION
+        )
+
+    @property
     def supported_features(self) -> ClimateEntityFeature:
         """Return the controls the active controller and burn-off state allow.
 
@@ -175,7 +192,9 @@ class VevorHeaterClimate(
         if self.coordinator.burnoff_active:
             return ClimateEntityFeature.TURN_OFF | ClimateEntityFeature.TURN_ON
         if self.coordinator.protocol_mode != 9:
-            return self._attr_supported_features
+            if self._temperature_control_available:
+                return self._attr_supported_features
+            return ClimateEntityFeature.TURN_OFF | ClimateEntityFeature.TURN_ON
         power_features = ClimateEntityFeature.TURN_OFF | ClimateEntityFeature.TURN_ON
         if self.coordinator.data.get("cronus_controller_type") != "air":
             return power_features
@@ -186,7 +205,7 @@ class VevorHeaterClimate(
     @property
     def preset_modes(self) -> list[str] | None:
         """Cronus does not expose the integration-specific temperature presets."""
-        if self.coordinator.protocol_mode == 9:
+        if self.coordinator.protocol_mode == 9 or not self._temperature_control_available:
             return None
         return self._attr_preset_modes
 
@@ -198,6 +217,8 @@ class VevorHeaterClimate(
     @property
     def target_temperature(self) -> float | None:
         """Return the target temperature."""
+        if self.coordinator.protocol_mode != 9 and not self._temperature_control_available:
+            return None
         target = self.coordinator.data.get("set_temp")
         if self.coordinator.protocol_mode == 5:
             native_fahrenheit = self.coordinator._heater_uses_fahrenheit
@@ -279,6 +300,8 @@ class VevorHeaterClimate(
         Auto-detects preset based on current target temperature,
         unless user explicitly cleared the preset.
         """
+        if self.coordinator.protocol_mode == 9 or not self._temperature_control_available:
+            return None
         # If user explicitly selected "None", respect that choice
         if self._user_cleared_preset:
             return PRESET_NONE
@@ -303,6 +326,8 @@ class VevorHeaterClimate(
         Note: Presets are only used for Celsius heaters currently.
         Future enhancement: Add Fahrenheit preset support.
         """
+        if self.coordinator.protocol_mode == 9 or not self._temperature_control_available:
+            raise HomeAssistantError("Temperature presets require Temperature mode")
         self._current_preset = preset_mode
 
         if preset_mode == PRESET_AWAY:
@@ -331,6 +356,8 @@ class VevorHeaterClimate(
         Beta.34: Temperature is passed in native unit (°F or °C) to eliminate
         double conversions that caused precision loss (@Xev, issue #43).
         """
+        if not self._temperature_control_available:
+            raise HomeAssistantError("Select Temperature mode before setting a temperature target")
         if (temperature := kwargs.get(ATTR_TEMPERATURE)) is None:
             return
 
