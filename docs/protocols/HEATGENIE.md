@@ -29,12 +29,12 @@ integration reads:
 | 18-19 | Outlet temperature | Little-endian signed value, divided by 10 when supported |
 | 20-21 | Error flags | Lowest set bit is the current error |
 | 32 | Set level | Controller level |
-| 33 | Set temperature | Controller target temperature |
+| 33 | Set temperature | Target in the display-selected unit; normalized to Celsius in HA |
 
 The flag byte contains independent component activity: bit 0 or 1 for the
 fuel pump, bit 2 for the fan, and bit 3 for the glow plug. Intake and outlet
 values of `32760` mean that the controller does not support that probe; the
-integration does not create an entity for an omitted probe.
+integration does not create an entity for an unsupported probe. A later unsupported marker clears the previous reading rather than retaining stale telemetry.
 
 ## Commands
 
@@ -43,3 +43,9 @@ uses the app-backed operations for automatic status updates, mode, power,
 target temperature, target level, temperature unit, and time synchronization.
 Unsupported generic commands fail rather than being translated to guessed
 register writes.
+
+Measured cabin, case, intake, and outlet values are native Celsius tenths. The
+Fahrenheit bit selects the controller/app display and target command encoding;
+it does not change the measured wire values into Fahrenheit. HA keeps measured
+values and its target in Celsius and converts only the outgoing target when
+that display bit is set.

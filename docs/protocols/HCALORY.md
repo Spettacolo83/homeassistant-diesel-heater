@@ -20,9 +20,11 @@ so an FFF0 service alone must not be treated as ABBA or as Hcalory.
 | MVP2 | `0000BD39-0000-1000-8000-00805F9B34FB` | `0000BDF7-0000-1000-8000-00805F9B34FB` | `0000BDF8-0000-1000-8000-00805F9B34FB` |
 
 Legacy `MVP1` sends its status query using `0E 04`. `MVP2` and all seven
-numbered MVP variants use authenticated `0A 0A` status requests with the current
+numbered MVP variants use `0A 0A` status requests with the current
 time encoded as raw hour, minute, second, ISO weekday, and a trailing `00`.
-This is neither a Unix timestamp nor BCD.
+This raw clock layout applies to BD39 transport. On FFF0, the same `0A0A`
+command carries big-endian epoch seconds plus the local UTC offset instead,
+as selected by Hcalory `q2/h.q` and `p2/e0.p`. Neither layout is BCD.
 
 ## Command envelope
 
@@ -43,7 +45,7 @@ modulo 256. Confirmed control commands are:
 | Level mode | `0E 04` | Final value `07` |
 | Temperature unit | `0E 04` | Final value `0A` Celsius, `0B` Fahrenheit |
 | MVP2 status request | `0A 0A` | Raw current-time payload |
-| PIN update | `0A 0C` | Four PIN digits |
+| Authentication | `0A 0C` | `01` followed by four PIN digits |
 
 The Hcalory app defaults MVP2 controller authentication to `0000`. The integration
 stores PINs numerically, so enter that factory value as `0`.
@@ -67,8 +69,8 @@ fields:
 | 22 | Set value / error | Setpoint normally; fault value while in error state |
 | 23 | Automatic start/stop | `1` enabled, `2` disabled |
 | 24-25 | Supply voltage | Big-endian unsigned value, divided by 10 |
-| 27-28 | Case temperature | Big-endian unsigned value, divided by 10 |
-| 30-31 | Cabin temperature | Big-endian unsigned value, divided by 10 |
+| 27-28 | Case temperature | Big-endian magnitude, divided by 10; sign at byte 26 |
+| 30-31 | Cabin temperature | Big-endian magnitude, divided by 10; sign at byte 29 |
 | 37 | Temperature unit | Controller unit value |
 
 The state high nibble is `0` off, `4` turning off, `8` heating, `C`
@@ -82,3 +84,12 @@ The integration preserves the app-recognized advertisement variant in the
 config entry, chooses the verified FFF0 or BD39 characteristic pair, and then
 uses the matching Hcalory command family. FFF0 alone is shared with other
 heater families and is not sufficient evidence.
+
+Authentication replies (`0003/0B0C`) are checksum-validated and handled separately
+from telemetry. The integration retains its established handshake for nonlegacy
+controllers, including models whose credentials were required in device reports.
+The app's variant-dependent handshake shortcut is not sufficient evidence to
+remove that compatibility path from already supported heaters.
+
+On a legacy short status payload without byte37, the temperature unit defaults
+to Celsius. The trailing checksum is not an optional unit field.

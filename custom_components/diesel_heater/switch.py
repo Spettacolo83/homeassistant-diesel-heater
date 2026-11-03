@@ -37,26 +37,26 @@ async def async_setup_entry(
         entities.append(VevorBurnoffSwitch(coordinator))
 
     # Auto Temperature Offset (not available for Hcalory - @Xev, issue #34)
-    if mode not in (7, 8, 9):
+    if mode in (1, 2, 3, 4, 6):
         entities.append(VevorAutoOffsetSwitch(coordinator))
 
     # Auto Start/Stop (AA66Encrypted, ABBA, CBFF, Hcalory)
-    if mode in (0, 4, 5, 6, 7):
+    if (mode in (0, 4, 5, 6, 7) and coordinator.is_dz06_neo is not True) or coordinator.is_warm_drive_controller is True:
         entities.append(VevorAutoStartStopSwitch(coordinator))
     if coordinator.is_warm_drive_controller is True:
         entities.append(VevorWarmDriveMaxHeatSwitch(coordinator))
 
     # Temperature unit (AA66Encrypted, ABBA, CBFF, Hcalory)
-    if mode in (0, 4, 5, 6, 7, 8):
+    if mode in (0, 4, 5, 6, 7, 8) and coordinator.is_dz06_neo is not True:
         entities.append(VevorTempUnitSwitch(coordinator))
 
     # Altitude unit (AA66Encrypted, ABBA, CBFF only - NOT Hcalory)
     # @Xev confirmed Hcalory has no altitude sensor (issue #34)
-    if mode in (0, 4, 5, 6):
+    if mode in (0, 4, 5, 6) and coordinator.is_dz06_neo is not True:
         entities.append(VevorAltitudeUnitSwitch(coordinator))
 
     # High altitude (ABBA only)
-    if mode in (0, 5):
+    if mode in (0, 5) and coordinator.is_dz06_neo is not True:
         entities.append(VevorHighAltitudeSwitch(coordinator))
 
     # Timer (AA55/AA66 encrypted only - issue #48)

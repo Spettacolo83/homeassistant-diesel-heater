@@ -381,34 +381,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: DieselHeaterConfigEntry)
     # Load persistent fuel data
     await coordinator.async_load_data()
 
-    # Initial data fetch with timeout
-    # Allow setup to complete even if connection fails - entities will show as unavailable
-    # and the coordinator will keep retrying in background every 30 seconds
+    # Do not freeze an unknown protocol's entity set after a failed first poll.
+    # Cronus optional records have individual deadlines and need a larger
+    # bounded startup budget than a single-frame controller.
+    initial_timeout = 90.0 if coordinator.is_cronus_device else 30.0
     try:
         await asyncio.wait_for(
-            coordinator.async_config_entry_first_refresh(),
-            timeout=30.0
-        )
-        _LOGGER.info("Successfully connected to Diesel Heater at %s", address)
-    except asyncio.TimeoutError:
-        _LOGGER.warning(
-            "Initial connection to Diesel Heater at %s timed out after 30 seconds. "
-            "Setup will complete anyway and retry in background. "
-            "Entities will show as unavailable until connection succeeds. "
-            "Make sure the heater is powered on, in Bluetooth range, and the app is disconnected.",
-            address
+            coordinator.async_config_entry_first_refresh(), timeout=initial_timeout
         )
     except Exception as err:
-        _LOGGER.warning(
-            "Initial connection to Diesel Heater at %s failed: %s. "
-            "Setup will complete anyway and retry in background. "
-            "Entities will show as unavailable until connection succeeds. "
-            "Make sure the heater is powered on, in Bluetooth range, and the app is disconnected.",
-            address,
-            err
-        )
+        await coordinator.async_shutdown()
+        raise ConfigEntryNotReady(
+            f"Waiting for a validated heater status (startup budget {initial_timeout:g}s)"
+        ) from err
 
-    # Store coordinator on the config entry (even if connection failed - will retry in background)
+    if not coordinator.data.get("connected") or (coordinator.protocol_mode == 0 and not coordinator.is_dz06_neo) or (
+        coordinator.protocol_mode == 9
+        and coordinator.data.get("cronus_controller_type") not in ("air", "water")
+    ):
+        await coordinator.async_shutdown()
+        raise ConfigEntryNotReady("Waiting for a validated heater protocol and capabilities")
+
+    # Store only an identified coordinator with a valid initial snapshot
     entry.runtime_data = coordinator
 
     # Forward entry setup to platforms

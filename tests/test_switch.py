@@ -839,7 +839,7 @@ class TestAsyncSetupEntry:
         async_add_entities.assert_called_once()
         entities = async_add_entities.call_args[0][0]
         # Mode 0: power + burnoff + auto_offset + auto_start_stop + temp_unit + altitude_unit + high_altitude = 7
-        assert len(entities) == 7
+        assert len(entities) == 6
 
     @pytest.mark.asyncio
     async def test_setup_entry_protocol_mode_1_creates_core_only(self):
@@ -911,7 +911,7 @@ class TestAsyncSetupEntry:
         async_add_entities.assert_called_once()
         entities = async_add_entities.call_args[0][0]
         # Mode 5: power + burnoff + auto_offset + auto_start_stop + temp_unit + altitude_unit + high_altitude = 7
-        assert len(entities) == 7
+        assert len(entities) == 6
 
     @pytest.mark.asyncio
     async def test_setup_entry_protocol_mode_6_creates_cbff_switches(self):
@@ -949,7 +949,7 @@ class TestAsyncSetupEntry:
 
         assert "VevorHeaterPowerSwitch" in entity_types
         assert "VevorBurnoffSwitch" in entity_types
-        assert "VevorAutoOffsetSwitch" in entity_types
+        assert "VevorAutoOffsetSwitch" not in entity_types
         assert "VevorAutoStartStopSwitch" in entity_types
         assert "VevorTempUnitSwitch" in entity_types
         assert "VevorAltitudeUnitSwitch" in entity_types

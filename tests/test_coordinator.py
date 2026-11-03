@@ -99,6 +99,8 @@ def create_mock_coordinator() -> VevorHeaterCoordinator:
 
     # Create coordinator without calling __init__ using object.__new__
     coordinator = object.__new__(VevorHeaterCoordinator)
+    coordinator._stopping = False
+    coordinator._background_tasks = set()
 
     # Set up minimum required attributes
     coordinator.hass = hass
@@ -111,6 +113,9 @@ def create_mock_coordinator() -> VevorHeaterCoordinator:
     coordinator._protocol = None
     coordinator._protocol_mode = 0
     coordinator._passkey = 1234
+    coordinator._hcalory_auth_response = None
+    coordinator._hcalory_last_set_temp = None
+    coordinator._hcalory_last_set_level = None
 
     # Protocol handlers dict (mode -> protocol instance)
     coordinator._protocols = {
@@ -210,12 +215,7 @@ def create_mock_coordinator() -> VevorHeaterCoordinator:
     coordinator._cronus_transaction_lock = asyncio.Lock()
 
     # Volatile fields for clear/restore/save
-    coordinator._VOLATILE_FIELDS = (
-        "case_temperature", "cab_temperature", "cab_temperature_raw",
-        "supply_voltage", "running_state", "running_step", "running_mode",
-        "set_level", "set_temp", "altitude", "error_code",
-        "hourly_fuel_consumption", "co_ppm", "remain_run_time",
-    )
+    coordinator._VOLATILE_FIELDS = VevorHeaterCoordinator._VOLATILE_FIELDS
 
     # Auto offset related
     coordinator._auto_offset_unsub = None
@@ -1774,7 +1774,7 @@ class TestAsyncCommands:
 
         coordinator._send_command.assert_awaited_once_with(4, 10)
         coordinator._send_command.reset_mock()
-        coordinator._heater_uses_fahrenheit = True
+        coordinator.data["temp_unit"] = 1
 
         await coordinator.async_set_temperature(1)
 
@@ -2629,6 +2629,7 @@ class TestAutoOffsetCalculation:
     async def test_auto_offset_disabled(self):
         """Test that auto offset is skipped when disabled."""
         coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 4
         coordinator.data["auto_offset_enabled"] = False
         coordinator.async_set_heater_offset = AsyncMock()
 
@@ -2640,6 +2641,7 @@ class TestAutoOffsetCalculation:
     async def test_auto_offset_no_external_sensor(self):
         """Test auto offset with no external sensor configured."""
         coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 4
         coordinator.data["auto_offset_enabled"] = True
         coordinator.config_entry.data = {"address": "AA:BB:CC:DD:EE:FF"}
         coordinator.async_set_heater_offset = AsyncMock()
@@ -2655,6 +2657,7 @@ class TestAutoOffsetCalculation:
         from custom_components.diesel_heater.const import CONF_EXTERNAL_TEMP_SENSOR
 
         coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 4
         coordinator.data["auto_offset_enabled"] = True
         coordinator.config_entry.data = {
             "address": "AA:BB:CC:DD:EE:FF",
@@ -2673,6 +2676,7 @@ class TestAutoOffsetCalculation:
         from custom_components.diesel_heater.const import CONF_EXTERNAL_TEMP_SENSOR
 
         coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 4
         coordinator.data["auto_offset_enabled"] = True
         coordinator.config_entry.data = {
             "address": "AA:BB:CC:DD:EE:FF",
@@ -2696,6 +2700,7 @@ class TestAutoOffsetCalculation:
         from custom_components.diesel_heater.const import CONF_EXTERNAL_TEMP_SENSOR
 
         coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 4
         coordinator.data["auto_offset_enabled"] = True
         coordinator.config_entry.data = {
             "address": "AA:BB:CC:DD:EE:FF",
@@ -2718,6 +2723,7 @@ class TestAutoOffsetCalculation:
         from custom_components.diesel_heater.const import CONF_EXTERNAL_TEMP_SENSOR
 
         coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 4
         coordinator.data["auto_offset_enabled"] = True
         coordinator.data["cab_temperature_raw"] = None
         coordinator.config_entry.data = {
@@ -2741,6 +2747,7 @@ class TestAutoOffsetCalculation:
         from custom_components.diesel_heater.const import CONF_EXTERNAL_TEMP_SENSOR
 
         coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 4
         coordinator.data["auto_offset_enabled"] = True
         coordinator.data["cab_temperature_raw"] = 22
         coordinator.config_entry.data = {
@@ -2765,6 +2772,7 @@ class TestAutoOffsetCalculation:
         from custom_components.diesel_heater.const import CONF_EXTERNAL_TEMP_SENSOR, CONF_AUTO_OFFSET_MAX
 
         coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 4
         coordinator.data["auto_offset_enabled"] = True
         coordinator.data["cab_temperature_raw"] = 25  # Heater reads 25
         coordinator.config_entry.data = {
@@ -2791,6 +2799,7 @@ class TestAutoOffsetCalculation:
         from custom_components.diesel_heater.const import CONF_EXTERNAL_TEMP_SENSOR, CONF_AUTO_OFFSET_MAX
 
         coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 4
         coordinator.data["auto_offset_enabled"] = True
         coordinator.data["cab_temperature_raw"] = 30  # Heater reads 30
         coordinator.config_entry.data = {
@@ -2817,6 +2826,7 @@ class TestAutoOffsetCalculation:
         from custom_components.diesel_heater.const import CONF_EXTERNAL_TEMP_SENSOR, CONF_AUTO_OFFSET_MAX
 
         coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 4
         coordinator.data["auto_offset_enabled"] = True
         coordinator.data["cab_temperature_raw"] = 22
         coordinator.config_entry.data = {
@@ -2847,6 +2857,7 @@ class TestAutoOffsetCalculation:
         from custom_components.diesel_heater.const import CONF_EXTERNAL_TEMP_SENSOR, CONF_AUTO_OFFSET_MAX
 
         coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 4
         coordinator.data["auto_offset_enabled"] = True
         coordinator.data["cab_temperature_raw"] = 12  # Heater reads 12°C
         coordinator.config_entry.data = {
@@ -2875,6 +2886,7 @@ class TestAutoOffsetCalculation:
         from custom_components.diesel_heater.const import CONF_EXTERNAL_TEMP_SENSOR, CONF_AUTO_OFFSET_MAX
 
         coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 4
         coordinator.data["auto_offset_enabled"] = True
         coordinator.data["cab_temperature_raw"] = 15  # Heater reads 15°C
         coordinator.config_entry.data = {
@@ -2904,6 +2916,7 @@ class TestAutoOffsetCalculation:
         from custom_components.diesel_heater.const import CONF_EXTERNAL_TEMP_SENSOR, CONF_AUTO_OFFSET_MAX
 
         coordinator = create_mock_coordinator()
+        coordinator._protocol_mode = 4
         coordinator.data["auto_offset_enabled"] = True
         coordinator.data["cab_temperature_raw"] = 25  # Heater reads 25°C
         coordinator.config_entry.data = {
@@ -3613,9 +3626,9 @@ class TestSendCommand:
         coordinator._protocol = ProtocolHcalory()
 
         async def mock_write(packet):
-            coordinator._notification_data = bytearray.fromhex(
+            coordinator._notification_callback(0, bytearray.fromhex(
                 "000300010001000B0C0000060101020304011E"
-            )
+            ))
 
         coordinator._write_gatt = AsyncMock(side_effect=mock_write)
 
@@ -3635,9 +3648,9 @@ class TestSendCommand:
         coordinator._passkey = 1231
 
         async def mock_write(packet):
-            coordinator._notification_data = bytearray.fromhex(
+            coordinator._notification_callback(0, bytearray.fromhex(
                 "000300010001000B0C0000060101020301021C"
-            )
+            ))
 
         coordinator._write_gatt = AsyncMock(side_effect=mock_write)
 
@@ -4411,9 +4424,9 @@ class TestNotificationCallback:
         data = bytearray([0xAA, 0x55] + [0x00] * 16)
         coordinator._parse_response(data)
 
-        # Should set default values on error
-        assert coordinator.data["connected"] is True
-        assert coordinator.data["running_state"] == 0
+        # Invalid bytes must leave the previous snapshot untouched
+        assert coordinator.data["connected"] is False
+        assert coordinator._notification_data is None
         coordinator._logger.error.assert_called()
 
     def test_parse_response_parsed_none(self):
@@ -4430,7 +4443,8 @@ class TestNotificationCallback:
         data = bytearray([0xAA, 0x55] + [0x00] * 16)
         coordinator._parse_response(data)
 
-        assert coordinator.data["connected"] is True
+        assert coordinator.data["connected"] is False
+        assert coordinator._notification_data is None
 
 
 class TestCBFFV21Handshake:
@@ -5622,7 +5636,7 @@ class TestBurnoffOnShutdown:
         def _create_task(coro):
             created.append(coro)
             coro.close()
-            return coro
+            return MagicMock()
 
         coordinator.hass.async_create_task = _create_task
 

@@ -62,7 +62,7 @@ async def async_setup_entry(
             VevorHeaterPumpTypeSelect(coordinator),
             VevorHeaterTankVolumeSelect(coordinator),
         ])
-    elif mode in (0, 4, 6):
+    elif mode in (0, 4, 6) and coordinator.is_dz06_neo is not True:
         entities.extend([
             VevorHeaterLanguageSelect(coordinator),
             VevorHeaterPumpTypeSelect(coordinator),
@@ -70,7 +70,7 @@ async def async_setup_entry(
         ])
 
     # Backlight select (encrypted + CBFF protocols)
-    if mode in (0, 2, 4, 6):
+    if mode in (0, 2, 4, 6) and coordinator.is_dz06_neo is not True:
         entities.append(VevorBacklightSelect(coordinator))
 
     # High Altitude Mode (Hcalory MVP2 only - 3 modes: Disabled, Mode 1, Mode 2)

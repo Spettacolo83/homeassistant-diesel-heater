@@ -44,7 +44,7 @@ from .const import (
     MIN_NEO_PASSWORD,
     MIN_PIN,
 )
-from .hcalory import hcalory_variant_from_discovery
+from .hcalory import hcalory_variant_from_discovery, is_abba_named_controller
 
 _LOGGER = logging.getLogger(__name__)
 HEATGENIE_NAME_PATTERN = re.compile(r"^C1:[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}:FE:[0-9A-F]{2}$")
@@ -79,8 +79,8 @@ def _warm_drive_controller_type(
     if not _is_warm_drive_device(discovery_info):
         return None
     for payload in discovery_info.manufacturer_data.values():
-        if len(payload) == 16:
-            return "air" if payload[4] == 1 else "water"
+        if len(payload) == 14:
+            return "air" if payload[2] == 1 else "water"
     return None
 
 
@@ -98,6 +98,7 @@ def _is_likely_heater(discovery_info: BluetoothServiceInfoBleak) -> bool:
     name = raw_name.upper()
     return (
         _is_heatgenie_device(discovery_info)
+        or is_abba_named_controller(raw_name)
         or _is_warm_drive_device(discovery_info)
         or hcalory_variant_from_discovery(discovery_info) is not None
         or any(name.startswith(prefix) for prefix in HEATER_NAME_PREFIXES)

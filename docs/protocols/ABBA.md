@@ -64,3 +64,24 @@ universal six-level ABBA range.
 ABBA is selected after the FFF0 service and legacy characteristic layout have
 been established, or when a notification begins `AB BA`. It is not identified
 by the AA-family FFE0/FFE1 transport.
+
+## Target units and toggle controls
+
+The `DB` target command is `BA AB 04 DB target 00 unit checksum`, where unit is
+0 for Celsius and 1 for Fahrenheit. The received target is retained in that
+native unit. Auto Start/Stop uses the app's `A6` toggle; Home Assistant checks
+the current state before issuing a desired-state switch action.
+
+## CY-5004 mode-change limitation
+
+Live testing by stefanr09 in [issue #156](https://github.com/Spettacolo83/homeassistant-diesel-heater/issues/156#issuecomment-6586788001)
+found that the CY-5004 controller used with AirHeaterCC accepts AC/AD mode changes
+while Running, but ignores them in Standby and Cooldown. This is a reported
+limitation of that controller; it is not imposed on every ABBA model.
+
+Home Assistant confirms mode changes from the reported mode, rather than treating
+any status reply as acceptance. If the requested mode is not confirmed, dependent
+burn-off level/target writes are stopped. A mode request does not automatically
+start the heater. The same hardware report confirms that DB temperature writes
+work in both Level and Temperature modes; this does not change which temperature
+controls the climate entity exposes.

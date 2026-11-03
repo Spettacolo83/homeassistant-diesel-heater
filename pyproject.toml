@@ -1,6 +1,6 @@
 [project]
-name = "homeassistant-vevor-heater"
-version = "1.0.27"
+name = "homeassistant-diesel-heater"
+version = "2.1.5b20"
 description = "Home Assistant integration for Vevor/Hcalory/Sunster diesel heaters via BLE"
 requires-python = ">=3.12"
 license = {text = "MIT"}
@@ -18,6 +18,7 @@ dev = [
 testpaths = ["tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff]
 target-version = "py312"
@@ -27,7 +28,7 @@ line-length = 120
 select = ["E", "F", "W", "I", "UP", "B", "SIM"]
 
 [tool.coverage.run]
-source = ["custom_components/vevor_heater", "diesel_heater_ble"]
+source = ["custom_components/diesel_heater", "diesel_heater_ble"]
 
 [tool.coverage.report]
 show_missing = true

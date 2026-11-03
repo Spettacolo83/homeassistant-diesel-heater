@@ -1,8 +1,6 @@
 """Number platform for Vevor Diesel Heater."""
 from __future__ import annotations
 
-PARALLEL_UPDATES = 1
-
 from homeassistant.components.number import NumberDeviceClass, NumberEntity, NumberMode
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -27,8 +25,11 @@ from .const import (
     MIN_LEVEL,
     MIN_TEMP_CELSIUS,
 )
+from .temperature import NativeTemperatureMixin, temperature_bounds
 from .coordinator import VevorHeaterCoordinator
 
+
+PARALLEL_UPDATES = 1
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -69,7 +70,7 @@ async def async_setup_entry(
             entities.insert(0, VevorHeaterLevelNumber(coordinator))
 
         # Offset number (encrypted + CBFF protocols only)
-        if mode in (0, 2, 4, 6):
+        if mode in (0, 2, 4, 6) and coordinator.is_dz06_neo is not True:
             entities.append(VevorHeaterOffsetNumber(coordinator))
 
     async_add_entities(entities)
@@ -164,6 +165,7 @@ class VevorHeaterLevelNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberEn
 
 
 class VevorHeaterTemperatureNumber(
+    NativeTemperatureMixin,
     CoordinatorEntity[VevorHeaterCoordinator], NumberEntity
 ):
     """Vevor Heater temperature number entity.
@@ -233,6 +235,14 @@ class VevorHeaterTemperatureNumber(
             self._attr_native_max_value = MAX_TEMP_CELSIUS
 
     @property
+    def native_min_value(self):
+        return temperature_bounds(self.coordinator)[0]
+
+    @property
+    def native_max_value(self):
+        return temperature_bounds(self.coordinator)[1]
+
+    @property
     def available(self) -> bool:
         """Return True if entity is available.
 
@@ -269,7 +279,7 @@ class VevorHeaterTemperatureNumber(
         if temp is not None:
             return temp
         # Fallback: return min value in correct unit
-        return self._attr_native_min_value
+        return self.native_min_value
 
     async def async_set_native_value(self, value: float) -> None:
         """Set new value (no conversion needed - already in native unit)."""

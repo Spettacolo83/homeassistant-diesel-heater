@@ -368,12 +368,9 @@ class ProtocolAA66(VevorCommandMixin, HeaterProtocol):
         voltage_raw = _u8_to_number(data[11]) | (_u8_to_number(data[12]) << 8)
         parsed["supply_voltage"] = voltage_raw / 10.0
 
-        # Auto-detect case temp format: >350 means 0.1°C scale
-        case_temp_raw = _u8_to_number(data[13]) | (_u8_to_number(data[14]) << 8)
-        if case_temp_raw > 350:
-            parsed["case_temperature"] = case_temp_raw / 10.0
-        else:
-            parsed["case_temperature"] = float(case_temp_raw)
+        # AirHeaterBLE ble.js decodes both plain AA variants as signed
+        # whole degrees; magnitude is not an encoding discriminator.
+        parsed["case_temperature"] = _unsign_to_sign(data[13] | (data[14] << 8))
 
         parsed["cab_temperature"] = _unsign_to_sign(256 * data[16] + data[15])
 
@@ -642,6 +639,18 @@ class ProtocolCronus(HeaterProtocol):
         return packet
 
     @classmethod
+    def build_write_frames(cls, record_id: int, payload: bytes | bytearray) -> list[bytearray]:
+        """Return distinct APK BLE writes instead of one concatenated ATT write."""
+        packet = cls.build_write_record(record_id, payload)
+        frames = []
+        offset = 0
+        while offset < len(packet):
+            size = 7 + packet[offset + 6]
+            frames.append(packet[offset:offset + size])
+            offset += size
+        return frames
+
+    @classmethod
     def build_power_command(cls, enabled: bool) -> bytearray:
         """Build the app's Cronus auxiliary-heater on/off record write."""
         return cls.build_write_record(cls.POWER_RECORD_ID, bytes((1, int(enabled))))
@@ -858,9 +867,8 @@ class ProtocolHeatGenie(HeaterProtocol):
                 argument & 0x3F,
             )
         if command == 15:
-            self._uses_fahrenheit = bool(argument)
             button = (
-                self._BUTTON_SWITCH_TEMP_TO_FAHRENHEIT if self._uses_fahrenheit else self._BUTTON_SWITCH_TEMP_TO_CELSIUS
+                self._BUTTON_SWITCH_TEMP_TO_FAHRENHEIT if argument else self._BUTTON_SWITCH_TEMP_TO_CELSIUS
             )
             return self._button_frame(button)
         raise ValueError(f"Unsupported HeatGenie command: {command}")
@@ -915,7 +923,7 @@ class ProtocolHeatGenie(HeaterProtocol):
             "heatgenie_last_button_nonce": registers[35],
             "heatgenie_run_mode": (flags >> 5) & 0x03,
             "set_level": registers[32],
-            "set_temp": registers[33],
+            "set_temp": (registers[33] - 32) * 5 / 9 if temp_unit else registers[33],
             "supply_voltage": int.from_bytes(registers[2:4], "little") / 10,
             "altitude": int.from_bytes(registers[4:6], "little"),
             "cab_temperature": int.from_bytes(registers[6:8], "little", signed=True) / 10,
@@ -928,12 +936,14 @@ class ProtocolHeatGenie(HeaterProtocol):
         }
 
         intake_temperature = int.from_bytes(registers[16:18], "little", signed=True)
-        if intake_temperature != self._UNSUPPORTED_TEMPERATURE:
-            parsed["intake_temperature"] = intake_temperature / 10
+        parsed["intake_temperature"] = (
+            intake_temperature / 10 if intake_temperature != self._UNSUPPORTED_TEMPERATURE else None
+        )
 
         outlet_temperature = int.from_bytes(registers[18:20], "little", signed=True)
-        if outlet_temperature != self._UNSUPPORTED_TEMPERATURE:
-            parsed["outlet_temperature"] = outlet_temperature / 10
+        parsed["outlet_temperature"] = (
+            outlet_temperature / 10 if outlet_temperature != self._UNSUPPORTED_TEMPERATURE else None
+        )
 
         return parsed
 
@@ -960,6 +970,10 @@ class ProtocolABBA(HeaterProtocol):
 
     protocol_mode = 5
     name = "ABBA"
+
+    def __init__(self) -> None:
+        self._uses_fahrenheit = False
+
     needs_calibration = False
     needs_post_status = True
 
@@ -995,7 +1009,7 @@ class ProtocolABBA(HeaterProtocol):
             if parsed["running_mode"] == RUNNING_MODE_LEVEL:
                 parsed["set_level"] = max(1, min(10, gear_byte))
             else:
-                parsed["set_temp"] = max(MIN_TEMP_CELSIUS, min(MAX_TEMP_CELSIUS, gear_byte))
+                parsed["set_temp"] = gear_byte
 
         # Byte 8: Auto Start/Stop
         parsed["auto_start_stop"] = (_u8_to_number(data[8]) == 1)
@@ -1006,6 +1020,7 @@ class ProtocolABBA(HeaterProtocol):
         # Byte 10: Temperature unit
         parsed["temp_unit"] = _u8_to_number(data[10])
         uses_fahrenheit = (parsed["temp_unit"] == 1)
+        self._uses_fahrenheit = uses_fahrenheit
 
         # Byte 11: Environment/Cabin temperature
         env_temp_raw = _u8_to_number(data[11])
@@ -1052,7 +1067,7 @@ class ProtocolABBA(HeaterProtocol):
             return self._build_abba("baab04bba10000")
         elif command == 4:
             temp_hex = format(argument, '02x')
-            return self._build_abba(f"baab04db{temp_hex}0000")
+            return self._build_abba(f"baab04db{temp_hex}00{int(self._uses_fahrenheit):02x}")
         elif command == 5:
             if argument > 0:
                 return self._build_abba("baab04bba20000")  # Level up
@@ -1068,6 +1083,8 @@ class ProtocolABBA(HeaterProtocol):
                 return self._build_abba("baab04bba40000")
             else:
                 return self._build_abba("baab04bbac0000")  # Level mode
+        elif command == 18:
+            return self._build_abba("baab04bba60000")
         elif command == 15:
             if argument == 1:
                 return self._build_abba("baab04bba80000")  # Fahrenheit
@@ -1259,19 +1276,23 @@ class ProtocolCBFF(HeaterProtocol):
             payload[-1] = 1 if argument else 0
             packet = self._build_feaa(cmd_1=0x03, cmd_2=0x01, payload=payload)
 
-        # Config commands (10-21): not implemented for FEAA protocol.
-        # FEAA uses its own settings command (cmd1=0x03), so unsupported
-        # commands fall back to a status query.
-        elif 10 <= command <= 21:
-            import logging
-            logging.getLogger(__name__).warning(
-                "FEAA config command %d not implemented — use FEAA settings (cmd1=0x03) instead", command
-            )
-            packet = self._build_feaa(cmd_1=0x00, cmd_2=0x00)
-
-        # Default: status request
+        elif command in (14, 15, 16, 17, 19, 20, 21):
+            # Sunster 03/01 is a read-modify-write of the last 13-byte settings
+            # snapshot. Never invent defaults for fields we have not read.
+            index = {19: 0, 15: 1, 20: 4, 14: 5, 16: 6, 17: 7, 21: 8}[command]
+            settings = self._v21_settings
+            if settings is None or (command != 20 and settings[index] == 0xFF):
+                raise ValueError("FEAA setting unavailable until a supported status snapshot")
+            if command == 17 and settings[index] in (20, 21):
+                raise ValueError("FEAA field is RF433 state, not a pump-model setting")
+            payload = bytearray(settings)
+            if command in (15, 19) and payload[index] in (128, 129):
+                payload[index] = 128 + int(bool(argument))
+            else:
+                payload[index] = argument & 0xFF
+            packet = self._build_feaa(cmd_1=0x03, cmd_2=0x01, payload=payload)
         else:
-            packet = self._build_feaa(cmd_1=0x00, cmd_2=0x00)
+            raise ValueError(f"Unsupported FEAA command: {command}")
 
         # Always encrypt when device_sn is available
         if self._device_sn:
@@ -1332,9 +1353,11 @@ class ProtocolCBFF(HeaterProtocol):
         if len(data) < 46:
             return None
 
-        # Try parsing raw data first (unencrypted CBFF)
+        # Validate the envelope before interpreting plausible-looking fields.
+        raw_status = self._is_status_packet(data)
+        decoded_status = False
         parsed = self._parse_cbff_fields(data)
-        if not self._is_data_suspect(parsed):
+        if raw_status and not self._is_data_suspect(parsed):
             self._update_last_state(parsed)
             self._remember_v21_settings(data)
             return parsed
@@ -1342,14 +1365,17 @@ class ProtocolCBFF(HeaterProtocol):
         # Raw data looks wrong — try decryption if device_sn is available
         if self._device_sn:
             decrypted = self._decrypt_cbff(data, self._device_sn)
+            decoded_status = self._is_status_packet(decrypted)
             parsed_dec = self._parse_cbff_fields(decrypted)
-            if not self._is_data_suspect(parsed_dec):
+            if decoded_status and not self._is_data_suspect(parsed_dec):
                 parsed_dec["_cbff_decrypted"] = True
                 self._update_last_state(parsed_dec)
                 self._remember_v21_settings(decrypted)
                 return parsed_dec
 
-        # Neither raw nor decrypted data is valid
+        if not raw_status and not decoded_status:
+            return None
+        # Neither raw nor decrypted data is physically plausible.
         parsed["_cbff_data_suspect"] = True
         for key in (
             "cab_temperature", "case_temperature", "supply_voltage",
@@ -1363,6 +1389,14 @@ class ProtocolCBFF(HeaterProtocol):
         ):
             parsed.pop(key, None)
         return parsed
+
+    def _is_status_packet(self, data: bytearray) -> bool:
+        """Accept legacy CBFF or an APK checksum-validated FEAA 80/00 report."""
+        if len(data) < 46:
+            return False
+        return data[:2] == bytes((0xCB, 0xFF)) or (
+            self._has_valid_feaa_packet(data) and data[6:8] == bytes((0x80, 0))
+        )
 
     def is_feaa_frame(self, data: bytearray) -> bool:
         """Return True if raw or decrypted data is a valid FEAA packet."""
@@ -1386,10 +1420,37 @@ class ProtocolCBFF(HeaterProtocol):
             return None
         return len(packet) > 8 and packet[8] == 0x01
 
+    def is_control_response(self, data: bytearray) -> bool:
+        """Recognize a checksum/length-validated FEAA control/settings reply."""
+        packet = self._decode_feaa_packet(data)
+        return packet is not None and (
+            (packet[6] == 0x81 and packet[7] in (0, 1))
+            or (packet[6] == 0x83 and packet[7] == 1)
+        )
+
     def is_v21_status_response(self, data: bytearray) -> bool:
         """Return whether a packet is the V2.1 response to 00/00."""
         packet = self._decode_feaa_packet(data)
         return packet is not None and packet[6] == 0x80 and packet[7] == 0x00
+
+    def matches_response(self, data: bytearray, command: int) -> bool:
+        """Accept a real status or the acknowledgement for this command family."""
+        packet = self._decode_feaa_packet(data)
+        if packet is not None:
+            if packet[6:8] == bytes((0x80, 0)):
+                return len(packet) >= 46 and not self._is_data_suspect(self._parse_cbff_fields(packet))
+            if command in (0, 1):
+                return False
+            expected = 0x83 if command in (14, 15, 16, 17, 18, 19, 20, 21) else 0x81
+            return packet[6] == expected and self.is_control_response(data)
+        candidates = [data]
+        if self._device_sn:
+            candidates.append(self._decrypt_cbff(data, self._device_sn))
+        return any(
+            len(candidate) >= 46 and candidate[:2] == bytes((0xCB, 0xFF))
+            and not self._is_data_suspect(self._parse_cbff_fields(candidate))
+            for candidate in candidates
+        )
 
     def _decode_feaa_packet(self, data: bytearray) -> bytearray | None:
         """Return a validated raw FEAA packet from raw or encrypted input."""
@@ -1529,7 +1590,14 @@ class ProtocolCBFF(HeaterProtocol):
     @staticmethod
     def _parse_cbff_fields(data: bytearray) -> dict[str, Any]:
         """Parse CBFF byte fields into a dict."""
-        parsed: dict[str, Any] = {"connected": True}
+        parsed: dict[str, Any] = {
+            "connected": True,
+            **dict.fromkeys((
+                "language", "tank_volume", "pump_type", "rf433_enabled",
+                "hardware_version", "software_version", "backlight", "startup_temp_diff",
+                "shutdown_temp_diff", "wifi_enabled", "auto_start_stop",
+            )),
+        }
 
         # Byte 2: protocol_version (stored for diagnostics)
         parsed["cbff_protocol_version"] = _u8_to_number(data[2])
@@ -1556,11 +1624,11 @@ class ProtocolCBFF(HeaterProtocol):
         if parsed["running_mode"] in (RUNNING_MODE_LEVEL, RUNNING_MODE_VENTILATION):
             parsed["set_level"] = max(1, min(10, run_param))
         elif parsed["running_mode"] == RUNNING_MODE_TEMPERATURE:
-            parsed["set_temp"] = max(MIN_TEMP_CELSIUS, min(MAX_TEMP_CELSIUS, run_param))
+            parsed["set_temp"] = run_param
             # Byte 13: now_gear (current gear in temp mode)
             parsed["set_level"] = max(1, min(10, _u8_to_number(data[13])))
         else:
-            parsed["set_temp"] = max(MIN_TEMP_CELSIUS, min(MAX_TEMP_CELSIUS, run_param))
+            parsed["set_temp"] = run_param
 
         # Byte 15: fault_display
         parsed["error_code"] = _u8_to_number(data[15]) & 0x3F
@@ -1578,7 +1646,7 @@ class ProtocolCBFF(HeaterProtocol):
         parsed["altitude_unit"] = _u8_to_number(data[20]) & 0x0F
 
         # Bytes 21-22: altitude (uint16 LE, /10)
-        parsed["altitude"] = (data[21] | (data[22] << 8)) / 10.0
+        parsed["altitude"] = (data[21] | (data[22] << 8)) / (1.0 if data[2] == 1 else 10.0)
 
         # Bytes 23-24: voltage (uint16 LE, /10)
         parsed["supply_voltage"] = (data[23] | (data[24] << 8)) / 10.0
@@ -1688,6 +1756,7 @@ class ProtocolHcalory(HeaterProtocol):
 
     def __init__(self) -> None:
         """Initialize Hcalory protocol handler."""
+        self._bd39_transport: bool = True
         self._is_mvp2: bool = True  # Default to MVP2, can be set by coordinator
         self._password_sent: bool = False  # Track if MVP2 password handshake was sent
         self._custom_query_dt: datetime | None = None  # Custom timestamp for time sync
@@ -1697,6 +1766,10 @@ class ProtocolHcalory(HeaterProtocol):
         """Set MVP version (MVP1 vs MVP2) based on service UUID detection."""
         self._is_mvp2 = is_mvp2
         self._password_sent = False  # Reset password state on version change
+
+    def set_transport(self, *, bd39: bool) -> None:
+        """Select the APK's GATT-dependent clock layout."""
+        self._bd39_transport = bd39
 
     def reset_password_state(self) -> None:
         """Reset password handshake state (call on reconnect)."""
@@ -1719,6 +1792,17 @@ class ProtocolHcalory(HeaterProtocol):
         """
         self._custom_query_dt = dt
 
+    @staticmethod
+    def parse_password_response(data: bytes | bytearray) -> bool | None:
+        """Validate the APK 0003/0B0C auth response separately from telemetry."""
+        if (
+            len(data) != 19 or data[:2] != bytes((0, 3))
+            or data[7:9] != bytes((0x0B, 0x0C)) or data[11] != 6
+            or sum(data[8:-1]) & 255 != data[-1]
+        ):
+            return None
+        return data[17] == 1
+
     def parse(self, data: bytearray) -> dict[str, Any] | None:
         """Parse Hcalory response data.
 
@@ -1729,8 +1813,8 @@ class ProtocolHcalory(HeaterProtocol):
         - Byte 22: Set value (temperature or gear level)
         - Byte 23: Auto start/stop (1=on, 2=off per @Xev's dumps)
         - Bytes 24-25: Voltage (uint16 LE, /10)
-        - Bytes 27-28: Shell/Case temperature (uint16 BE, //10, unit from byte 37) [beta.26]
-        - Bytes 30-31: Ambient/Cabin temperature (uint16 BE, //10, unit from byte 37) [beta.26]
+        - Bytes 27-28: Shell/Case temperature (sign/magnitude BE, /10, unit from byte 37) [beta.26]
+        - Bytes 30-31: Ambient/Cabin temperature (sign/magnitude BE, /10, unit from byte 37) [beta.26]
         - Byte 37: Temperature unit (0=C, 1=F)
 
         Status byte (byte 20) parsing:
@@ -1738,7 +1822,10 @@ class ProtocolHcalory(HeaterProtocol):
         - Low nibble (bits 0-3): Running step (0x0=Inactive, 0x1=Fan, 0x3=Ignition, 0x5=Running, 0x7=Standby)
         """
         # Minimum length: 38 bytes for MVP2
-        if len(data) < 38:
+        if len(data) < 38 or data[8] != 0x03:
+            return None
+        # p2/e0.c validates the checksum before q2/h.D handles DPID03.
+        if sum(data[8:-1]) & 0xFF != data[-1]:
             return None
 
         parsed: dict[str, Any] = {"connected": True}
@@ -1838,25 +1925,20 @@ class ProtocolHcalory(HeaterProtocol):
             voltage_raw = ((_u8_to_number(data[24]) << 8) | _u8_to_number(data[25]))
             parsed["supply_voltage"] = voltage_raw / 10.0
 
-            # Bytes 27-28: Shell/Case temperature (uint16 BE, /10, in unit from byte 37)
-            # Fixed beta.26: Corrected to /10 per @Xev analysis. Values are in F or C based on byte 37.
-            # @Xev: shell_temp = ((data[27] << 8) | data[28]) // 10
+            # APK q2/h.D: sign at 26, magnitude at 27-28; preserve tenths.
             case_temp_raw = ((_u8_to_number(data[27]) << 8) | _u8_to_number(data[28]))
-            parsed["case_temperature"] = case_temp_raw // 10  # Integer division, unit from byte 37
+            parsed["case_temperature"] = (-1 if data[26] == 1 else 1) * case_temp_raw / 10.0
 
-            # Bytes 30-31: Ambient/Cabin temperature (uint16 BE, /10, in unit from byte 37)
-            # Fixed beta.26: Corrected to /10 per @Xev analysis. Values are in F or C based on byte 37.
-            # @Xev: ambient = ((data[30] << 8) | data[31]) // 10
+            # APK q2/h.D: sign at 29, magnitude at 30-31; preserve tenths.
             ambient_raw = ((_u8_to_number(data[30]) << 8) | _u8_to_number(data[31]))
-            parsed["cab_temperature"] = ambient_raw // 10  # Integer division, unit from byte 37
+            parsed["cab_temperature"] = (-1 if data[29] == 1 else 1) * ambient_raw / 10.0
 
             # Byte 18: Altitude mode
             if len(data) > 18:
                 parsed["high_altitude"] = _u8_to_number(data[18])
 
             # Byte 37: Temperature unit (0=C, 1=F)
-            if len(data) > 37:
-                parsed["temp_unit"] = _u8_to_number(data[37])
+            parsed["temp_unit"] = _u8_to_number(data[37]) if len(data) > 38 else 0
 
             # Error handling: when status == ERROR (0xF), byte 22 contains error code
             if status == HCALORY_RUNNING_STATUS_ERROR:
@@ -2093,6 +2175,8 @@ class ProtocolHcalory(HeaterProtocol):
         """
         # Use custom timestamp if set (for time sync), otherwise current time
         now = self._custom_query_dt if self._custom_query_dt is not None else datetime.now()
+        if now.tzinfo is None:
+            now = now.astimezone()
         # @Xev: timestamp is NOT BCD encoded, just raw bytes + isoweekday()
         timestamp = bytes([
             now.hour,
@@ -2100,6 +2184,11 @@ class ProtocolHcalory(HeaterProtocol):
             now.second,
             now.isoweekday()  # 1=Monday, 7=Sunday
         ])
+
+        if not self._bd39_transport:
+            from datetime import timedelta
+            shifted_epoch = int(now.timestamp()) + int((now.utcoffset() or timedelta()).total_seconds())
+            timestamp = (shifted_epoch & 0xFFFFFFFF).to_bytes(4, "big")
 
         # Build packet: header + dpID 0A0A + payload length (5) + timestamp + 00
         packet = bytearray([

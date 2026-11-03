@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import sys
 import types
-from datetime import timezone
+from datetime import UTC, datetime, timezone
+from enum import StrEnum
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -62,6 +63,17 @@ sys.meta_path.insert(0, _HAStubFinder())
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "diesel_heater_ble" / "src"))
+
+# Bind the Bluetooth submodule once, as Python does for the real HA package.
+# A fresh MagicMock returned by parent __getattr__ can otherwise retain a
+# deleted patched attribute and make selected-test order affect discovery.
+import importlib
+
+_bluetooth_stub = importlib.import_module("homeassistant.components.bluetooth")
+sys.modules["homeassistant.components"].bluetooth = _bluetooth_stub
+_bluetooth_stub.async_last_service_info = MagicMock(return_value=None)
+_bluetooth_stub.async_ble_device_from_address = MagicMock(return_value=None)
+_bluetooth_stub.async_discovered_service_info = MagicMock(return_value=[])
 
 
 # ---------------------------------------------------------------------------
@@ -217,6 +229,9 @@ sys.modules["homeassistant.const"].CONF_ADDRESS = "address"
 class _StubDataUpdateCoordinator:
     """Stub for homeassistant.helpers.update_coordinator.DataUpdateCoordinator."""
 
+    async def async_shutdown(self):
+        self._shutdown_requested = True
+
     def __init__(self, *args, **kwargs):
         self.hass = kwargs.get("hass")
         self.name = kwargs.get("name", "test")
@@ -259,6 +274,9 @@ class _StubEntity:
     _attr_name = None
     _attr_device_info = None
     _attr_available = True
+
+    async def async_added_to_hass(self):
+        """Match the HA entity lifecycle hook used by restore entities."""
 
     @property
     def available(self):
@@ -434,6 +452,15 @@ sys.modules["homeassistant.const"].CONF_ADDRESS = "address"
 import homeassistant.util.dt as _ha_dt  # noqa: E402
 
 _ha_dt.UTC = timezone.utc
+_ha_dt.now = lambda: datetime.now(UTC)
+_ha_dt.utcnow = lambda: datetime.now(UTC)
+
+class _UnitOfTemperature(StrEnum):
+    CELSIUS = "°C"
+    FAHRENHEIT = "°F"
+    KELVIN = "K"
+
+sys.modules["homeassistant.const"].UnitOfTemperature = _UnitOfTemperature
 
 
 # ---------------------------------------------------------------------------

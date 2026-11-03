@@ -92,6 +92,12 @@ class BurnoffController:
     controller; lookups happen on self at call time so mocks still intercept.
     """
 
+    def _create_task(self, coroutine):
+        factory = getattr(self._host, "create_background_task", None)
+        if factory is not None:
+            return factory(coroutine)
+        return self._host.hass.async_create_task(coroutine)
+
     def __init__(self, host: Any) -> None:
         """Initialize controller bound to a coordinator-like host."""
         self._host = host
@@ -276,7 +282,7 @@ class BurnoffController:
 
     def _schedule_accumulator_save(self) -> None:
         """Persist soot-load counters without blocking a status callback."""
-        self._host.hass.async_create_task(self._host.async_save_data())
+        self._create_task(self._host.async_save_data())
 
     def observe_status(self) -> None:
         """Update soot load from a successful ECU status parse.
@@ -369,7 +375,7 @@ class BurnoffController:
             # inside the task, so a second status update must not queue another one.
             if self.start_scheduled or (self.start_task is not None and not self.start_task.done()):
                 return
-            self.start_task = self._host.hass.async_create_task(self.start_in_run())
+            self.start_task = self._create_task(self.start_in_run())
             return
         # Threshold already hit (or LCD Off) but not yet RUNNING.
         if not self.accumulator.pending:
@@ -517,19 +523,19 @@ class BurnoffController:
                 self._host.data.get("running_state") == RUNNING_STATE_ON
                 and self._host.data.get("running_step") == RUNNING_STEP_RUNNING
             ):
-                self._host.hass.async_create_task(self.resume_paused_cycle())
+                self._create_task(self.resume_paused_cycle())
             return
 
         if self.cycle.phase == BurnoffPhase.RESTORING:
             if self.ecu_can_restore():
-                self._host.hass.async_create_task(self.try_snapshot_write())
+                self._create_task(self.try_snapshot_write())
             return
 
         if self.ecu_shutdown_observed():
             if self.cancel_event.is_set():
                 return
             self.cancel_event.set()
-            self._host.hass.async_create_task(self.abort_on_external_shutdown())
+            self._create_task(self.abort_on_external_shutdown())
             return
 
         if self.cycle.phase == BurnoffPhase.AWAITING_STATUS:
@@ -539,9 +545,9 @@ class BurnoffController:
             self.cycle.phase = BurnoffPhase.RUNNING
             remaining = self.remaining_seconds
             if remaining is None or remaining <= 0:
-                self._host.hass.async_create_task(self.complete())
+                self._create_task(self.complete())
             else:
-                self._host.hass.async_create_task(self.apply_max_power())
+                self._create_task(self.apply_max_power())
 
     def _will_retry_after_abort(self, *, was_in_run: bool, nearly_done: bool) -> bool:
         """Return True if this external abort should resume on the next RUNNING."""

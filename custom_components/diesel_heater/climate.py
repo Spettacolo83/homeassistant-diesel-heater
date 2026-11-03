@@ -1,8 +1,6 @@
 """Climate platform for Vevor Diesel Heater."""
 from __future__ import annotations
 
-PARALLEL_UPDATES = 1
-
 import logging
 from typing import Any
 
@@ -37,7 +35,10 @@ from .const import (
     RUNNING_STEP_COOLDOWN,
     RUNNING_STEP_VENTILATION,
 )
+from .temperature import convert_native_temperature, temperature_bounds
 from .coordinator import VevorHeaterCoordinator
+
+PARALLEL_UPDATES = 1
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -79,6 +80,7 @@ class VevorHeaterClimate(
         self._config_entry = config_entry
         self._current_preset: str | None = None
         self._restored_abba_target: float | None = None
+        self._restored_abba_uses_fahrenheit = coordinator._heater_uses_fahrenheit
         self._user_cleared_preset: bool = False  # Track if user explicitly selected "None"
         self._attr_device_info = (
             {
@@ -126,8 +128,20 @@ class VevorHeaterClimate(
             self._attr_max_temp = 40
             self._attr_target_temperature_step = 1.0
 
+    @property
+    def temperature_unit(self):
+        return UnitOfTemperature.FAHRENHEIT if self.coordinator._heater_uses_fahrenheit else UnitOfTemperature.CELSIUS
+
+    @property
+    def min_temp(self):
+        return temperature_bounds(self.coordinator)[0]
+
+    @property
+    def max_temp(self):
+        return temperature_bounds(self.coordinator)[1]
+
     async def async_added_to_hass(self) -> None:
-        """Restore the last valid ABBA Celsius target for level-mode status packets."""
+        """Restore the last ABBA target in the current native unit."""
         await super().async_added_to_hass()
         if self.coordinator.protocol_mode != 5:
             return
@@ -137,8 +151,16 @@ class VevorHeaterClimate(
             return
 
         target = last_state.attributes.get(ATTR_TEMPERATURE)
-        if isinstance(target, (int, float)) and 8 <= target <= 36:
-            self._restored_abba_target = float(target)
+        if isinstance(target, (int, float)):
+            saved_unit = last_state.attributes.get("unit_of_measurement") or self.hass.config.units.temperature_unit
+            if saved_unit in (UnitOfTemperature.CELSIUS, UnitOfTemperature.FAHRENHEIT):
+                target = convert_native_temperature(
+                    target, saved_unit == UnitOfTemperature.FAHRENHEIT,
+                    self.coordinator._heater_uses_fahrenheit,
+                )
+            if self.min_temp <= target <= self.max_temp:
+                self._restored_abba_target = float(target)
+                self._restored_abba_uses_fahrenheit = self.coordinator._heater_uses_fahrenheit
 
 
 
@@ -178,7 +200,14 @@ class VevorHeaterClimate(
         """Return the target temperature."""
         target = self.coordinator.data.get("set_temp")
         if self.coordinator.protocol_mode == 5:
-            if isinstance(target, (int, float)) and 8 <= target <= 36:
+            native_fahrenheit = self.coordinator._heater_uses_fahrenheit
+            if self._restored_abba_target is not None:
+                self._restored_abba_target = convert_native_temperature(
+                    self._restored_abba_target,
+                    self._restored_abba_uses_fahrenheit, native_fahrenheit,
+                )
+            self._restored_abba_uses_fahrenheit = native_fahrenheit
+            if isinstance(target, (int, float)) and self.min_temp <= target <= self.max_temp:
                 self._restored_abba_target = float(target)
                 return target
             return self._restored_abba_target
