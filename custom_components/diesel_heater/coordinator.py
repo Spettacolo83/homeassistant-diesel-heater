@@ -2600,10 +2600,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._burnoff.observe_status()
         self._burnoff.schedule_abort_if_ecu_stopped()
         if isinstance(protocol, ProtocolHeatGenie):
-            # HeatGenie reports asynchronously every two seconds. Notify
-            # entities immediately instead of waiting for the 15-second
-            # DataUpdateCoordinator interval.
-            self.async_set_updated_data(self.data)
+            # Publish F2 telemetry without resetting the refresh timer:
+            # periodic updates still own runtime/fuel accounting and saves.
+            self.last_update_success = True
+            self.async_update_listeners()
 
     def _apply_ui_temperature_offset(self) -> None:
         """Apply HA-side UI temperature offset (display only, not sent to heater).
