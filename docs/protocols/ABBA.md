@@ -85,3 +85,17 @@ burn-off level/target writes are stopped. A mode request does not automatically
 start the heater. The same hardware report confirms that DB temperature writes
 work in both Level and Temperature modes; this does not change which temperature
 controls the climate entity exposes.
+
+## Shared FFF0 advertisement identity
+
+The short six-byte `ECB…` manufacturer record is a legacy Hcalory MVP1 hint,
+not a unique protocol identifier. The CY-5004 report in [issue #156](https://github.com/Spettacolo83/homeassistant-diesel-heater/issues/156#issuecomment-6607383808)
+shows that excluding only the full `Heater<PIN>-<MAC>` name is insufficient.
+
+For that legacy candidate on FFF0, the integration subscribes first and sends
+AirHeaterCC's read-only `BA AB 04 CC 00 00 00` status request. A validated ABBA
+status selects ABBA even when the advertised name is missing or different.
+If no ABBA status arrives, the existing MVP1 query still has to return valid
+status before setup completes. Versioned Hcalory advertisements and the dedicated
+BD39 transport retain their existing authentication and query paths. No power
+or mode command is used for identification.
