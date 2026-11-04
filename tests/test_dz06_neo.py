@@ -51,6 +51,9 @@ def coordinator_for_layout(
     coordinator = VevorHeaterCoordinator.__new__(VevorHeaterCoordinator)
     coordinator._stopping = False
     coordinator._background_tasks = set()
+    from custom_components.diesel_heater.ble_operation import BleOperationLock
+    coordinator._ble_operation_lock = BleOperationLock()
+    coordinator._ble_refresh_pending = False
     coordinator._protocol_mode = 0
     coordinator._ble_device = SimpleNamespace(name=name)
     coordinator._heater_uses_fahrenheit = False

@@ -399,3 +399,8 @@ PROTOCOL_MODE_NAMES: Final = {
     8: "HeatGenie",
     9: "Webasto Cronus",
 }
+
+# Experimental, explicitly selected per-device AA66 Encrypted connection policy.
+CONF_CONNECTION_POLICY: Final = "connection_policy"
+CONNECTION_PERSISTENT: Final = "persistent"
+CONNECTION_RELEASE: Final = "release_between_polls"

@@ -15,6 +15,7 @@ from homeassistant.helpers import selector
 
 from .const import (
     CONF_AUTO_OFFSET_MAX,
+    CONF_CONNECTION_POLICY,
     CONF_CRONUS_HEATER_MODEL,
     CONF_EXTERNAL_TEMP_SENSOR,
     CONF_FORCE_TEMP_UNIT,
@@ -24,6 +25,8 @@ from .const import (
     CONF_PIN,
     CONF_PRESET_AWAY_TEMP,
     CONF_PRESET_COMFORT_TEMP,
+    CONNECTION_PERSISTENT,
+    CONNECTION_RELEASE,
     CRONUS_HEATER_MODEL_OPTIONS,
     DEFAULT_AUTO_OFFSET_MAX,
     DEFAULT_CRONUS_HEATER_MODEL,
@@ -372,6 +375,16 @@ class VevorHeaterOptionsFlowHandler(config_entries.OptionsFlow):
 
         # Build schema - only show auto_offset_max if external sensor is configured
         schema_dict = {
+            vol.Optional(
+                CONF_CONNECTION_POLICY,
+                default=self.config_entry.data.get(CONF_CONNECTION_POLICY, CONNECTION_PERSISTENT),
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=[CONNECTION_PERSISTENT, CONNECTION_RELEASE],
+                    translation_key=CONF_CONNECTION_POLICY,
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            ),
             vol.Optional(
                 CONF_PIN,
                 default=self.config_entry.data.get(CONF_PIN, DEFAULT_PIN)
