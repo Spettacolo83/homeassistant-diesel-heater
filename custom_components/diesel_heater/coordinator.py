@@ -43,6 +43,7 @@ from .const import (
     CHARACTERISTIC_UUID_ALT,
     CONF_AUTO_OFFSET_ENABLED,
     CONF_AUTO_OFFSET_MAX,
+    CONF_CONNECTION_POLICY,
     CONF_BURNOFF_AFTER_CYCLES,
     CONF_BURNOFF_AFTER_HOURS,
     CONF_BURNOFF_DURATION,
@@ -58,6 +59,7 @@ from .const import (
     CONF_TEMPERATURE_OFFSET,
     CRONUS_NOTIFY_UUID,
     CRONUS_WRITE_UUID,
+    CONNECTION_RELEASE,
     DEFAULT_AUTO_OFFSET_MAX,
     DEFAULT_BURNOFF_AFTER_CYCLES,
     DEFAULT_BURNOFF_AFTER_HOURS,
@@ -169,6 +171,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             config_entry=config_entry,
         )
 
+        self._ble_release_pending = False
         self._ble_operation_lock = BleOperationLock()
         self._ble_refresh_pending = False
         self.address = ble_device.address
@@ -1450,6 +1453,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     def _handle_connection_failure(self, err: Exception) -> None:
         """Handle connection failure with stale data tolerance."""
         self._consecutive_failures += 1
+        if self.release_between_polls:
+            self._time_synced_this_connection = False
 
         if self._consecutive_failures <= self._max_stale_cycles:
             # Keep last valid values and stay "connected" during tolerance window
@@ -1600,6 +1605,77 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 },
             )
         return recovered
+
+    @property
+    def release_between_polls(self) -> bool:
+        """Never apply the experimental policy to unconfirmed/other protocols."""
+        return (
+            self._protocol_mode == 4
+            and self.config_entry.data.get(CONF_CONNECTION_POLICY) == CONNECTION_RELEASE
+        )
+
+    async def _prepare_ble_operation(self, method: str) -> None:
+        """Reconnect and read fresh AA66 status before evaluating control guards."""
+        if getattr(self, "_ble_release_pending", False):
+            await self._release_ble_connection()
+        if not self.release_between_polls:
+            if self._protocol_mode == 4:
+                self.update_interval = timedelta(seconds=UPDATE_INTERVAL)
+            return
+        self.update_interval = timedelta(seconds=max(60, UPDATE_INTERVAL))
+        if method in ("_async_update_data", "_async_recover_internally", "maintenance") or self._stopping:
+            return
+        await self._ensure_connected_with_timeout()
+        if not await self._send_command(1, 0):
+            self._time_synced_this_connection = False
+            raise UpdateFailed("AA66 control refused: fresh status was not received")
+
+    async def _finish_ble_operation(self) -> None:
+        """Release only after the outer AA66 operation has completed its writes."""
+        if self.release_between_polls:
+            self.update_interval = timedelta(seconds=max(60, UPDATE_INTERVAL))
+            await self._release_ble_connection()
+
+    async def _release_ble_connection(self) -> None:
+        """Bound and confirm release; retain a failed client for cleanup retry."""
+        client = self._client
+        if client is None:
+            self._ble_release_pending = False
+            return
+        self._ble_release_pending = True
+
+        async def disconnect():
+            async with asyncio.timeout(10):
+                if self._active_char_uuid:
+                    try:
+                        await client.stop_notify(self._active_char_uuid)
+                    except Exception as err:
+                        self._logger.debug("AA66 stop notifications: %s", err)
+                await client.disconnect()
+                if client.is_connected:
+                    raise UpdateFailed("AA66 disconnect did not release the connection")
+                # No other operation may replace this client while holding our lock.
+                self._client = None
+                self._characteristic = None
+                self._active_char_uuid = None
+                self._ble_release_pending = False
+
+        cleanup = asyncio.create_task(disconnect())
+        cancelled = False
+        while not cleanup.done():
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                cancelled = True
+            except Exception:
+                break
+        try:
+            cleanup.result()
+        except BaseException:
+            self._time_synced_this_connection = False
+            raise
+        if cancelled:
+            raise asyncio.CancelledError
 
     def ble_operation(self):
         """Group ordered writes after acquiring the burnoff lock."""
@@ -1772,11 +1848,17 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """Ensure BLE connection is established with exponential backoff."""
         if self._stopping:
             raise UpdateFailed("Heater integration is unloading")
+        if getattr(self, "_ble_release_pending", False):
+            await self._release_ble_connection()
         # Check if already connected
         if self._client and self._client.is_connected:
             self._connection_attempts = 0  # Reset on successful connection
             return
 
+        if self.release_between_polls and self._client is not None:
+            # A retained, unexpectedly disconnected client is a real reconnect;
+            # intentional idle release sets the handle to None instead.
+            self._time_synced_this_connection = False
         # Clean up any stale client before attempting new connection
         await self._cleanup_connection()
 
@@ -2680,6 +2762,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
     async def _cleanup_connection(self) -> None:
         """Clean up BLE connection properly."""
+        if self.release_between_polls or getattr(self, "_ble_release_pending", False):
+            await self._release_ble_connection()
+            return
         if self._client:
             try:
                 if self._client.is_connected:
@@ -4712,5 +4797,5 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._auto_offset_unsub()
             self._auto_offset_unsub = None
 
-        async with self.ble_operation():
+        async with transaction_context(self, "maintenance"):
             await self._cleanup_connection()

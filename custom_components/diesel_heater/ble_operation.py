@@ -31,7 +31,7 @@ class BleOperationLock:
 
 
 @asynccontextmanager
-async def transaction_context(coordinator):
+async def transaction_context(coordinator, method="control"):
     """Schedule a refresh only after the outer operation has released."""
     lock = coordinator._ble_operation_lock
     outer = not lock.owned_by_current_task()
@@ -39,7 +39,13 @@ async def transaction_context(coordinator):
     try:
         async with lock.operation():
             entered = True
-            yield
+            try:
+                if outer:
+                    await coordinator._prepare_ble_operation(method)
+                yield
+            finally:
+                if outer:
+                    await coordinator._finish_ble_operation()
     finally:
         if outer and entered and coordinator._ble_refresh_pending:
             coordinator._ble_refresh_pending = False
@@ -52,7 +58,7 @@ def ble_transaction(method):
     def decorate(function):
         @wraps(function)
         async def wrapped(self, *args, **kwargs):
-            async with transaction_context(self):
+            async with transaction_context(self, function.__name__):
                 return await function(self, *args, **kwargs)
 
         return wrapped
