@@ -1,5 +1,6 @@
 """ABBA transport respects write-only FFF2 without changing other families."""
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -16,8 +17,13 @@ from tests.test_coordinator import create_mock_coordinator
     "properties,expected",
     [(["write"], True), (["write-without-response"], False), (["write", "write-without-response"], False)],
 )
-@pytest.mark.parametrize("command,argument", [(1, 0), (4, 23), (10, 0x0C223801)])
-async def test_abba_status_roundtrip_uses_supported_write_type(properties, expected, command, argument):
+@pytest.mark.parametrize(
+    "command,argument,expected_packet",
+    [(1, 0, "baab04cc00000035"), (4, 23, "baab04db1700005b"), (10, 0x0C223801, "baab05ea0c223801bb")],
+)
+async def test_abba_status_roundtrip_uses_supported_write_type(
+    properties, expected, command, argument, expected_packet
+):
     h = create_mock_coordinator()
     h._protocol_mode = 5
     h._protocol = h._protocols[5]
@@ -28,12 +34,14 @@ async def test_abba_status_roundtrip_uses_supported_write_type(properties, expec
     async def write(char, packet, response):
         assert char is h._abba_write_char
         assert response is expected
-        assert packet == h._protocol.build_command(command, argument, h._passkey) or packet.hex() == "baab04cc00000035"
+        assert packet.hex() in (expected_packet, "baab04cc00000035")
         h._notification_callback(0, abba_status(unit=0, target=20))
 
     h._client = SimpleNamespace(is_connected=True, write_gatt_char=AsyncMock(side_effect=write))
     with patch.object(source.asyncio, "sleep", AsyncMock()):
         assert await h._send_command(command, argument)
+    packets = [call.args[1].hex() for call in h._client.write_gatt_char.await_args_list]
+    assert packets == [expected_packet] + (["baab04cc00000035"] if command != 1 else [])
     assert h.data["set_temp"] == 20
 
 
@@ -104,4 +112,29 @@ async def test_gatt_ack_without_status_does_not_confirm_abba_command():
     h._client = SimpleNamespace(is_connected=True, write_gatt_char=AsyncMock())
     assert not await h._send_command(1, 0, timeout=0)
     assert h._client.write_gatt_char.await_args.kwargs["response"] is True
+    assert not h.data["connected"]
+
+
+@pytest.mark.asyncio
+async def test_cancelled_acknowledged_write_does_not_retry_or_report_success():
+    h = create_mock_coordinator()
+    h._protocol_mode = 5
+    h._protocol = h._protocols[5]
+    h._is_abba_device = True
+    h._abba_write_char = SimpleNamespace(uuid=source.ABBA_WRITE_UUID, properties=["write"])
+    h._characteristic = SimpleNamespace(uuid=source.ABBA_NOTIFY_UUID, properties=["notify"])
+    entered = asyncio.Event()
+
+    async def write(*args, **kwargs):
+        entered.set()
+        await asyncio.Event().wait()
+
+    h._client = SimpleNamespace(is_connected=True, write_gatt_char=AsyncMock(side_effect=write))
+    task = asyncio.create_task(h._send_command(4, 23))
+    await asyncio.wait_for(entered.wait(), 1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    h._client.write_gatt_char.assert_awaited_once()
+    assert h._notification_data is None
     assert not h.data["connected"]

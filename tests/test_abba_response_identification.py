@@ -1,5 +1,6 @@
 """Clock/configuration notifications cannot satisfy ABBA status requests."""
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -47,3 +48,34 @@ async def test_configuration_during_identity_probe_does_not_confirm_abba():
     assert h._protocol_mode == 0
     assert h._notification_data is None
     assert h.data == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("order", [("status", "clock"), ("clock", "status")])
+async def test_status_received_before_gatt_ack_survives_adjacent_clock_reply(order):
+    h = create_mock_coordinator()
+    h._protocol_mode = 5
+    h._protocol = h._protocols[5]
+    h._is_abba_device = True
+    h._abba_write_char = SimpleNamespace(uuid=source.ABBA_WRITE_UUID, properties=["write"])
+    h._characteristic = SimpleNamespace(uuid=source.ABBA_NOTIFY_UUID, properties=["notify"])
+    entered, acknowledged = asyncio.Event(), asyncio.Event()
+    status = abba_status(unit=0, target=20)
+    clock = bytearray(40)
+    clock[:4] = bytes.fromhex("abba24ec")
+
+    async def write(*args, **kwargs):
+        entered.set()
+        await acknowledged.wait()
+
+    h._client = SimpleNamespace(is_connected=True, write_gatt_char=AsyncMock(side_effect=write))
+    command = asyncio.create_task(h._send_command(1, 0, timeout=0.2))
+    await asyncio.wait_for(entered.wait(), 1)
+    for frame in order:
+        h._notification_callback(0, status if frame == "status" else clock)
+    assert not command.done()
+    assert h._notification_data == status
+    acknowledged.set()
+    assert await asyncio.wait_for(command, 1)
+    assert h.data["set_temp"] == 20
+    assert h.data["cab_temperature"] == 20
