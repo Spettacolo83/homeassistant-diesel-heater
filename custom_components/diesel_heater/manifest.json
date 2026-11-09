@@ -95,6 +95,6 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/Spettacolo83/homeassistant-diesel-heater/issues",
   "loggers": ["diesel_heater_ble"],
-  "requirements": ["diesel-heater-ble>=0.3.10"],
+  "requirements": ["diesel-heater-ble>=0.3.11"],
   "version": "2.1.5-beta.22"
 }

@@ -978,7 +978,9 @@ class ProtocolABBA(HeaterProtocol):
     needs_post_status = True
 
     def parse(self, data: bytearray) -> dict[str, Any] | None:
-        if len(data) < 21:
+        # AirHeaterCC store/index.ts dispatches only AB BA 11 CC to
+        # handData; clock (24 EC) and configuration (04 DC) are separate.
+        if len(data) < 21 or data[:4] != bytes((0xAB, 0xBA, 0x11, 0xCC)):
             return None
 
         parsed: dict[str, Any] = {"connected": True}

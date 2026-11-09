@@ -984,8 +984,8 @@ def _make_abba_data(**overrides) -> bytearray:
     data = bytearray(21)
     data[0] = 0xAB
     data[1] = 0xBA
-    data[2] = 0x00
-    data[3] = 0x00
+    data[2] = 0x11
+    data[3] = 0xCC
     data[4] = overrides.get("status_byte", 0x00)
     data[5] = overrides.get("mode_byte", 0x00)
     data[6] = overrides.get("gear_byte", 5)

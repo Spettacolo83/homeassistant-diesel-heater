@@ -30,7 +30,10 @@ characteristic's native write type.
 
 ## Status fields
 
-ABBA status frames have at least 21 bytes. The fields used by the integration
+ABBA status frames begin with `AB BA 11 CC` and have at least 21 bytes.
+AirHeaterCC handles `AB BA 24 EC` clock records and `AB BA 04 DC`
+auto-start/stop configuration separately; they are not telemetry and must not
+complete a pending status request. The fields used by the integration
 are:
 
 | Offset | Field | Interpretation |
