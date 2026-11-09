@@ -17,9 +17,23 @@ confirmed HeaterCC hardware captures
 The coordinator verifies characteristic direction. A split FFF0 layout with
 FFF1 write and FFF2 notify is DZ06 Neo, not legacy ABBA.
 
+For legacy ABBA commands on FFF2, a characteristic advertising only `write`
+uses an acknowledged GATT write. Characteristics supporting
+`write-without-response` retain that write type. The same rule applies to the
+ABBA identification probe before protocol selection. A GATT acknowledgement
+is not a heater status response; a parsed notification is still required.
+
+AirHeaterCC's `utils/ecBLEApp.js` writes through the discovered FFF2
+characteristic without forcing `writeNoResponse`. Its bundled Android
+`BluetoothBaseAdapter.writeBLECharacteristicValue()` likewise preserves the
+characteristic's native write type.
+
 ## Status fields
 
-ABBA status frames have at least 21 bytes. The fields used by the integration
+ABBA status frames begin with `AB BA 11 CC` and have at least 21 bytes.
+AirHeaterCC handles `AB BA 24 EC` clock records and `AB BA 04 DC`
+auto-start/stop configuration separately; they are not telemetry and must not
+complete a pending status request. The fields used by the integration
 are:
 
 | Offset | Field | Interpretation |

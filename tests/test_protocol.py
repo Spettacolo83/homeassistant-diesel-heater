@@ -908,8 +908,8 @@ def _make_abba_data(**overrides) -> bytearray:
     data = bytearray(21)
     data[0] = 0xAB
     data[1] = 0xBA
-    data[2] = 0x00
-    data[3] = 0x00
+    data[2] = 0x11
+    data[3] = 0xCC
     data[4] = overrides.get("status_byte", 0x00)
     data[5] = overrides.get("mode_byte", 0x00)
     data[6] = overrides.get("gear_byte", 5)
@@ -1052,7 +1052,7 @@ class TestProtocolABBA:
     def test_parse_complete_level_status_frame(self):
         """A level-mode ABBA reply exposes every HeaterCC status field."""
         result = self.proto.parse(bytearray.fromhex(
-            "ab ba 00 00 01 00 07 00 01 0c 00 2e 02 bc 00 01 04 d2 00 00 00"
+            "ab ba 11 cc 01 00 07 00 01 0c 00 2e 02 bc 00 01 04 d2 00 00 00"
         ))
 
         assert result == {
@@ -1067,7 +1067,7 @@ class TestProtocolABBA:
     def test_parse_complete_temperature_cooldown_status_frame(self):
         """A Fahrenheit temperature-mode reply remains active during cooldown."""
         result = self.proto.parse(bytearray.fromhex(
-            "ab ba 00 00 02 01 19 00 00 18 01 5f 03 20 01 00 14 a0 00 00 00"
+            "ab ba 11 cc 02 01 19 00 00 18 01 5f 03 20 01 00 14 a0 00 00 00"
         ))
 
         assert result == {
@@ -1082,7 +1082,7 @@ class TestProtocolABBA:
     def test_parse_complete_ventilation_status_frame(self):
         """Ventilation is an active ABBA state, not an off-state reply."""
         result = self.proto.parse(bytearray.fromhex(
-            "ab ba 00 00 04 00 03 00 00 0c 00 32 00 c8 00 00 00 64 00 00 00"
+            "ab ba 11 cc 04 00 03 00 00 0c 00 32 00 c8 00 00 00 64 00 00 00"
         ))
 
         assert result == {
@@ -1097,7 +1097,7 @@ class TestProtocolABBA:
     def test_parse_complete_error_status_frame(self):
         """Error replies use byte 6 as an error code, not a set point."""
         result = self.proto.parse(bytearray.fromhex(
-            "ab ba 00 00 06 ff 2a 00 01 0c 00 2d 01 2c 00 01 00 00 00 00 00"
+            "ab ba 11 cc 06 ff 2a 00 01 0c 00 2d 01 2c 00 01 00 00 00 00 00"
         ))
 
         assert result == {

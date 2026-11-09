@@ -132,7 +132,7 @@ class TestLibraryParity:
     def test_abba_parse_parity(self):
         """Same ABBA packet parsed by library gives same result."""
         data = bytearray(21)
-        data[0], data[1] = 0xAB, 0xBA
+        data[:4] = bytes.fromhex("abba11cc")
         data[4] = 0x01  # Heating
         data[5] = 0x01  # Temperature mode
         data[6] = 22    # 22 degrees

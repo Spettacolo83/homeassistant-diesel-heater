@@ -2886,8 +2886,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     async def _write_gatt(self, packet: bytearray) -> None:
         """Write a packet to the appropriate BLE characteristic.
 
-        Uses response=False to avoid authorization issues with BLE
-        proxies (e.g., ESPHome BLE proxy). The heater sends a notification as response.
+        Preserve no-response writes except for legacy ABBA FFF2 characteristics
+        that advertise only acknowledged writes. Heater status still arrives
+        separately through notifications.
         """
         if self._stopping:
             raise BleakError("Heater integration is unloading")
@@ -2912,7 +2913,16 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             char_uuid = write_char.uuid if write_char else "unknown"
             protocol_name = "Vevor/Sunster"
 
-        await self._client.write_gatt_char(write_char, packet, response=False)
+        # AirHeaterCC writes through the discovered FFF2 characteristic without
+        # forcing WRITE_NO_RESPONSE. Honor write-only ABBA controllers, including
+        # the read-only ABBA probe while FFF0 identity is still undecided.
+        response = (
+            packet[:2] == bytes((0xBA, 0xAB))
+            and char_uuid.lower() == ABBA_WRITE_UUID.lower()
+            and "write" in write_char.properties
+            and "write-without-response" not in write_char.properties
+        )
+        await self._client.write_gatt_char(write_char, packet, response=response)
         self._logger.debug(
             "Sent %d bytes to %s (char %s)",
             len(packet), protocol_name, char_uuid[-4:]
