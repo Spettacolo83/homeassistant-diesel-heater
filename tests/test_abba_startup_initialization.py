@@ -21,6 +21,14 @@ def controller(hint=False):
     h._last_update_time = h._last_save_time = time.time()
     h._internal_recovery_threshold = 999
     h._auto_offset_unsub = None
+    # Issue165's FFF1 is writable as well as notifying; FFF2 supports both
+    # write types. Exercise that exact layout rather than write-only mocks.
+    client.services[0].characteristics[0].properties = [
+        "read", "write-without-response", "write", "notify"
+    ]
+    client.services[0].characteristics[1].properties = [
+        "write-without-response", "write"
+    ]
     client.stop_notify = AsyncMock()
     return h, client
 
@@ -111,12 +119,14 @@ async def test_late_first_status_retries_clock_on_existing_connection():
                 h._notification_callback(0, abba_status(unit=0, target=20))
 
         client.write_gatt_char.side_effect = reply
-        h.async_sync_time = AsyncMock(wraps=h.async_sync_time)
+        client.write_gatt_char.reset_mock()
         await h._async_update_data()
-        h.async_sync_time.assert_awaited_once()
         assert h._time_synced_this_connection
+        packets = [call.args[1] for call in client.write_gatt_char.await_args_list]
+        assert sum(p[:4] == bytes.fromhex("baab05ea") for p in packets) == 1
         await h._async_update_data()
-        h.async_sync_time.assert_awaited_once()
+        packets = [call.args[1] for call in client.write_gatt_char.await_args_list]
+        assert sum(p[:4] == bytes.fromhex("baab05ea") for p in packets) == 1
 
 
 @pytest.mark.asyncio
@@ -209,3 +219,38 @@ async def test_versioned_hcalory_variants_keep_native_startup(variant):
     h._initialize_abba_session.assert_not_awaited()
     h._async_password_handshake.assert_awaited_once()
     h._send_wake_up_ping.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("first_write_fails", [False, True])
+async def test_unanswered_initialization_retries_without_telemetry(first_write_fails):
+    h, client = controller()
+    clocks = 0
+    queries = []
+
+    async def write(char, packet, response):
+        nonlocal clocks
+        if packet[:4] == bytes.fromhex("baab05ea"):
+            clocks += 1
+            if clocks == 1 and first_write_fails:
+                raise source.BleakError("Initial write failed")
+        elif packet[:4] == bytes.fromhex("baab04cc"):
+            queries.append(clocks)
+            if clocks >= 2:
+                h._notification_callback(0, abba_status(unit=0, target=20))
+
+    client.write_gatt_char = AsyncMock(side_effect=write)
+    with (
+        patch.object(source, "establish_connection", AsyncMock(return_value=client)),
+        patch.object(source.asyncio, "sleep", AsyncMock()),
+    ):
+        first = await h._async_update_data()
+        assert not first["connected"]
+        assert not h._time_synced_this_connection
+        queries.clear()
+        second = await h._async_update_data()
+        assert second["connected"]
+        assert h._time_synced_this_connection
+        assert queries == [2]  # The initialization status needs no duplicate poll.
+        await h._async_update_data()
+        assert clocks == 2  # Validated sessions stop retrying initialization.

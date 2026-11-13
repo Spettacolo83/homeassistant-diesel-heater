@@ -1633,7 +1633,25 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             if getattr(self, "_is_cronus_device", False):
                 return await self._async_update_cronus_data()
 
-            if self._protocol_mode == 8 and not connected_this_update:
+            abba_initialized = False
+            if (
+                not connected_this_update
+                and self._is_abba_device
+                and self._protocol_mode == 5
+                and not self.is_dz06_neo
+                and not self._time_synced_this_connection
+            ):
+                # AirHeaterPro retries clock initialization without telemetry.
+                # An unanswered first EA must not leave subsequent retries
+                # waiting for status before they can initialize the session.
+                abba_initialized = await asyncio.wait_for(
+                    self._initialize_abba_session(), timeout=15.0
+                )
+
+            if abba_initialized:
+                # Initialization already obtained a validated CC status.
+                status = True
+            elif self._protocol_mode == 8 and not connected_this_update:
                 # HeatGenie configures periodic F2 reports at connection. The app
                 # consumes those reports; it does not send another 0x65 write for
                 # each refresh.

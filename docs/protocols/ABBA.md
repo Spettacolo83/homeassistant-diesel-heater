@@ -34,8 +34,11 @@ After subscribing to legacy FFF1 notifications, AirHeaterCC and AirHeaterPro
 send the `BA AB 05 EA` clock packet without waiting for an initial status
 report, then request `BA AB 04 CC` status after 500 ms. The integration follows
 that ordering; only a validated `AB BA 11 CC` reply confirms initialization.
-A late first status allows clock initialization to retry, while normal polls
-retain the initialized connection. Reconnect starts a fresh initialization.
+AirHeaterPro also repeats initialization without requiring telemetry. If the
+first attempt is unanswered, the integration retries on a subsequent poll of
+the existing connection rather than waiting for status before retrying. Once
+validated, normal polls retain the initialized connection. Reconnect starts a
+fresh initialization.
 
 For an ambiguous legacy Hcalory/MVP1 advertisement on the shared FFF0 transport,
 the existing ABBA status probe and native Hcalory read run first. A validated
