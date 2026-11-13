@@ -1636,10 +1636,15 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             abba_initialized = False
             if (
                 not connected_this_update
-                and self._is_abba_device
-                and self._protocol_mode == 5
-                and not self.is_dz06_neo
                 and not self._time_synced_this_connection
+                and (
+                    self._legacy_fff0_candidate
+                    or (
+                        self._is_abba_device
+                        and self._protocol_mode == 5
+                        and not self.is_dz06_neo
+                    )
+                )
             ):
                 # AirHeaterPro retries clock initialization without telemetry.
                 # An unanswered first EA must not leave subsequent retries
@@ -2157,6 +2162,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._connection_attempts = 0  # Reset on successful connection
             self._logger.info("Successfully connected to Vevor Heater")
 
+        except asyncio.CancelledError:
+            # Cancellation can interrupt subscription or the initial probe,
+            # before protocol-specific initialization owns cleanup.
+            try:
+                await asyncio.wait_for(self._cleanup_connection(), timeout=10.0)
+            except Exception as err:
+                self._logger.debug("Cancelled connection setup cleanup failed: %s", err)
+            raise
         except Exception as err:
             # Clean up on any connection failure
             await self._cleanup_connection()
@@ -2728,41 +2741,44 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     async def _cleanup_connection(self) -> None:
         """Clean up BLE connection properly."""
         self._legacy_fff0_candidate = False
-        if self._client:
-            try:
-                if self._client.is_connected:
-                    # Stop notifications using the active UUID
-                    if self._characteristic and self._active_char_uuid and (
-                        "notify" in self._characteristic.properties
-                        or "indicate" in self._characteristic.properties
-                    ):
-                        try:
-                            await self._client.stop_notify(self._active_char_uuid)
-                            self._logger.debug("Stopped notifications on %s", self._active_char_uuid)
-                        except Exception as err:
-                            self._logger.debug("Could not stop notifications: %s", err)
+        try:
+            if self._client:
+                try:
+                    if self._client.is_connected:
+                        # Stop notifications using the active UUID
+                        if self._characteristic and self._active_char_uuid and (
+                            "notify" in self._characteristic.properties
+                            or "indicate" in self._characteristic.properties
+                        ):
+                            try:
+                                await self._client.stop_notify(self._active_char_uuid)
+                                self._logger.debug("Stopped notifications on %s", self._active_char_uuid)
+                            except Exception as err:
+                                self._logger.debug("Could not stop notifications: %s", err)
 
-                    # Disconnect
-                    await self._client.disconnect()
-                    self._logger.debug("Disconnected from heater")
-            except Exception as err:
-                self._logger.debug("Error during cleanup: %s", err)
+                        # Disconnect
+                        await self._client.disconnect()
+                        self._logger.debug("Disconnected from heater")
+                except Exception as err:
+                    self._logger.debug("Error during cleanup: %s", err)
 
-        self._client = None
-        self._characteristic = None
-        self._active_char_uuid = None
-        self._hcalory_auth_response = None
-        # Reset Hcalory MVP2 password state on disconnect
-        if self._protocol and hasattr(self._protocol, 'reset_password_state'):
-            self._protocol.reset_password_state()
-        # Reset V2.1 handshake state on reconnect.
-        self._v21_handshake_sent = False
-        self._v21_handshake_event.clear()
-        self._v21_handshake_authenticated = None
-        self._warm_drive_board_config = None
-        # Keep the V2.1 initial settings write one-shot across reconnects.
-        self._time_synced_this_connection = False
-        # The Sunster app retains its equivalent first-send guard per device.
+        finally:
+            # Never retain a partial session when bounded cleanup is cancelled.
+            self._client = None
+            self._characteristic = None
+            self._active_char_uuid = None
+            self._hcalory_auth_response = None
+            # Reset Hcalory MVP2 password state on disconnect
+            if self._protocol and hasattr(self._protocol, 'reset_password_state'):
+                self._protocol.reset_password_state()
+            # Reset V2.1 handshake state on reconnect.
+            self._v21_handshake_sent = False
+            self._v21_handshake_event.clear()
+            self._v21_handshake_authenticated = None
+            self._warm_drive_board_config = None
+            # Keep the V2.1 initial settings write one-shot across reconnects.
+            self._time_synced_this_connection = False
+            # The Sunster app retains its equivalent first-send guard per device.
 
     async def _async_password_handshake(self, max_retries: int = 3) -> bool:
         """Send password handshake with retry logic (@Xev optimizations, issue #34).

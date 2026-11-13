@@ -38,12 +38,15 @@ AirHeaterPro also repeats initialization without requiring telemetry. If the
 first attempt is unanswered, the integration retries on a subsequent poll of
 the existing connection rather than waiting for status before retrying. Once
 validated, normal polls retain the initialized connection. Reconnect starts a
-fresh initialization.
+fresh initialization. Cancelled connection setup disconnects the partial session,
+so the next attempt reconnects and subscribes again.
 
 For an ambiguous legacy Hcalory/MVP1 advertisement on the shared FFF0 transport,
 the existing ABBA status probe and native Hcalory read run first. A validated
 Hcalory reply retains its own startup. If neither read identifies the controller,
 the alternate HeaterCC initialization can establish ABBA from its status reply.
+An undecided candidate can retry that initialization on a later poll; a validated
+native Hcalory response ends the alternate ABBA initialization attempts.
 No power toggle, level/mode change, guessed PIN packet or generic AA55 clock
 command is used to identify the controller.
 

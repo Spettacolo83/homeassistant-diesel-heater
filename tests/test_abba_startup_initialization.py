@@ -223,8 +223,9 @@ async def test_versioned_hcalory_variants_keep_native_startup(variant):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("first_write_fails", [False, True])
-async def test_unanswered_initialization_retries_without_telemetry(first_write_fails):
-    h, client = controller()
+@pytest.mark.parametrize("hint", [False, True])
+async def test_unanswered_initialization_retries_without_telemetry(first_write_fails, hint):
+    h, client = controller(hint)
     clocks = 0
     queries = []
 
@@ -254,3 +255,130 @@ async def test_unanswered_initialization_retries_without_telemetry(first_write_f
         assert queries == [2]  # The initialization status needs no duplicate poll.
         await h._async_update_data()
         assert clocks == 2  # Validated sessions stop retrying initialization.
+
+
+@pytest.mark.asyncio
+async def test_late_native_reply_stops_alternate_initialization_retries():
+    h, client = controller(True)
+    clocks = 0
+    native_available = False
+
+    async def write(char, packet, response):
+        nonlocal clocks
+        if packet[:4] == bytes.fromhex("baab05ea"):
+            clocks += 1
+        elif native_available and packet[:2] == bytes((0, 2)):
+            frame = hcalory_status(0, 0)
+            frame[:2] = bytes((0, 2))
+            h._notification_callback(0, frame)
+
+    client.write_gatt_char = AsyncMock(side_effect=write)
+    with (
+        patch.object(source, "establish_connection", AsyncMock(return_value=client)),
+        patch.object(source.asyncio, "sleep", AsyncMock()),
+    ):
+        await h._async_update_data()
+        assert h._legacy_fff0_candidate
+        assert clocks == 1
+        native_available = True
+        frame = hcalory_status(0, 0)
+        frame[:2] = bytes((0, 2))
+        h._notification_callback(0, frame)
+        assert not h._legacy_fff0_candidate
+        assert h.protocol_mode == 7
+        await h._async_update_data()
+        assert clocks == 1
+        assert h.data["connected"]
+
+
+@pytest.mark.asyncio
+async def test_native_reply_during_alternate_clock_stops_followup_abba_query():
+    h, client = controller(True)
+    h._client = client
+    h._is_hcalory_device = True
+    h._legacy_fff0_candidate = True
+    h._hcalory_write_char = client.services[0].characteristics[1]
+    h._protocol_mode = 7
+    h._protocol = h._protocols[7]
+    packets = []
+
+    async def write(char, packet, response):
+        packets.append(bytes(packet))
+        frame = hcalory_status(0, 0)
+        frame[:2] = bytes((0, 2))
+        h._notification_callback(0, frame)
+
+    client.write_gatt_char = AsyncMock(side_effect=write)
+    with patch.object(source.asyncio, "sleep", AsyncMock()):
+        assert not await h._initialize_abba_session()
+    assert h.protocol_mode == 7
+    assert not h._legacy_fff0_candidate
+    assert len(packets) == 1
+    assert packets[0][:4] == bytes.fromhex("baab05ea")
+    assert not h._time_synced_this_connection
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["subscription", "initial_probe"])
+async def test_cancelled_setup_reconnects_and_resubscribes(stage):
+    h, client = controller(True)
+    entered = asyncio.Event()
+
+    async def block(*args, **kwargs):
+        entered.set()
+        await asyncio.Event().wait()
+
+    if stage == "subscription":
+        client.start_notify.side_effect = block
+    else:
+        client.write_gatt_char = AsyncMock(side_effect=block)
+    connect = AsyncMock(return_value=client)
+    with patch.object(source, "establish_connection", connect):
+        task = asyncio.create_task(h._ensure_connected())
+        await asyncio.wait_for(entered.wait(), 1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        client.disconnect.assert_awaited_once()
+        assert h._client is None
+        assert not h._legacy_fff0_candidate
+        assert not h._time_synced_this_connection
+
+        async def reply(char, packet, response):
+            if packet[:4] == bytes.fromhex("baab04cc"):
+                h._notification_callback(0, abba_status(unit=0, target=20))
+
+        client.start_notify.side_effect = None
+        client.write_gatt_char = AsyncMock(side_effect=reply)
+        with patch.object(source.asyncio, "sleep", AsyncMock()):
+            await h._ensure_connected()
+        assert connect.await_count == 2
+        assert client.start_notify.await_count == 2
+        assert h.protocol_mode == 5
+        assert h.data["connected"]
+
+
+@pytest.mark.asyncio
+async def test_timed_out_cleanup_clears_partial_session_references():
+    h, client = controller(True)
+    h._client = client
+    h._characteristic = client.services[0].characteristics[0]
+    h._active_char_uuid = source.ABBA_NOTIFY_UUID
+    h._time_synced_this_connection = True
+    entered = asyncio.Event()
+
+    async def block(*args, **kwargs):
+        entered.set()
+        await asyncio.Event().wait()
+
+    client.stop_notify.side_effect = block
+    cleanup = asyncio.create_task(h._cleanup_connection())
+    await asyncio.wait_for(entered.wait(), 1)
+    # wait_for cancels cleanup in the same way as its production deadline.
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(cleanup, timeout=0.01)
+    assert h._client is None
+    assert h._characteristic is None
+    assert h._active_char_uuid is None
+    assert not h._legacy_fff0_candidate
+    assert not h._time_synced_this_connection
