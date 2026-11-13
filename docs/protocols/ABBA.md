@@ -28,6 +28,22 @@ characteristic without forcing `writeNoResponse`. Its bundled Android
 `BluetoothBaseAdapter.writeBLECharacteristicValue()` likewise preserves the
 characteristic's native write type.
 
+## Connection initialization
+
+After subscribing to legacy FFF1 notifications, AirHeaterCC and AirHeaterPro
+send the `BA AB 05 EA` clock packet without waiting for an initial status
+report, then request `BA AB 04 CC` status after 500 ms. The integration follows
+that ordering; only a validated `AB BA 11 CC` reply confirms initialization.
+A late first status allows clock initialization to retry, while normal polls
+retain the initialized connection. Reconnect starts a fresh initialization.
+
+For an ambiguous legacy Hcalory/MVP1 advertisement on the shared FFF0 transport,
+the existing ABBA status probe and native Hcalory read run first. A validated
+Hcalory reply retains its own startup. If neither read identifies the controller,
+the alternate HeaterCC initialization can establish ABBA from its status reply.
+No power toggle, level/mode change, guessed PIN packet or generic AA55 clock
+command is used to identify the controller.
+
 ## Status fields
 
 ABBA status frames begin with `AB BA 11 CC` and have at least 21 bytes.

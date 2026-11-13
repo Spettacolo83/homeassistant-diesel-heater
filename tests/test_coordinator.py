@@ -114,6 +114,7 @@ def create_mock_coordinator() -> VevorHeaterCoordinator:
     coordinator._protocol_mode = 0
     coordinator._passkey = 1234
     coordinator._hcalory_auth_response = None
+    coordinator._legacy_fff0_candidate = False
     coordinator._hcalory_last_set_temp = None
     coordinator._hcalory_last_set_level = None
 
