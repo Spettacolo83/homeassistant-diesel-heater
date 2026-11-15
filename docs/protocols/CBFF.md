@@ -1,8 +1,8 @@
 # CBFF / FEAA Protocol (Sunster V2.1)
 
 **Integration mode:** 6
-**Controller app evidence:** AirHeaterBLE Sunster parser and command builder;
-encrypted command vectors confirmed by captured traffic
+**Controller app evidence:** Sunster 2.2.000 V2.1 parser and command builder;
+encrypted command vectors also confirmed by captured traffic
 
 ## Scope
 
@@ -31,6 +31,7 @@ CBFF status frames are 47 bytes when unencrypted or after decryption.
 | --- | --- | --- |
 | 0-1 | Header | `CB FF` |
 | 2 | Protocol version | Diagnostic value |
+| 8 | Mainboard type | Ventilation is advertised for `1`, `11`, and `21` |
 | 10 | Run state | `2`, `5`, and `6` are active; all other observed values are inactive |
 | 11 | Run mode | `1` level, `2` temperature, `3` ventilation |
 | 12 | Run parameter | Level or target temperature |
@@ -61,15 +62,45 @@ semantics are:
 | Power off | `01`, `00` | last mode, last parameter, `FF FF` |
 | Set temperature | `01`, `01` | `02`, target, `FF FF` |
 | Set level | `01`, `01` | `01`, level, `FF FF` |
+| Select ventilation | `01`, current power state | `03`, remembered fan level or `01`, `FF FF` |
+| Set ventilation level | `01`, current power state | `03`, level, `FF FF` |
+| Read settings | `03`, `00` | none |
+| Read metadata | `00`, `03` | none |
 | V2.1 PIN handshake | `06`, `00` | PIN encoded as `[PIN % 100, PIN // 100]` |
 
 The heater requires mode and parameter together. For power and mode changes,
 the integration preserves the last controller-reported mode and parameter.
-FEAA settings use the app's `03/01` command and a complete cached 13-byte
-settings snapshot. The writer changes only the requested supported field;
-unknown (`255`) fields and missing snapshots are rejected. Clock sync replaces
-only the two clock bytes with local minutes plus `0x8000`. Unsupported generic
-commands raise an error instead of silently becoming status queries.
+Ventilation is offered only for validated mainboard types `1`, `11`, and `21`,
+matching the app's mode list. Selecting ventilation preserves the reported
+on/off state. Fan-level changes retain mode `3` rather than selecting heating.
+
+FEAA settings use the app's `03/01` command and a complete 13-byte settings
+snapshot. A settings change reads current attributes with `03/00`, modifies
+one supported field, then reads back the applied value under one transaction
+lock. Full validated `83/00`, `83/01`, and `83/02` attribute replies refresh the
+snapshot; a short acknowledgement alone does not confirm a changed value.
+Missing snapshots and unsupported (`255`) fields are rejected.
+
+Clock writes use the same packet family but a different payload form: offsets
+2-3 contain local minutes plus `0x8000`; offsets 4-7 contain the low byte of the
+year, month, day of month, and JavaScript weekday (Sunday `0`). These slots carry
+offset, language, tank size, and pump type only in the ordinary settings form.
+Building a clock packet does not replace the cached ordinary settings.
+
+## Language capabilities
+
+The Sunster V2.1 language codes differ from AA66: `0` Off, `1` English,
+`2` Chinese, `3` Russian, `4` German, `5` Turkish, `6` Korean, `7` French,
+`8` Polish. The app filters these using the `00/03` metadata response's
+little-endian language mask at bytes 16-17 (bit 0 enables code 1).
+The integration uses the same mask; before it is known it offers only Off and
+the currently reported language, and rejects unsupported writes.
+
+The app names this field `broadcast_language`. This establishes the protocol
+setting, not whether every LCD firmware shares it with the menu language or
+persists it across power loss. No separate EEPROM-save command was identified
+in this path. Unsupported generic commands raise an error instead of silently
+becoming status queries.
 
 ## Detection
 
