@@ -979,18 +979,54 @@ def test_5a25_reports_warm_drive_pump_frequency(pump_tenths_hz: int, expected_hz
     assert coordinator.data["pump_frequency"] == expected_hz
 
 
+_LEVEL_THRESHOLDS = [(8 + 3 * (level - 1), level) for level in range(1, 11)]
+
+
 @pytest.mark.parametrize(
     ("target", "level"),
-    [(8, 1), (11, 2), (14, 3), (20, 5), (35, 10)],
+    [
+        # At each threshold the app's descending ladder selects that level ...
+        *_LEVEL_THRESHOLDS,
+        # ... and just below a threshold it still shows the level beneath it.
+        *[(threshold - 1, level - 1) for threshold, level in _LEVEL_THRESHOLDS if level > 1],
+        # Between rungs (reported in PR review against the Warm Drive 1.0.3 APK).
+        (10, 1),
+        (13, 2),
+        (31, 8),
+        (34, 9),
+        # Above the top rung the app still shows 10.
+        (36, 10),
+        (40, 10),
+    ],
 )
 def test_5a25_level_mode_derives_level_from_target_ladder(target: int, level: int) -> None:
-    """Warm Drive's manual level is the 3 °C target ladder, so the level comes from byte 15."""
+    """Warm Drive's manual level matches the app's target thresholds (>=8 -> 1 ... >=35 -> 10)."""
     coordinator = coordinator_for_layout(True)
 
     coordinator._notification_callback(FFF2, _warm_drive_status(1, target, 55))
 
     assert coordinator.data["set_level"] == level
     assert coordinator.data["pump_frequency"] == 5.5
+
+
+@pytest.mark.parametrize("target", [0, 5, 7])
+def test_5a25_level_mode_below_ladder_keeps_previous_level(target: int) -> None:
+    """Below 8 °C the Warm Drive app leaves the previously displayed level unchanged."""
+    coordinator = coordinator_for_layout(True)
+    coordinator._notification_callback(FFF2, _warm_drive_status(1, 17, 21))
+    assert coordinator.data["set_level"] == 4
+
+    coordinator._notification_callback(FFF2, _warm_drive_status(1, target, 21))
+
+    assert coordinator.data["set_level"] == 4
+
+
+def test_5a25_level_mode_below_ladder_without_previous_level_sets_nothing() -> None:
+    coordinator = coordinator_for_layout(True)
+
+    coordinator._notification_callback(FFF2, _warm_drive_status(1, 7, 21))
+
+    assert "set_level" not in coordinator.data
 
 
 def test_5a25_temperature_mode_does_not_report_pump_frequency_as_level() -> None:

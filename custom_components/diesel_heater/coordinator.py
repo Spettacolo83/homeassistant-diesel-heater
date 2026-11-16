@@ -2302,7 +2302,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     self.data["running_mode"] = RUNNING_MODE_VENTILATION
                 if run_type == 1:
                     self.data["running_mode"] = RUNNING_MODE_LEVEL
-                    self.data["set_level"] = max(1, min(10, round((data[15] - 5) / 3)))
+                    # Warm Drive app (WindMachineActivity.updateLevel): level is a
+                    # descending threshold ladder on the target, >=35 -> 10 ...
+                    # >=8 -> 1. Below 8 °C the app keeps the previous level.
+                    if data[15] >= 8:
+                        self.data["set_level"] = min(10, 1 + (data[15] - 8) // 3)
                 elif run_type == 2:
                     self.data["running_mode"] = RUNNING_MODE_TEMPERATURE
                 self._burnoff.observe_status()
