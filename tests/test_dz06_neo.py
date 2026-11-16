@@ -255,7 +255,7 @@ def test_5a25_parses_warm_drive_status_layout() -> None:
     frame[20:22] = (65).to_bytes(2, "big", signed=True)
     frame[22:24] = (-5).to_bytes(2, "big", signed=True)
     frame[15] = 24
-    frame[16] = 4
+    frame[16] = 21
     frame[32:34] = (1500).to_bytes(2, "big")
     frame[34] = 2
     frame[35] = 21
@@ -268,7 +268,9 @@ def test_5a25_parses_warm_drive_status_layout() -> None:
     assert coordinator.data["motor_speed"] == 2600
     assert coordinator.data["hot_water_temperature"] == 65
     assert coordinator.data["water_temperature"] == -5
-    assert coordinator.data["set_level"] == 4
+    # Byte 16 is the pump frequency in 0.1 Hz, not a level.
+    assert coordinator.data["pump_frequency"] == 2.1
+    assert "set_level" not in coordinator.data
     assert coordinator.data["set_temp"] == 24.0
     assert coordinator.data["cab_temperature"] == 21.0
     assert coordinator.data["altitude"] == 1500
@@ -952,3 +954,101 @@ async def test_warm_drive_water_level_change_sends_nothing() -> None:
 
     assert await coordinator.async_set_level(5) is False
     coordinator._write_gatt.assert_not_awaited()
+
+
+def _warm_drive_status(run_type: int, target: int, pump_tenths_hz: int, raw_state: int = 2) -> bytearray:
+    frame = bytearray(39)
+    frame[:2] = b"Z%"
+    frame[3] = raw_state
+    frame[15] = target
+    frame[16] = pump_tenths_hz
+    frame[34] = run_type
+    return frame
+
+
+@pytest.mark.parametrize(
+    ("pump_tenths_hz", "expected_hz"),
+    [(0, 0.0), (15, 1.5), (17, 1.7), (55, 5.5)],
+)
+def test_5a25_reports_warm_drive_pump_frequency(pump_tenths_hz: int, expected_hz: float) -> None:
+    """Values observed on a Mudiro 8 kW: 1.7 Hz at minimum, 5.5 Hz at maximum."""
+    coordinator = coordinator_for_layout(True)
+
+    coordinator._notification_callback(FFF2, _warm_drive_status(2, 20, pump_tenths_hz))
+
+    assert coordinator.data["pump_frequency"] == expected_hz
+
+
+@pytest.mark.parametrize(
+    ("target", "level"),
+    [(8, 1), (11, 2), (14, 3), (20, 5), (35, 10)],
+)
+def test_5a25_level_mode_derives_level_from_target_ladder(target: int, level: int) -> None:
+    """Warm Drive's manual level is the 3 °C target ladder, so the level comes from byte 15."""
+    coordinator = coordinator_for_layout(True)
+
+    coordinator._notification_callback(FFF2, _warm_drive_status(1, target, 55))
+
+    assert coordinator.data["set_level"] == level
+    assert coordinator.data["pump_frequency"] == 5.5
+
+
+def test_5a25_temperature_mode_does_not_report_pump_frequency_as_level() -> None:
+    coordinator = coordinator_for_layout(True)
+    coordinator._notification_callback(FFF2, _warm_drive_status(1, 14, 21))
+    assert coordinator.data["set_level"] == 3
+
+    coordinator._notification_callback(FFF2, _warm_drive_status(2, 17, 55))
+
+    assert coordinator.data["set_level"] == 3
+
+
+@pytest.mark.parametrize(
+    ("pump_type", "frequency", "litres_per_hour"),
+    [(1, 1.7, 0.13464), (1, 5.5, 0.4356), (0, 5.5, 0.3168), (3, 2.0, 0.2304)],
+)
+def test_warm_drive_fuel_uses_pump_frequency_and_flow(
+    pump_type: int, frequency: float, litres_per_hour: float
+) -> None:
+    coordinator = coordinator_for_layout(True)
+    coordinator.data.update(
+        {"pump_type": pump_type, "pump_frequency": frequency, "running_step": RUNNING_STEP_RUNNING}
+    )
+
+    assert coordinator._calculate_fuel_consumption(3600) == pytest.approx(litres_per_hour)
+    assert coordinator._calculate_fuel_consumption(1800) == pytest.approx(litres_per_hour / 2)
+
+
+def test_warm_drive_fuel_counts_nothing_when_not_running() -> None:
+    coordinator = coordinator_for_layout(True)
+    coordinator.data.update(
+        {"pump_type": 1, "pump_frequency": 5.5, "running_step": RUNNING_STEP_COOLDOWN}
+    )
+
+    assert coordinator._calculate_fuel_consumption(3600) == 0.0
+
+
+def test_warm_drive_fuel_falls_back_without_pump_flow() -> None:
+    coordinator = coordinator_for_layout(True)
+    coordinator.data.update(
+        {"pump_frequency": 5.5, "running_step": RUNNING_STEP_RUNNING, "set_level": None}
+    )
+
+    assert coordinator._warm_drive_fuel_rate() is None
+    assert coordinator._calculate_fuel_consumption(3600) == pytest.approx(0.16)
+
+
+def test_warm_drive_hourly_rate_uses_pump_frequency() -> None:
+    coordinator = coordinator_for_layout(True)
+    coordinator._total_fuel_consumed = 0.0
+    coordinator._daily_fuel_consumed = 0.0
+    coordinator._fuel_consumed_since_reset = 0.0
+    coordinator._update_fuel_remaining = MagicMock()
+    coordinator.data.update(
+        {"pump_type": 1, "pump_frequency": 5.5, "running_step": RUNNING_STEP_RUNNING}
+    )
+
+    coordinator._update_fuel_tracking(3600)
+
+    assert coordinator.data["hourly_fuel_consumption"] == 0.44
+    assert coordinator._fuel_consumed_since_reset == pytest.approx(0.4356)
