@@ -1782,6 +1782,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._connection_attempts = 0  # Reset on successful connection
             return
 
+        # A new connection must read its own metadata, even after cancelled cleanup.
+        self._cbff_metadata_requested = False
+
         # Clean up any stale client before attempting new connection
         await self._cleanup_connection()
 
@@ -2732,7 +2735,6 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     async def _cleanup_connection(self) -> None:
         """Clean up BLE connection properly."""
         self._legacy_fff0_candidate = False
-        self._cbff_metadata_requested = False
         if self._client:
             try:
                 if self._client.is_connected:
