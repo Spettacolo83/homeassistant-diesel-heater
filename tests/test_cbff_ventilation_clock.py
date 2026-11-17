@@ -267,3 +267,27 @@ def test_ventilation_uses_confirmed_fan_level_or_apk_default_one():
     p.parse(status(mode=1, level=4))
     p.parse(status(mode=2, level=24))
     assert p.build_command(2, 3, 1234)[9] == 4
+
+
+@pytest.mark.asyncio
+async def test_cbff_metadata_is_reset_before_a_cancelled_reconnect_cleanup():
+    h = create_mock_coordinator()
+    h._stopping = False
+    h._client = None
+    h._cbff_metadata_requested = True
+    h._cleanup_connection = AsyncMock(side_effect=asyncio.CancelledError)
+    with pytest.raises(asyncio.CancelledError):
+        await h._ensure_connected()
+    assert h._cbff_metadata_requested is False
+
+
+@pytest.mark.asyncio
+async def test_connected_poll_does_not_reset_cbff_metadata():
+    h = create_mock_coordinator()
+    h._stopping = False
+    h._client = SimpleNamespace(is_connected=True)
+    h._cbff_metadata_requested = True
+    h._cleanup_connection = AsyncMock()
+    await h._ensure_connected()
+    assert h._cbff_metadata_requested is True
+    h._cleanup_connection.assert_not_called()
