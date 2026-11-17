@@ -64,8 +64,10 @@ the error display tests the bits in ascending order and selects
 `device.error-E-01` through `device.error-E-16`. `showErrorToast` explicitly maps
 128 to `device.error-E-08-info` and continues through 32768/E16.
 
-The sensor exposes the E-code without a fault description. The app's English
-translation labels E08 as flame extinction, while issue #171 reports an E08
-overheat label; a shared description would therefore imply an unverified
-firmware-specific meaning. Error flags, protocol parsing and fault detection
+Fault descriptions follow the APK's English `device.error-E-01` through
+`device.error-E-16` strings. For example, `0x0080` displays
+`E08 - Flame extinction fault`. The app labels E05 as machine overheating and
+E12 as overtemperature. Issue #171 describes E08 as overheat; that differs from
+the app wording, so the mapping follows the APK rather than reusing another
+protocol's fault descriptions. Error flags, parser priority and fault detection
 are unchanged.

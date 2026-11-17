@@ -7,6 +7,25 @@ from custom_components.diesel_heater.const import ERROR_NAMES, WARM_DRIVE_ERROR_
 from custom_components.diesel_heater.sensor import VevorErrorCodeSensor
 from tests.test_sensor import create_mock_coordinator
 
+APP_ERROR_LABELS = (
+    "Undervoltage fault",
+    "Overvoltage fault",
+    "Ignition plug fault",
+    "Oil pump failure",
+    "Machine overheating fault",
+    "Motor fault",
+    "Short line fault",
+    "Flame extinction fault",
+    "Sensor fault",
+    "Ignition fault",
+    "Temperature sensor fault",
+    "Overtemperature fault",
+    "Air inlet high temperature protection",
+    "Air outlet high temperature protection",
+    "Air inlet temperature sensor fault",
+    "Air outlet temperature sensor fault",
+)
+
 
 def status_frame(error_mask: int, length: int) -> bytearray:
     frame = bytearray(length)
@@ -28,10 +47,18 @@ def test_parsed_fault_bit_displays_matching_e_code(number, length):
     assert parsed is not None
     assert parsed["error_code"] == 1 << (number - 1)
     coordinator.data.update(parsed)
-    assert VevorErrorCodeSensor(coordinator).native_value == f"E{number:02d}"
+    assert VevorErrorCodeSensor(coordinator).native_value == f"E{number:02d} - {APP_ERROR_LABELS[number - 1]}"
 
 
-@pytest.mark.parametrize("mask,expected", [(0, "No fault"), (0x0080, "E08"), (0x0083, "E01"), (0x8080, "E08")])
+@pytest.mark.parametrize(
+    "mask,expected",
+    [
+        (0, "No fault"),
+        (0x0080, "E08 - Flame extinction fault"),
+        (0x0083, "E01 - Undervoltage fault"),
+        (0x8080, "E08 - Flame extinction fault"),
+    ],
+)
 def test_no_fault_reported_e08_and_multiple_bit_priority(mask, expected):
     coordinator = create_mock_coordinator(protocol_mode=8)
     parsed = ProtocolHeatGenie().parse(status_frame(mask, 52))
