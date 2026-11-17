@@ -33,6 +33,8 @@ def flow(mode, neo=False, data=None):
 async def test_detected_family_options(mode, expected):
     f = flow(mode)
     form = await f.async_step_init()
+    if mode != 9:
+        expected = expected | {"fuel_rates"}
     assert {k.schema for k in form["data_schema"].schema} == expected
 
 

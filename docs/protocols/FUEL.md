@@ -65,3 +65,19 @@ assigned to the day they are observed. No physical precision guarantee is implie
 These boundaries preserve existing support without presenting unsupported conversions
 as measured telemetry. The shared table is an approximate maintained default, not a
 claim that every heater brand/model burns the same amount.
+
+## Configurable level-table estimates
+
+In the heater integration's Configure form, expand **Fuel estimates (litres per hour)**.
+Each supported power level has an editable L/h value, initially the existing table
+(0.16 L/h at level 1 through 0.52 L/h at level 10). ABBA exposes its six levels.
+Enter measurements for your own heater; for example, 0.34 at level 10 replaces
+only that level's estimate. Defaults are not changed for other installations.
+
+These values are per heater and apply only where the existing level table is
+used: future accumulated estimates and the level-based hourly estimate. They
+do not rewrite past totals, alter combustion/pump calibration, or replace
+controller-reported session counters, pump-based estimates or Cronus model
+profiles. The section is hidden for Cronus, unvalidated entries and the Neo
+split transport. A missing or invalid stored value falls back to its original
+table value. Zero is valid; negative and non-finite rates are rejected.

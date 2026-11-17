@@ -97,3 +97,24 @@ class SessionFuel:
             tuple(prior) if prior else None,
             True,
         )
+
+
+def fuel_rate_for_level(level: int, overrides: object) -> float:
+    """Read a valid per-level estimate, falling back to the existing table."""
+    import math
+
+    from .const import FUEL_CONSUMPTION_TABLE
+
+    default = FUEL_CONSUMPTION_TABLE.get(level, 0.16)
+    if not isinstance(overrides, dict):
+        return default
+    value = overrides.get(f"level_{level}")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return default
+    try:
+        rate = float(value)
+    except (ValueError, OverflowError):
+        return default
+    if not math.isfinite(rate) or rate < 0:
+        return default
+    return rate

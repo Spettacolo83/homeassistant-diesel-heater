@@ -69,6 +69,7 @@ from .const import (
     FORCE_TEMP_UNIT_CELSIUS,
     FORCE_TEMP_UNIT_FAHRENHEIT,
     DOMAIN,
+    CONF_FUEL_RATES,
     FUEL_CONSUMPTION_TABLE,
     HEATGENIE_SERVICE_UUID,
     HCALORY_MVP1_NOTIFY_UUID,
@@ -140,7 +141,7 @@ from diesel_heater_ble import (
     _u8_to_number,
 )
 
-from .fuel import SessionFuel
+from .fuel import SessionFuel, fuel_rate_for_level
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -1262,6 +1263,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self.data["fuel_estimate_source"] = "controller_session"
         return delta / 100 if delta is not None else None
 
+    def _level_fuel_rate(self, level: int) -> float:
+        """Apply only this heater's local level-table overrides."""
+        entry = getattr(self, "config_entry", None)
+        return fuel_rate_for_level(
+            level, getattr(entry, "data", {}).get(CONF_FUEL_RATES)
+        )
+
     def _calculate_fuel_consumption(self, elapsed_seconds: float) -> float:
         """Calculate fuel consumed based on power level and elapsed time.
 
@@ -1275,7 +1283,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             if self._fuel_session().active:
                 return 0.0
         # Only consume fuel when actually running.
-        if not self._is_running_for_tracking():
+        if not self._is_running_for_tracking() or (
+            self._protocol_mode == 6 and self.data.get("running_mode") == RUNNING_MODE_VENTILATION
+        ):
             return 0.0
 
         if self._protocol_mode == 9:
@@ -1298,7 +1308,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if power_level is None:
             power_level = 1  # Fallback to minimum
 
-        consumption_rate = FUEL_CONSUMPTION_TABLE.get(power_level, 0.16)  # L/h
+        consumption_rate = self._level_fuel_rate(power_level)  # L/h
 
         # Calculate fuel consumed in this interval
         hours_elapsed = elapsed_seconds / 3600.0
@@ -1335,9 +1345,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
             hourly_consumption = (
                 FUEL_CONSUMPTION_TABLE.get(power_level, 0.16)
-                if self._is_running_for_tracking()
+                if self._is_running_for_tracking() and not (
+                    self._protocol_mode == 6 and self.data.get("running_mode") == RUNNING_MODE_VENTILATION
+                )
                 else 0.0
             )
+
+            if hourly_consumption > 0:
+                hourly_consumption = self._level_fuel_rate(power_level)
 
         # Update data dictionary
         self.data["hourly_fuel_consumption"] = round(hourly_consumption, 2)
