@@ -67,7 +67,8 @@ the error display tests the bits in ascending order and selects
 Fault descriptions follow the APK's English `device.error-E-01` through
 `device.error-E-16` strings. For example, `0x0080` displays
 `E08 - Flame extinction fault`. The app labels E05 as machine overheating and
-E12 as overtemperature. Issue #171 describes E08 as overheat; that differs from
-the app wording, so the mapping follows the APK rather than reusing another
-protocol's fault descriptions. Error flags, parser priority and fault detection
+E12 as overtemperature. The reporter in issue #171 confirmed that the controller
+displays E08 only; the initial overheat description came from an LLM rather
+than the controller or manual. Descriptions therefore follow the APK rather
+than another protocol's fault table. Error flags, parser priority and fault detection
 are unchanged.
