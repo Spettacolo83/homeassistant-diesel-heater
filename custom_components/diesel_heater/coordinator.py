@@ -30,7 +30,6 @@ from homeassistant.helpers.event import async_track_state_change_event
 
 from .burnoff import BurnoffController, BurnoffPhase
 from .temperature import convert_native_temperature
-from .fuel import SessionFuel
 from .hcalory import HcaloryVariant, hcalory_variant_from_discovery, uses_mvp2_commands, is_abba_named_controller
 from .const import (
     ABBA_MAX_LEVEL,
@@ -140,6 +139,8 @@ from diesel_heater_ble import (
     _decrypt_data,
     _u8_to_number,
 )
+
+from .fuel import SessionFuel
 
 _LOGGER = logging.getLogger(__name__)
 
