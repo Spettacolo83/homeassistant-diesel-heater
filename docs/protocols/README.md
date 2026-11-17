@@ -59,3 +59,5 @@ Field offsets, command bytes, state meanings, and transports in these pages are
 grounded in the supported controller applications and validated integration
 protocol paths. A value observed only for one controller is labelled as such;
 it is not promoted to a universal rule for another protocol family.
+
+See [Fuel estimates and their sources](FUEL.md) for controller-reported session fuel and family-specific estimate limits.
