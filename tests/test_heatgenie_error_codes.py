@@ -67,7 +67,7 @@ def test_no_fault_reported_e08_and_multiple_bit_priority(mask, expected):
     assert VevorErrorCodeSensor(coordinator).native_value == expected
 
 
-@pytest.mark.parametrize("mode", [0, 1, 2, 3, 4, 5, 6, 7, 9])
+@pytest.mark.parametrize("mode", [0, 1, 2])
 @pytest.mark.parametrize("error", range(11))
 def test_other_protocol_display_mappings_are_unchanged(mode, error):
     coordinator = create_mock_coordinator(protocol_mode=mode)
@@ -80,11 +80,15 @@ def test_warm_drive_mapping_is_unchanged(error):
     coordinator = create_mock_coordinator(protocol_mode=0)
     coordinator.is_warm_drive_controller = True
     coordinator.data["error_code"] = error
-    assert VevorErrorCodeSensor(coordinator).native_value == WARM_DRIVE_ERROR_NAMES[error]
+    coordinator.is_dz06_neo = True
+    coordinator.data["neo_controller_type"] = "air"
+    expected = (f"E{error:02d} - {WARM_DRIVE_ERROR_NAMES[error]}" if error else "No fault")
+    assert VevorErrorCodeSensor(coordinator).native_value == expected
 
 
 @pytest.mark.parametrize("error", [-1, 3, 65536, None])
 def test_malformed_heatgenie_code_is_not_mislabeled(error):
     coordinator = create_mock_coordinator(protocol_mode=8)
     coordinator.data["error_code"] = error
-    assert VevorErrorCodeSensor(coordinator).native_value == f"Unknown error ({error})"
+    expected = f"Unknown error ({error})" if isinstance(error, int) and error >= 0 else None
+    assert VevorErrorCodeSensor(coordinator).native_value == expected

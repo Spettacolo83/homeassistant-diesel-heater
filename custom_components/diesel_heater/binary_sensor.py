@@ -128,9 +128,15 @@ class VevorHeaterProblemSensor(
         }
 
     @property
-    def is_on(self) -> bool:
-        """Return true if there's a problem."""
-        return self.coordinator.data.get("error_code", 0) != ERROR_NONE
+    def is_on(self) -> bool | None:
+        """Distinguish unknown fault telemetry from an actual reported fault."""
+        error = self.coordinator.data.get("error_code")
+        if not isinstance(error, int) or isinstance(error, bool) or error < 0:
+            return None
+        return error != ERROR_NONE or (
+            self.coordinator.protocol_mode == 7
+            and self.coordinator.data.get("hcalory_status") == 15
+        )
 
     @callback
     def _handle_coordinator_update(self) -> None:

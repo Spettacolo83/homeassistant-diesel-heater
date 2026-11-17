@@ -30,7 +30,13 @@ from homeassistant.helpers.event import async_track_state_change_event
 
 from .burnoff import BurnoffController, BurnoffPhase
 from .temperature import convert_native_temperature
-from .hcalory import HcaloryVariant, hcalory_variant_from_discovery, uses_mvp2_commands, is_abba_named_controller
+from .hcalory import (
+    HcaloryVariant,
+    hcalory_variant_from_discovery,
+    is_abba_named_controller,
+    uses_extended_error_codes,
+    uses_mvp2_commands,
+)
 from .const import (
     ABBA_MAX_LEVEL,
     ABBA_NOTIFY_UUID,
@@ -2300,6 +2306,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self.data.update(
             {
                 "connected": True,
+                "error_code": data[4] - 1 if data[4] > 1 else data[4],
                 "supply_voltage": data[6] / 10.0,
                 "set_temp": float(data[15]),
                 "cab_temperature": float(data[35]),
@@ -2490,6 +2497,19 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if parsed is None:
             return
 
+        if protocol.protocol_mode == 7:
+            discovery = bluetooth.async_last_service_info(
+                self.hass, self.address, connectable=True
+            )
+            if discovery:
+                self._hcalory_error_extended = uses_extended_error_codes(
+                    getattr(self, "_hcalory_variant", None), discovery.manufacturer_data
+                )
+            parsed["hcalory_error_extended"] = (
+                getattr(self, "_hcalory_error_extended", False)
+                or getattr(self, "_hcalory_variant", None) == HcaloryVariant.MVP3_3
+            )
+
         # CBFF decryption status logging
         if parsed.pop("_cbff_decrypted", False):
             self._logger.info(
@@ -2541,6 +2561,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         # Only a validated status may replace the selected protocol.
         self._protocol_mode = protocol.protocol_mode
         self._protocol = protocol
+        # Fault metadata belongs to this report, not a formerly selected family.
+        if "error_code" in parsed:
+            for field in (
+                "error_family", "error_code_raw", "error_display_raw",
+                "error_detail_raw", "hcalory_error_extended",
+            ):
+                self.data.pop(field, None)
         self.data.update(parsed)
 
         # Beta.34: Keep temperatures in native unit (no F→C conversion for Hcalory)

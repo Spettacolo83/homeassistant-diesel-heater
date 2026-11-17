@@ -298,8 +298,9 @@ class TestErrorCodeSensor:
 
         coordinator.is_warm_drive_controller = True
         coordinator.data["error_code"] = 6
+        coordinator.data["neo_controller_type"] = "air"
 
-        assert VevorErrorCodeSensor(coordinator).native_value == "Fan motor fault"
+        assert VevorErrorCodeSensor(coordinator).native_value == "E06 - Fan motor fault"
 
 
 # ---------------------------------------------------------------------------

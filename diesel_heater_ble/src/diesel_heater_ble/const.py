@@ -90,7 +90,7 @@ ABBA_ERROR_COMMUNICATION: Final = 7
 ABBA_ERROR_FLAMEOUT: Final = 8
 ABBA_ERROR_SENSOR: Final = 9
 ABBA_ERROR_STARTUP: Final = 10
-ABBA_ERROR_CO_ALARM: Final = 192
+ABBA_ERROR_CO_ALARM: Final = 11
 
 ABBA_ERROR_NAMES: Final = {
     ABBA_ERROR_NONE: "No fault",
@@ -103,7 +103,7 @@ ABBA_ERROR_NAMES: Final = {
     ABBA_ERROR_FLAMEOUT: "E8 - Flameout",
     ABBA_ERROR_SENSOR: "E9 - Sensor fault",
     ABBA_ERROR_STARTUP: "E10 - Startup failure",
-    ABBA_ERROR_CO_ALARM: "EC0 - Carbon monoxide alarm",
+    ABBA_ERROR_CO_ALARM: "ECO - Carbon monoxide alarm",
 }
 
 # ABBA Protocol commands
@@ -145,6 +145,8 @@ ERROR_NAMES: Final = {
     ERROR_IGNITION_UNIT_FAULT: "Ignition unit fault",
     ERROR_OVERHEATING: "Overheating",
     ERROR_OVERHEAT_SENSOR_FAULT: "Overheat sensor fault",
+    11: "CO warning",
+    50: "Low battery",
 }
 
 # Limits - AAXX protocols (Vevor, BYD, Sunster, HeaterCC)
@@ -184,7 +186,8 @@ HCALORY_OP_STATE_HEATING: Final = 0x01
 HCALORY_OP_STATE_COOLING: Final = 0x10
 HCALORY_OP_STATE_NATURAL_WIND: Final = 0x11
 
-# Hcalory error codes (when device_state = 0xFF)
+# Legacy Hcalory symbolic aliases, retained for API compatibility. Their
+# descriptive names are not established by the APK; use raw E-codes instead.
 HCALORY_ERROR_NONE: Final = 0
 HCALORY_ERROR_IGNITION: Final = 1
 HCALORY_ERROR_FLAME_OUT: Final = 2
@@ -198,19 +201,11 @@ HCALORY_ERROR_COMMUNICATION: Final = 9
 HCALORY_ERROR_CO_HIGH: Final = 10
 HCALORY_ERROR_CO_CRITICAL: Final = 11
 
+# The APK establishes E-codes here, not the meanings implied by the legacy
+# symbolic aliases above. Extended controller codes require variant formatting.
 HCALORY_ERROR_NAMES: Final = {
-    HCALORY_ERROR_NONE: "No fault",
-    HCALORY_ERROR_IGNITION: "E01 - Ignition failure",
-    HCALORY_ERROR_FLAME_OUT: "E02 - Flame out",
-    HCALORY_ERROR_OVERHEAT: "E03 - Overheat",
-    HCALORY_ERROR_FAN: "E04 - Fan failure",
-    HCALORY_ERROR_PUMP: "E05 - Pump failure",
-    HCALORY_ERROR_SENSOR: "E06 - Sensor failure",
-    HCALORY_ERROR_VOLTAGE_LOW: "E07 - Low voltage",
-    HCALORY_ERROR_VOLTAGE_HIGH: "E08 - High voltage",
-    HCALORY_ERROR_COMMUNICATION: "E09 - Communication error",
-    HCALORY_ERROR_CO_HIGH: "E10 - CO concentration high",
-    HCALORY_ERROR_CO_CRITICAL: "E11 - CO concentration critical",
+    0: "No fault",
+    **{code: f"E{code:02d}" for code in range(1, 12)},
 }
 
 # Hcalory command types

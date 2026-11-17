@@ -321,6 +321,8 @@ class ProtocolAA55(VevorCommandMixin, HeaterProtocol):
 
         parsed["running_state"] = _u8_to_number(data[3])
         parsed["error_code"] = _u8_to_number(data[4])
+        if len(data) > 44 and data[44] == 6:
+            parsed["error_family"] = "TWX"
         parsed["running_step"] = _u8_to_number(data[5])
         parsed["altitude"] = _u8_to_number(data[6]) + 256 * _u8_to_number(data[7])
         parsed["running_mode"] = _u8_to_number(data[8])
@@ -352,7 +354,13 @@ class ProtocolAA66(VevorCommandMixin, HeaterProtocol):
         parsed: dict[str, Any] = {}
 
         parsed["running_state"] = _u8_to_number(data[3])
-        parsed["error_code"] = _u8_to_number(data[17])
+        raw_error = _u8_to_number(data[17])
+        parsed["error_code_raw"] = raw_error
+        parsed["error_code"] = raw_error & 0x3F
+        parsed["error_family"] = ("XMZ", "JW", "unknown", "unknown")[raw_error >> 6]
+        if len(data) > 44 and data[44] == 6:
+            parsed["error_family"] = "TWX"
+            parsed["error_code"] = raw_error
         parsed["running_step"] = _u8_to_number(data[5])
         parsed["altitude"] = _u8_to_number(data[6]) + 256 * _u8_to_number(data[7])
         parsed["running_mode"] = _u8_to_number(data[8])
@@ -391,6 +399,8 @@ class ProtocolAA55Encrypted(VevorCommandMixin, HeaterProtocol):
 
         parsed["running_state"] = _u8_to_number(data[3])
         parsed["error_code"] = _u8_to_number(data[4])
+        if len(data) > 44 and data[44] == 6:
+            parsed["error_family"] = "TWX"
         parsed["running_step"] = _u8_to_number(data[5])
         parsed["altitude"] = (_u8_to_number(data[7]) + 256 * _u8_to_number(data[6])) / 10
         parsed["running_mode"] = _u8_to_number(data[8])
@@ -481,7 +491,13 @@ class ProtocolAA66Encrypted(VevorCommandMixin, HeaterProtocol):
         parsed: dict[str, Any] = {}
 
         parsed["running_state"] = _u8_to_number(data[3])
-        parsed["error_code"] = _u8_to_number(data[35])  # Different position!
+        raw_error = _u8_to_number(data[35])
+        parsed["error_code_raw"] = raw_error
+        parsed["error_code"] = raw_error & 0x3F
+        parsed["error_family"] = ("XMZ", "JW", "unknown", "unknown")[raw_error >> 6]
+        if len(data) > 44 and data[44] == 6:
+            parsed["error_family"] = "TWX"
+            parsed["error_code"] = raw_error
         parsed["running_step"] = _u8_to_number(data[5])
         parsed["altitude"] = (_u8_to_number(data[7]) + 256 * _u8_to_number(data[6])) / 10
         parsed["running_mode"] = _u8_to_number(data[8])
@@ -1633,7 +1649,15 @@ class ProtocolCBFF(HeaterProtocol):
             parsed["set_temp"] = run_param
 
         # Byte 15: fault_display
-        parsed["error_code"] = _u8_to_number(data[15]) & 0x3F
+        display = _u8_to_number(data[15])
+        fault = _u8_to_number(data[16])
+        parsed["error_display_raw"] = display
+        parsed["error_detail_raw"] = fault
+        parsed["error_code"] = display & 0x3F
+        parsed["error_family"] = ("XMZ", "TY", "DD1", "DD2")[display >> 6]
+        if fault >= 128:
+            parsed["error_code"] = display
+            parsed["error_family"] = {128: "XMZ", 129: "TY", 130: "JW"}.get(fault, "unknown")
 
         # Byte 17: temp_unit (lower nibble)
         parsed["temp_unit"] = _u8_to_number(data[17]) & 0x0F

@@ -82,3 +82,14 @@ def hcalory_variant_from_discovery(
 def uses_mvp2_commands(variant: HcaloryVariant) -> bool:
     """Return whether the app uses the authenticated 0A0A command family."""
     return variant is not HcaloryVariant.MVP1
+
+
+def uses_extended_error_codes(
+    variant: HcaloryVariant | None, manufacturer_data: Mapping[int, bytes]
+) -> bool:
+    """Match Hcalory3.3.1 w8/b.d: MVP3_3 or advertisement hex[12:16]=05BD."""
+    raw = b"".join(
+        company_id.to_bytes(2, "little") + bytes(payload)
+        for company_id, payload in sorted(manufacturer_data.items())
+    )
+    return variant == HcaloryVariant.MVP3_3 or (len(raw) >= 16 and raw[6:8] == b"\x05\xbd")
