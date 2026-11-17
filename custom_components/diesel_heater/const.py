@@ -106,6 +106,12 @@ DZ06_NEO_SERVICE_UUID: Final = ABBA_SERVICE_UUID
 DZ06_NEO_WRITE_UUID: Final = ABBA_NOTIFY_UUID
 DZ06_NEO_NOTIFY_UUID: Final = ABBA_WRITE_UUID
 # HeatGenie / Boygu controller family
+# HeatGenie 1.1.1 renders the first active bit as E01 through E16.
+# Keep E-codes without assuming firmware-specific human-readable labels.
+HEATGENIE_ERROR_NAMES: Final = {
+    0: "No fault",
+    **{1 << bit: f"E{bit + 1:02d}" for bit in range(16)},
+}
 HEATGENIE_SERVICE_UUID: Final = "0000181a-0000-1000-8000-00805f9b34fb"
 
 # Webasto ThermoConnect Cronus Smart controller family. The APK identifies

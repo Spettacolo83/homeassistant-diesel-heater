@@ -26,6 +26,7 @@ from .const import (
     DOMAIN,
     WARM_DRIVE_ERROR_NAMES,
     ERROR_NAMES,
+    HEATGENIE_ERROR_NAMES,
     RUNNING_MODE_NAMES,
     RUNNING_STEP_NAMES,
     CONF_NEO_CONTROLLER_TYPE,
@@ -509,9 +510,12 @@ class VevorErrorCodeSensor(VevorSensorBase):
     def native_value(self) -> str | None:
         """Return the state."""
         error = self.coordinator.data.get("error_code", 0)
-        names = WARM_DRIVE_ERROR_NAMES if (
-            self.coordinator.is_warm_drive_controller
-        ) else ERROR_NAMES
+        if self.coordinator.protocol_mode == 8:
+            names = HEATGENIE_ERROR_NAMES
+        elif self.coordinator.is_warm_drive_controller:
+            names = WARM_DRIVE_ERROR_NAMES
+        else:
+            names = ERROR_NAMES
         return names.get(error, f"Unknown error ({error})")
 
 

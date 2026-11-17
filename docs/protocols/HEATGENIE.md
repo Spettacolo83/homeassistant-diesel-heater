@@ -49,3 +49,23 @@ Fahrenheit bit selects the controller/app display and target command encoding;
 it does not change the measured wire values into Fahrenheit. HA keeps measured
 values and its target in Celsius and converts only the outgoing target when
 that display bit is set.
+
+
+## Error codes
+
+Registers 20–21 contain a 16-bit little-endian fault mask. The parser retains
+its existing lowest-set-bit priority. The Error sensor maps that bit to the
+app's displayed E-code: `0x0001` → E01, `0x0080` → E08, through `0x8000` → E16.
+Zero means No fault. AA55 and Warm Drive fault tables are not used for HeatGenie.
+
+APK evidence: HeatGenie 1.1.1 (`uni.UNIC97AE27`, versionCode 111), bundled
+`app-service.js`: `regInfoAreaArray` defines `errorCode` at offset 20 with size 2;
+the error display tests the bits in ascending order and selects
+`device.error-E-01` through `device.error-E-16`. `showErrorToast` explicitly maps
+128 to `device.error-E-08-info` and continues through 32768/E16.
+
+The sensor exposes the E-code without a fault description. The app's English
+translation labels E08 as flame extinction, while issue #171 reports an E08
+overheat label; a shared description would therefore imply an unverified
+firmware-specific meaning. Error flags, protocol parsing and fault detection
+are unchanged.
