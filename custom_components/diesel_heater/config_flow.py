@@ -337,14 +337,45 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 class VevorHeaterOptionsFlowHandler(config_entries.OptionsFlow):
     """Handle options flow for Vevor Heater."""
 
+    def _applicable_options(self) -> set[str]:
+        """Use detected transport capabilities, not a configured field's presence."""
+        coordinator = getattr(self.config_entry, "runtime_data", None)
+        mode = getattr(coordinator, "protocol_mode", None)
+        # An unloaded entry has no validated protocol. Keep recovery credentials
+        # editable, but never advertise Cronus model selection without evidence.
+        known = type(mode) is int and mode in range(1, 10)
+        neo = (
+            getattr(coordinator, "is_dz06_neo", False) is True
+            or (not known and self.config_entry.data.get(CONF_NEO_CONTROLLER_TYPE) in ("air", "water"))
+        )
+        keys: set[str] = set()
+        if neo or not known:
+            keys.add(CONF_NEO_PASSWORD)
+        if not neo and (not known or mode in (1, 2, 3, 4, 6, 7)):
+            keys.add(CONF_PIN)
+        if not neo and mode == 9:
+            keys.add(CONF_CRONUS_HEATER_MODEL)
+        else:
+            keys.update((CONF_PRESET_AWAY_TEMP, CONF_PRESET_COMFORT_TEMP))
+        if not neo and (not known or mode in (1, 2, 3, 4, 6)):
+            keys.update((CONF_EXTERNAL_TEMP_SENSOR, CONF_AUTO_OFFSET_MAX))
+        if not neo and (not known or mode in (4, 5, 6, 7)):
+            keys.add(CONF_FORCE_TEMP_UNIT)
+        return keys
+
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Manage the options."""
+        applicable = self._applicable_options()
         if user_input is not None:
+            user_input = {key: value for key, value in user_input.items() if key in applicable}
             # Handle clearing of external sensor
             # EntitySelector returns None when cleared, store as empty string
-            if CONF_EXTERNAL_TEMP_SENSOR not in user_input or user_input.get(CONF_EXTERNAL_TEMP_SENSOR) is None:
+            if CONF_EXTERNAL_TEMP_SENSOR in applicable and (
+                CONF_EXTERNAL_TEMP_SENSOR not in user_input
+                or user_input.get(CONF_EXTERNAL_TEMP_SENSOR) is None
+            ):
                 user_input[CONF_EXTERNAL_TEMP_SENSOR] = ""
                 # Also clear auto_offset_max when sensor is cleared
                 user_input.pop(CONF_AUTO_OFFSET_MAX, None)
@@ -445,10 +476,18 @@ class VevorHeaterOptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Range(min=MIN_AUTO_OFFSET_MAX, max=MAX_AUTO_OFFSET_MAX),
             )
 
+        schema_dict = {
+            key: validator for key, validator in schema_dict.items()
+            if key.schema in applicable
+        }
+
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(schema_dict),
             description_placeholders={
-                "note": "To clear the external temperature sensor, leave the field empty."
+                "note": (
+                    "To clear the external temperature sensor, leave the field empty."
+                    if CONF_EXTERNAL_TEMP_SENSOR in applicable else ""
+                )
             }
         )
