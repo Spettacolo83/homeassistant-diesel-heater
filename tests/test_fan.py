@@ -239,6 +239,14 @@ class TestFanPercentage:
         result = fan.percentage
         assert result is not None
 
+    def test_percentage_none_when_level_out_of_range(self):
+        """An out-of-range report must not raise while HA writes the state."""
+        coordinator = create_mock_coordinator()
+        coordinator.data["set_level"] = 55
+        fan = VevorHeaterFan(coordinator)
+
+        assert fan.percentage is None
+
     def test_percentage_none_when_level_none(self):
         """Test percentage returns None when level is None."""
         coordinator = create_mock_coordinator()

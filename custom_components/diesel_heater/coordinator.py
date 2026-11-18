@@ -124,6 +124,7 @@ from .const import (
     TEMP_UNIT_FAHRENHEIT,
     UPDATE_INTERVAL,
     UPDATE_INTERVAL_HCALORY,
+    WARM_DRIVE_PUMP_FLOW_ML,
 )
 from diesel_heater_ble import (
     HeaterProtocol,
@@ -324,6 +325,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             "neo_raw_state": None,  # Set only after a confirmed DZ06 Bluetooth status frame
             "neo_controller_type": config_entry.data.get(CONF_NEO_CONTROLLER_TYPE),
             "motor_speed": None,
+            "pump_frequency": None,
             "fire_temperature": None,
             "neo_run_type": None,
             "neo_min_target": None,
@@ -1177,6 +1179,21 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             return self.data.get("running_state") == RUNNING_STATE_ON
         return self.data.get("running_step") == RUNNING_STEP_RUNNING
 
+    def _warm_drive_fuel_rate(self) -> float | None:
+        """Return Warm Drive fuel use in L/h from the live pump frequency.
+
+        Each pump stroke delivers the configured pump flow per 1000 strokes,
+        so L/h = Hz * 3600 * (mL / 1000) / 1000. Returns None when the
+        frequency or pump flow is unknown so callers can fall back.
+        """
+        if not self.is_warm_drive_controller:
+            return None
+        frequency = self.data.get("pump_frequency")
+        flow_ml = WARM_DRIVE_PUMP_FLOW_ML.get(self.data.get("pump_type"))
+        if not isinstance(frequency, (int, float)) or flow_ml is None:
+            return None
+        return frequency * flow_ml * 0.0036
+
     def _cronus_fuel_rate(self) -> float:
         """Return the selected Cronus model's estimated current rate in L/h."""
         profile = self.cronus_fuel_profile
@@ -1198,6 +1215,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         if self._protocol_mode == 9:
             return self._cronus_fuel_rate() * elapsed_seconds / 3600.0
+
+        warm_drive_rate = self._warm_drive_fuel_rate()
+        if warm_drive_rate is not None:
+            return warm_drive_rate * elapsed_seconds / 3600.0
 
         power_level = self.data.get("set_level")
 
@@ -1234,8 +1255,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._fuel_consumed_since_reset += fuel_consumed
 
         # Calculate instantaneous consumption rate.
+        warm_drive_rate = self._warm_drive_fuel_rate()
         if self._protocol_mode == 9:
             hourly_consumption = self._cronus_fuel_rate()
+        elif warm_drive_rate is not None:
+            hourly_consumption = warm_drive_rate if self._is_running_for_tracking() else 0.0
         else:
             power_level = self.data.get("set_level")
 
@@ -1420,7 +1444,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         "case_temperature", "cab_temperature", "cab_temperature_raw",
         "supply_voltage", "running_state", "running_step", "running_mode",
         "set_level", "set_temp", "altitude", "error_code",
-        "hourly_fuel_consumption", "co_ppm", "remain_run_time", "motor_speed",
+        "hourly_fuel_consumption", "co_ppm", "remain_run_time", "motor_speed", "pump_frequency",
         "fire_temperature", "hot_water_temperature", "water_temperature",
         "intake_temperature", "outlet_temperature", "pump_active", "fan_active",
         "glow_plug_active", "cronus_external_temperature", "cronus_coolant_temperature",
@@ -2284,7 +2308,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     "connected": True,
                     "supply_voltage": int.from_bytes(data[5:7], "big") / 10.0,
                     "error_code": (data[4] - 1) if data[4] > 1 else data[4],
-                    "set_level": data[16],
+                    # Byte 16 is the live dosing-pump frequency in 0.1 Hz
+                    # (the Warm Drive 0x26 configuration bounds it to 15-55),
+                    # not a 1-10 level. Warm Drive has no gear byte: its
+                    # manual level is the 3 °C target ladder 8, 11, ..., 35.
+                    "pump_frequency": data[16] / 10.0,
                     "motor_speed": int.from_bytes(data[7:9], "big"),
                     "fire_temperature": fire_temperature,
                     "hot_water_temperature": hot_water_temperature,
@@ -2318,6 +2346,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     self.data["running_mode"] = RUNNING_MODE_VENTILATION
                 if run_type == 1:
                     self.data["running_mode"] = RUNNING_MODE_LEVEL
+                    # Warm Drive app (WindMachineActivity.updateLevel): level is a
+                    # descending threshold ladder on the target, >=35 -> 10 ...
+                    # >=8 -> 1. Below 8 °C the app keeps the previous level.
+                    if data[15] >= 8:
+                        self.data["set_level"] = min(10, 1 + (data[15] - 8) // 3)
                 elif run_type == 2:
                     self.data["running_mode"] = RUNNING_MODE_TEMPERATURE
                 self._burnoff.observe_status()
