@@ -34,6 +34,7 @@ from custom_components.diesel_heater.sensor import (
     VevorSoftwareVersionSensor,
     VevorRemainingRunTimeSensor,
     VevorMotorSpeedSensor,
+    VevorPumpFrequencySensor,
     VevorStartupTempDiffSensor,
     VevorShutdownTempDiffSensor,
     VevorBurnoffRemainingSensor,
@@ -461,6 +462,10 @@ class TestAsyncSetupEntry:
 
         assert any(
             isinstance(entity, VevorMotorSpeedSensor)
+            for entity in async_add_entities.call_args[0][0]
+        )
+        assert any(
+            isinstance(entity, VevorPumpFrequencySensor)
             for entity in async_add_entities.call_args[0][0]
         )
 

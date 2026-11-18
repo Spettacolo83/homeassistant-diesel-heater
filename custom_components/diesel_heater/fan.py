@@ -108,6 +108,9 @@ class VevorHeaterFan(FanEntity):
         if level is None:
             return None
 
+        if str(level) not in self._ordered_levels:
+            # Never let an out-of-range report break the entity state write.
+            return None
         return ordered_list_item_to_percentage(self._ordered_levels, str(level))
 
     async def async_set_percentage(self, percentage: int) -> None:
