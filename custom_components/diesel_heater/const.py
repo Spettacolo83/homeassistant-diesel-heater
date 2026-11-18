@@ -87,6 +87,8 @@ WARM_DRIVE_TANK_VOLUME_OPTIONS: Final = {
 WARM_DRIVE_PUMP_FLOW_OPTIONS: Final = {
     0: "16 mL", 1: "22 mL", 2: "28 mL", 3: "32 mL",
 }
+# Dosing-pump displacement in mL per 1000 strokes for each pump flow option.
+WARM_DRIVE_PUMP_FLOW_ML: Final = {0: 16, 1: 22, 2: 28, 3: 32}
 
 WARM_DRIVE_ERROR_NAMES: Final = {
     0: "No fault",

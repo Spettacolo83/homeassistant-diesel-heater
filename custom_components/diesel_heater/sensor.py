@@ -13,6 +13,7 @@ from homeassistant.const import (
     EntityCategory,
     PERCENTAGE,
     UnitOfElectricPotential,
+    UnitOfFrequency,
     UnitOfTemperature,
     UnitOfTime,
     UnitOfVolume,
@@ -124,6 +125,7 @@ async def async_setup_entry(
 
     if coordinator.is_warm_drive_controller:
         entities.append(VevorMotorSpeedSensor(coordinator))
+        entities.append(VevorPumpFrequencySensor(coordinator))
     if coordinator.is_warm_drive_controller:
         entities.append(
             VevorAuxTemperatureSensor(
@@ -493,6 +495,25 @@ class VevorMotorSpeedSensor(VevorSensorBase):
     def native_value(self) -> int | None:
         """Return the motor speed in RPM."""
         return self.coordinator.data.get("motor_speed")
+
+
+class VevorPumpFrequencySensor(VevorSensorBase):
+    """Live dosing-pump frequency reported by the Warm Drive status frame."""
+
+    _attr_icon = "mdi:pump"
+    _attr_device_class = SensorDeviceClass.FREQUENCY
+    _attr_native_unit_of_measurement = UnitOfFrequency.HERTZ
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: VevorHeaterCoordinator) -> None:
+        """Initialize the pump frequency sensor."""
+        super().__init__(coordinator, "pump_frequency", "Pump Frequency")
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the pump frequency in Hz."""
+        return self.coordinator.data.get("pump_frequency")
 
 
 class VevorErrorCodeSensor(VevorSensorBase):
