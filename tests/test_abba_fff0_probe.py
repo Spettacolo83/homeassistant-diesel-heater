@@ -35,8 +35,9 @@ async def test_connect_confirms_abba_without_relying_on_full_name(name):
     coordinator, client = candidate(name)
 
     async def respond(char, packet, response):
-        assert packet[:4] == bytes.fromhex("baab04cc")
-        coordinator._notification_callback(0, abba_status(unit=0, target=20))
+        assert packet[:4] in (bytes.fromhex("baab04cc"), bytes.fromhex("baab05ea"))
+        if packet[:4] == bytes.fromhex("baab04cc"):
+            coordinator._notification_callback(0, abba_status(unit=0, target=20))
 
     client.write_gatt_char = AsyncMock(side_effect=respond)
     with (
@@ -49,7 +50,9 @@ async def test_connect_confirms_abba_without_relying_on_full_name(name):
     assert coordinator._hcalory_variant is None
     assert coordinator.data["set_temp"] == 20
     assert not coordinator._legacy_fff0_candidate
-    assert all(call.args[1][:4] == bytes.fromhex("baab04cc") for call in client.write_gatt_char.await_args_list)
+    packets = [call.args[1] for call in client.write_gatt_char.await_args_list]
+    assert all(packet[:4] in (bytes.fromhex("baab04cc"), bytes.fromhex("baab05ea")) for packet in packets)
+    assert sum(packet[:4] == bytes.fromhex("baab05ea") for packet in packets) == 1
 
 
 @pytest.mark.asyncio
@@ -228,4 +231,6 @@ async def test_confirmed_abba_reconnect_does_not_reuse_mvp1_candidate():
     assert coordinator.protocol_mode == 5
     assert coordinator._is_abba_device and not coordinator._is_hcalory_device
     assert coordinator._identify_legacy_fff0_response.await_count == 1
-    assert all(call.args[1][:4] == bytes.fromhex("baab04cc") for call in client.write_gatt_char.await_args_list)
+    packets = [call.args[1] for call in client.write_gatt_char.await_args_list]
+    assert all(packet[:4] in (bytes.fromhex("baab04cc"), bytes.fromhex("baab05ea")) for packet in packets)
+    assert sum(packet[:4] == bytes.fromhex("baab05ea") for packet in packets) == 2

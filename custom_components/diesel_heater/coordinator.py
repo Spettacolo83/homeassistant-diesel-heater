@@ -1633,7 +1633,30 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             if getattr(self, "_is_cronus_device", False):
                 return await self._async_update_cronus_data()
 
-            if self._protocol_mode == 8 and not connected_this_update:
+            abba_initialized = False
+            if (
+                not connected_this_update
+                and not self._time_synced_this_connection
+                and (
+                    self._legacy_fff0_candidate
+                    or (
+                        self._is_abba_device
+                        and self._protocol_mode == 5
+                        and not self.is_dz06_neo
+                    )
+                )
+            ):
+                # AirHeaterPro retries clock initialization without telemetry.
+                # An unanswered first EA must not leave subsequent retries
+                # waiting for status before they can initialize the session.
+                abba_initialized = await asyncio.wait_for(
+                    self._initialize_abba_session(), timeout=15.0
+                )
+
+            if abba_initialized:
+                # Initialization already obtained a validated CC status.
+                status = True
+            elif self._protocol_mode == 8 and not connected_this_update:
                 # HeatGenie configures periodic F2 reports at connection. The app
                 # consumes those reports; it does not send another 0x65 write for
                 # each refresh.
@@ -1707,7 +1730,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     except Exception as sync_err:
                         self._logger.debug("Auto time sync failed (non-critical): %s", sync_err)
                 elif (
-                    connected_this_update
+                    (connected_this_update or self._protocol_mode == 5)
                     and self.supports_time_sync
                     and not self._time_synced_this_connection
                 ):
@@ -2112,6 +2135,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 self._time_synced_this_connection = True
             elif self._is_cronus_device:
                 self._logger.debug("Cronus ready; polling record cache")
+            elif (
+                self._is_abba_device
+                and self._active_char_uuid.lower() == ABBA_NOTIFY_UUID.lower()
+                and self._abba_write_char.uuid.lower() == ABBA_WRITE_UUID.lower()
+            ):
+                # Both HeaterCC apps initialize the clock after subscription,
+                # without waiting for the first status report.
+                await self._initialize_abba_session()
             else:
                 # The Sunster app retains the known V2.1 protocol across a
                 # reconnect, then sends a fresh handshake after notifications
@@ -2119,6 +2150,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 await asyncio.sleep(0.3)
                 if self._protocol_mode != 6:
                     await self._send_wake_up_ping()
+                    # A shared legacy FFF0 advertisement is not final identity.
+                    # Try the native Hcalory read first; only an unanswered
+                    # candidate needs the alternate HeaterCC startup sequence.
+                    if self._legacy_fff0_candidate:
+                        await self._initialize_abba_session()
                 else:
                     self._queue_v21_handshake(self._protocol)
                     await self._wait_for_v21_handshake()
@@ -2126,6 +2162,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._connection_attempts = 0  # Reset on successful connection
             self._logger.info("Successfully connected to Vevor Heater")
 
+        except asyncio.CancelledError:
+            # Cancellation can interrupt subscription or the initial probe,
+            # before protocol-specific initialization owns cleanup.
+            try:
+                await asyncio.wait_for(self._cleanup_connection(), timeout=10.0)
+            except Exception as err:
+                self._logger.debug("Cancelled connection setup cleanup failed: %s", err)
+            raise
         except Exception as err:
             # Clean up on any connection failure
             await self._cleanup_connection()
@@ -2697,41 +2741,44 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     async def _cleanup_connection(self) -> None:
         """Clean up BLE connection properly."""
         self._legacy_fff0_candidate = False
-        if self._client:
-            try:
-                if self._client.is_connected:
-                    # Stop notifications using the active UUID
-                    if self._characteristic and self._active_char_uuid and (
-                        "notify" in self._characteristic.properties
-                        or "indicate" in self._characteristic.properties
-                    ):
-                        try:
-                            await self._client.stop_notify(self._active_char_uuid)
-                            self._logger.debug("Stopped notifications on %s", self._active_char_uuid)
-                        except Exception as err:
-                            self._logger.debug("Could not stop notifications: %s", err)
+        try:
+            if self._client:
+                try:
+                    if self._client.is_connected:
+                        # Stop notifications using the active UUID
+                        if self._characteristic and self._active_char_uuid and (
+                            "notify" in self._characteristic.properties
+                            or "indicate" in self._characteristic.properties
+                        ):
+                            try:
+                                await self._client.stop_notify(self._active_char_uuid)
+                                self._logger.debug("Stopped notifications on %s", self._active_char_uuid)
+                            except Exception as err:
+                                self._logger.debug("Could not stop notifications: %s", err)
 
-                    # Disconnect
-                    await self._client.disconnect()
-                    self._logger.debug("Disconnected from heater")
-            except Exception as err:
-                self._logger.debug("Error during cleanup: %s", err)
+                        # Disconnect
+                        await self._client.disconnect()
+                        self._logger.debug("Disconnected from heater")
+                except Exception as err:
+                    self._logger.debug("Error during cleanup: %s", err)
 
-        self._client = None
-        self._characteristic = None
-        self._active_char_uuid = None
-        self._hcalory_auth_response = None
-        # Reset Hcalory MVP2 password state on disconnect
-        if self._protocol and hasattr(self._protocol, 'reset_password_state'):
-            self._protocol.reset_password_state()
-        # Reset V2.1 handshake state on reconnect.
-        self._v21_handshake_sent = False
-        self._v21_handshake_event.clear()
-        self._v21_handshake_authenticated = None
-        self._warm_drive_board_config = None
-        # Keep the V2.1 initial settings write one-shot across reconnects.
-        self._time_synced_this_connection = False
-        # The Sunster app retains its equivalent first-send guard per device.
+        finally:
+            # Never retain a partial session when bounded cleanup is cancelled.
+            self._client = None
+            self._characteristic = None
+            self._active_char_uuid = None
+            self._hcalory_auth_response = None
+            # Reset Hcalory MVP2 password state on disconnect
+            if self._protocol and hasattr(self._protocol, 'reset_password_state'):
+                self._protocol.reset_password_state()
+            # Reset V2.1 handshake state on reconnect.
+            self._v21_handshake_sent = False
+            self._v21_handshake_event.clear()
+            self._v21_handshake_authenticated = None
+            self._warm_drive_board_config = None
+            # Keep the V2.1 initial settings write one-shot across reconnects.
+            self._time_synced_this_connection = False
+            # The Sunster app retains its equivalent first-send guard per device.
 
     async def _async_password_handshake(self, max_retries: int = 3) -> bool:
         """Send password handshake with retry logic (@Xev optimizations, issue #34).
@@ -2943,6 +2990,50 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         except asyncio.CancelledError:
             self._legacy_fff0_candidate = False
             raise
+
+    @staticmethod
+    def _abba_time_value(now: datetime) -> int:
+        """Encode AirHeaterCC's raw local time and JavaScript weekday."""
+        return (
+            (now.hour << 24)
+            | (now.minute << 16)
+            | (now.second << 8)
+            | ((now.weekday() + 1) % 7)
+        )
+
+    async def _initialize_abba_session(self) -> bool:
+        """Send the APK's clock/status sequence before requiring telemetry."""
+        protocol = self._protocols[5]
+        self._notification_data = None
+        try:
+            await self._write_gatt(
+                protocol.build_command(10, self._abba_time_value(dt_util.now()), self._passkey)
+            )
+            await asyncio.sleep(0.5)
+            # A delayed native Hcalory reply may resolve the candidate while
+            # the clock write is in flight. Do not continue the ABBA sequence.
+            if self._is_hcalory_device and not self._legacy_fff0_candidate:
+                return False
+            await self._write_gatt(protocol.build_command(1, 0, self._passkey))
+            for _ in range(100):
+                if self._notification_data is not None:
+                    if self._protocol_mode == 5:
+                        self._time_synced_this_connection = True
+                        return True
+                    if not self._legacy_fff0_candidate:
+                        return False
+                await asyncio.sleep(0.05)
+        except asyncio.CancelledError:
+            # Do not leave a half-initialized subscription/client behind when
+            # the connect deadline expires or the entry unloads.
+            try:
+                await asyncio.wait_for(self._cleanup_connection(), timeout=10.0)
+            except Exception as err:
+                self._logger.debug("ABBA cancelled startup cleanup failed: %s", err)
+            raise
+        except Exception as err:
+            self._logger.debug("ABBA startup initialization failed: %s", err)
+        return False
 
     async def _send_wake_up_ping(self) -> None:
         """Send a wake-up ping to the device to ensure it's responsive."""
@@ -4304,12 +4395,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if self._protocol_mode == 5:
             # AirHeaterCC uses JavaScript Date.getDay(): Sunday=0 through Saturday=6.
             javascript_weekday = (now.weekday() + 1) % 7
-            time_value = (
-                (now.hour << 24)
-                | (now.minute << 16)
-                | (now.second << 8)
-                | javascript_weekday
-            )
+            time_value = self._abba_time_value(now)
             success = await self._send_command(10, time_value)
             self._logger.info(
                 "Syncing ABBA time to %02d:%02d:%02d JS weekday=%d",
