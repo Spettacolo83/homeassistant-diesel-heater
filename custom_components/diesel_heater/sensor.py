@@ -23,10 +23,9 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import VevorHeaterConfigEntry
+from .faults import error_name
 from .const import (
     DOMAIN,
-    WARM_DRIVE_ERROR_NAMES,
-    ERROR_NAMES,
     RUNNING_MODE_NAMES,
     RUNNING_STEP_NAMES,
     CONF_NEO_CONTROLLER_TYPE,
@@ -529,11 +528,7 @@ class VevorErrorCodeSensor(VevorSensorBase):
     @property
     def native_value(self) -> str | None:
         """Return the state."""
-        error = self.coordinator.data.get("error_code", 0)
-        names = WARM_DRIVE_ERROR_NAMES if (
-            self.coordinator.is_warm_drive_controller
-        ) else ERROR_NAMES
-        return names.get(error, f"Unknown error ({error})")
+        return error_name(self.coordinator)
 
 
 # Fuel consumption sensors

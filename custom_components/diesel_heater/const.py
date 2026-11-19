@@ -108,6 +108,27 @@ DZ06_NEO_SERVICE_UUID: Final = ABBA_SERVICE_UUID
 DZ06_NEO_WRITE_UUID: Final = ABBA_NOTIFY_UUID
 DZ06_NEO_NOTIFY_UUID: Final = ABBA_WRITE_UUID
 # HeatGenie / Boygu controller family
+# HeatGenie 1.1.1 renders the first active bit as E01 through E16.
+# Descriptions follow its English device.error-E-01 through -16 strings.
+HEATGENIE_ERROR_NAMES: Final = {
+    0: "No fault",
+    1: "E01 - Undervoltage fault",
+    2: "E02 - Overvoltage fault",
+    4: "E03 - Ignition plug fault",
+    8: "E04 - Oil pump failure",
+    16: "E05 - Machine overheating fault",
+    32: "E06 - Motor fault",
+    64: "E07 - Short line fault",
+    128: "E08 - Flame extinction fault",
+    256: "E09 - Sensor fault",
+    512: "E10 - Ignition fault",
+    1024: "E11 - Temperature sensor fault",
+    2048: "E12 - Overtemperature fault",
+    4096: "E13 - Air inlet high temperature protection",
+    8192: "E14 - Air outlet high temperature protection",
+    16384: "E15 - Air inlet temperature sensor fault",
+    32768: "E16 - Air outlet temperature sensor fault",
+}
 HEATGENIE_SERVICE_UUID: Final = "0000181a-0000-1000-8000-00805f9b34fb"
 
 # Webasto ThermoConnect Cronus Smart controller family. The APK identifies
