@@ -53,6 +53,8 @@ For encrypted AA-family traffic, the integration decrypts the complete
 48-byte notification before examining its inner `AA55` or `AA66` status
 header. A visible raw header is therefore not required.
 
+See [Fuel estimates and their sources](FUEL.md) for controller-reported session fuel and family-specific estimate limits.
+
 ## Evidence standard
 
 Field offsets, command bytes, state meanings, and transports in these pages are

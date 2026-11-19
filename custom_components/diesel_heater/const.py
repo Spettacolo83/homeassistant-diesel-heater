@@ -437,3 +437,6 @@ PROTOCOL_MODE_NAMES: Final = {
     8: "HeatGenie",
     9: "Webasto Cronus",
 }
+
+# Local per-heater estimate overrides, in litres per hour for each level.
+CONF_FUEL_RATES: Final = "fuel_rates"

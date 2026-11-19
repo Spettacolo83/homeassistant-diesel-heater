@@ -552,6 +552,14 @@ class VevorHourlyFuelConsumptionSensor(VevorSensorBase):
         return self.coordinator.data.get("hourly_fuel_consumption")
 
 
+    @property
+    def extra_state_attributes(self) -> dict | None:
+        """Do not imply a coarse session counter is an instantaneous flow meter."""
+        if self.coordinator.data.get("fuel_estimate_source") == "controller_session":
+            return {"estimate_basis": "level_table"}
+        return None
+
+
 class VevorDailyFuelConsumedSensor(VevorSensorBase):
     """Estimated daily fuel consumed sensor."""
 
@@ -586,6 +594,20 @@ class VevorTotalFuelConsumedSensor(VevorSensorBase):
     def native_value(self) -> float | None:
         """Return the state."""
         return self.coordinator.data.get("total_fuel_consumed")
+
+
+    @property
+    def extra_state_attributes(self) -> dict | None:
+        """Identify the supported controller's session-derived accumulated estimate."""
+        data = self.coordinator.data
+        if data.get("fuel_estimate_source") != "controller_session":
+            return None
+        return {
+            "estimate_basis": "controller_session",
+            "session_estimated_fuel": data.get("hcalory_session_fuel_litres"),
+            "session_runtime_minutes": data.get("hcalory_session_runtime_minutes"),
+            "report_available": data.get("hcalory_fuel_report_available", False),
+        }
 
 
 class VevorDailyFuelHistorySensor(VevorSensorBase):

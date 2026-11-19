@@ -82,8 +82,40 @@
           "auto_offset_max": "Maximum automatic offset in °C. Limits how much the temperature can be adjusted based on external sensor. Default: 5°C.",
           "force_temp_unit": "Override the heater firmware temperature-unit flag. Use Celsius or Fahrenheit only if the firmware mis-reports the unit (see issue #64). Auto preserves the current behavior.",
           "cronus_heater_model": "Select the installed diesel heater model to enable its local fuel estimate. Not configured leaves the estimate disabled because Cronus does not report the connected heater model."
+        },
+        "sections": {
+          "fuel_rates": {
+            "name": "Fuel estimates (litres per hour)",
+            "data": {
+              "level_1": "Level 1 (L/h)",
+              "level_2": "Level 2 (L/h)",
+              "level_3": "Level 3 (L/h)",
+              "level_4": "Level 4 (L/h)",
+              "level_5": "Level 5 (L/h)",
+              "level_6": "Level 6 (L/h)",
+              "level_7": "Level 7 (L/h)",
+              "level_8": "Level 8 (L/h)",
+              "level_9": "Level 9 (L/h)",
+              "level_10": "Level 10 (L/h)"
+            },
+            "data_description": {
+              "level_1": "Local estimate at this power level. Defaults retain the existing table. Changing this does not alter heater settings, past totals or controller-reported fuel counters.",
+              "level_2": "Local estimate at this power level. Defaults retain the existing table. Changing this does not alter heater settings, past totals or controller-reported fuel counters.",
+              "level_3": "Local estimate at this power level. Defaults retain the existing table. Changing this does not alter heater settings, past totals or controller-reported fuel counters.",
+              "level_4": "Local estimate at this power level. Defaults retain the existing table. Changing this does not alter heater settings, past totals or controller-reported fuel counters.",
+              "level_5": "Local estimate at this power level. Defaults retain the existing table. Changing this does not alter heater settings, past totals or controller-reported fuel counters.",
+              "level_6": "Local estimate at this power level. Defaults retain the existing table. Changing this does not alter heater settings, past totals or controller-reported fuel counters.",
+              "level_7": "Local estimate at this power level. Defaults retain the existing table. Changing this does not alter heater settings, past totals or controller-reported fuel counters.",
+              "level_8": "Local estimate at this power level. Defaults retain the existing table. Changing this does not alter heater settings, past totals or controller-reported fuel counters.",
+              "level_9": "Local estimate at this power level. Defaults retain the existing table. Changing this does not alter heater settings, past totals or controller-reported fuel counters.",
+              "level_10": "Local estimate at this power level. Defaults retain the existing table. Changing this does not alter heater settings, past totals or controller-reported fuel counters."
+            }
+          }
         }
       }
+    },
+    "error": {
+      "invalid_fuel_rate": "Enter a finite, non-negative fuel consumption in litres per hour for each level."
     }
   },
   "selector": {

@@ -1890,6 +1890,23 @@ class ProtocolHcalory(HeaterProtocol):
         self._custom_query_dt = dt
 
     @staticmethod
+    def build_fuel_query() -> bytearray:
+        """Hcalory3.3.1 q2/h.h: read current-session DPID14 statistics."""
+        packet = bytearray.fromhex("00020001000100061400000100")
+        packet.append(sum(packet[8:]) & 255)
+        return packet
+
+    @staticmethod
+    def parse_fuel_response(data: bytes | bytearray) -> dict[str, int] | None:
+        """Decode q2/h.H, retaining exact centilitres instead of float counters."""
+        if len(data) < 19 or data[8] != 0x14 or sum(data[8:-1]) & 255 != data[-1]:
+            return None
+        return {
+            "session_runtime_minutes": int.from_bytes(data[12:15], "big"),
+            "session_fuel_centilitres": int.from_bytes(data[15:17], "big") * 100 + data[17],
+        }
+
+    @staticmethod
     def parse_password_response(data: bytes | bytearray) -> bool | None:
         """Validate the APK 0003/0B0C auth response separately from telemetry."""
         if (

@@ -776,6 +776,7 @@ class TestOptionsFlow:
 
     async def test_schema_has_cronus_heater_model_field(self):
         flow = self._create_flow()
+        flow._config_entry.runtime_data.protocol_mode = 9
 
         result = await flow.async_step_init()
 
