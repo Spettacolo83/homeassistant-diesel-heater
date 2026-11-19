@@ -184,6 +184,7 @@ class HeaterState:
     hardware_version: int | None = None
     software_version: int | None = None
     motherboard_version: int | None = None
+    cbff_mainboard_type: int | None = None
     part_number: str | None = None
 
     # Timer (AA55/AA66 encrypted)
@@ -321,6 +322,8 @@ class ProtocolAA55(VevorCommandMixin, HeaterProtocol):
 
         parsed["running_state"] = _u8_to_number(data[3])
         parsed["error_code"] = _u8_to_number(data[4])
+        if len(data) > 44 and data[44] == 6:
+            parsed["error_family"] = "TWX"
         parsed["running_step"] = _u8_to_number(data[5])
         parsed["altitude"] = _u8_to_number(data[6]) + 256 * _u8_to_number(data[7])
         parsed["running_mode"] = _u8_to_number(data[8])
@@ -352,7 +355,13 @@ class ProtocolAA66(VevorCommandMixin, HeaterProtocol):
         parsed: dict[str, Any] = {}
 
         parsed["running_state"] = _u8_to_number(data[3])
-        parsed["error_code"] = _u8_to_number(data[17])
+        raw_error = _u8_to_number(data[17])
+        parsed["error_code_raw"] = raw_error
+        parsed["error_code"] = raw_error & 0x3F
+        parsed["error_family"] = ("XMZ", "JW", "unknown", "unknown")[raw_error >> 6]
+        if len(data) > 44 and data[44] == 6:
+            parsed["error_family"] = "TWX"
+            parsed["error_code"] = raw_error
         parsed["running_step"] = _u8_to_number(data[5])
         parsed["altitude"] = _u8_to_number(data[6]) + 256 * _u8_to_number(data[7])
         parsed["running_mode"] = _u8_to_number(data[8])
@@ -391,6 +400,8 @@ class ProtocolAA55Encrypted(VevorCommandMixin, HeaterProtocol):
 
         parsed["running_state"] = _u8_to_number(data[3])
         parsed["error_code"] = _u8_to_number(data[4])
+        if len(data) > 44 and data[44] == 6:
+            parsed["error_family"] = "TWX"
         parsed["running_step"] = _u8_to_number(data[5])
         parsed["altitude"] = (_u8_to_number(data[7]) + 256 * _u8_to_number(data[6])) / 10
         parsed["running_mode"] = _u8_to_number(data[8])
@@ -481,7 +492,13 @@ class ProtocolAA66Encrypted(VevorCommandMixin, HeaterProtocol):
         parsed: dict[str, Any] = {}
 
         parsed["running_state"] = _u8_to_number(data[3])
-        parsed["error_code"] = _u8_to_number(data[35])  # Different position!
+        raw_error = _u8_to_number(data[35])
+        parsed["error_code_raw"] = raw_error
+        parsed["error_code"] = raw_error & 0x3F
+        parsed["error_family"] = ("XMZ", "JW", "unknown", "unknown")[raw_error >> 6]
+        if len(data) > 44 and data[44] == 6:
+            parsed["error_family"] = "TWX"
+            parsed["error_code"] = raw_error
         parsed["running_step"] = _u8_to_number(data[5])
         parsed["altitude"] = (_u8_to_number(data[7]) + 256 * _u8_to_number(data[6])) / 10
         parsed["running_mode"] = _u8_to_number(data[8])
@@ -1165,6 +1182,11 @@ class ProtocolCBFF(HeaterProtocol):
         self._last_mode: int = self._DEFAULT_MODE
         self._last_param: int = self._DEFAULT_PARAM
         self._v21_settings: bytes | None = None
+        self._mainboard_type: int | None = None
+        self._last_power_on: bool | None = None
+        self._last_fan_level: int | None = None
+        self.settings_revision = 0
+        self.attribute_revision = 0
 
     def set_device_sn(self, sn: str) -> None:
         """Set the device serial number (BLE MAC without colons, uppercased).
@@ -1254,14 +1276,23 @@ class ProtocolCBFF(HeaterProtocol):
 
         # Set level (cmd 5)
         elif command == 5:
-            # mode=1 (level), param=level, time=0xFFFF
-            payload = bytes([1, argument, 0xFF, 0xFF])
-            packet = self._build_feaa(cmd_1=0x01, cmd_2=0x01, payload=payload)
+            # Sunster adjusts run_param without leaving ventilation mode.
+            mode = 3 if self._last_mode == self.FEAA_MODE_VENTILATION else 1
+            payload = bytes([mode, argument, 0xFF, 0xFF])
+            power = int(bool(self._last_power_on)) if mode == 3 else 1
+            packet = self._build_feaa(cmd_1=0x01, cmd_2=power, payload=payload)
 
         # Set mode (cmd 2): argument=1 for level, argument=2 for temperature
         # @Xev (issue #45): use last known param for the target mode
         elif command == 2:
-            if argument == 1:
+            if argument == 3:
+                # The APK offers aMode only for these mainboard types. A mode
+                # choice preserves power state; it must not start an off heater.
+                if self._mainboard_type not in (1, 11, 21) or self._last_power_on is None:
+                    raise ValueError("CBFF ventilation requires a supported status snapshot")
+                param = self._last_fan_level or 1
+                payload = bytes([3, param, 0xFF, 0xFF])
+            elif argument == 1:
                 # Switch to level mode — use last_param if we were in level, else default 5
                 param = self._last_param if self._last_mode == self.FEAA_MODE_LEVEL else self._DEFAULT_PARAM
                 payload = bytes([self.FEAA_MODE_LEVEL, param, 0xFF, 0xFF])
@@ -1269,7 +1300,8 @@ class ProtocolCBFF(HeaterProtocol):
                 # Switch to temperature mode — use last_param if we were in temp, else default 21
                 param = self._last_param if self._last_mode == self.FEAA_MODE_TEMPERATURE else 21
                 payload = bytes([self.FEAA_MODE_TEMPERATURE, param, 0xFF, 0xFF])
-            packet = self._build_feaa(cmd_1=0x01, cmd_2=0x01, payload=payload)
+            power = int(bool(self._last_power_on)) if argument == 3 else 1
+            packet = self._build_feaa(cmd_1=0x01, cmd_2=power, payload=payload)
 
         elif command == 18 and self.supports_auto_start_stop:
             settings = self._v21_settings
@@ -1334,12 +1366,15 @@ class ProtocolCBFF(HeaterProtocol):
         This allows power on/off and mode switch commands to use the
         heater's actual last mode and param instead of hardcoded defaults.
         """
+        self._mainboard_type = parsed.get("cbff_mainboard_type")
+        self._last_power_on = bool(parsed["running_state"])
         mode = parsed.get("running_mode")
         if mode == RUNNING_MODE_LEVEL:
             self._last_mode = self.FEAA_MODE_LEVEL
             level = parsed.get("set_level")
             if level is not None:
                 self._last_param = level
+                self._last_fan_level = level
         elif mode == RUNNING_MODE_TEMPERATURE:
             self._last_mode = self.FEAA_MODE_TEMPERATURE
             temp = parsed.get("set_temp")
@@ -1350,9 +1385,16 @@ class ProtocolCBFF(HeaterProtocol):
             level = parsed.get("set_level")
             if level is not None:
                 self._last_param = level
+                self._last_fan_level = level
 
     def parse(self, data: bytearray) -> dict[str, Any] | None:
         if len(data) < 46:
+            return None
+
+        # Encrypted FEAA settings also carry a CBFF transport header. They
+        # must not fall through as suspect legacy telemetry.
+        envelope = self._decode_feaa_packet(data)
+        if envelope is not None and envelope[6:8] != bytes((0x80, 0)):
             return None
 
         # Validate the envelope before interpreting plausible-looking fields.
@@ -1387,7 +1429,7 @@ class ProtocolCBFF(HeaterProtocol):
             "pump_type", "rf433_enabled", "backlight", "startup_temp_diff",
             "shutdown_temp_diff", "wifi_enabled", "auto_start_stop",
             "heater_mode", "remain_run_time", "hardware_version",
-            "software_version", "pwr_onoff",
+            "software_version", "pwr_onoff", "cbff_mainboard_type",
         ):
             parsed.pop(key, None)
         return parsed
@@ -1464,6 +1506,44 @@ class ProtocolCBFF(HeaterProtocol):
                 return decrypted
         return None
 
+    def build_settings_query(self) -> bytearray:
+        """Read current settings using the Sunster app's 03/00 request."""
+        packet = self._build_feaa(cmd_1=0x03, cmd_2=0x00)
+        return self._encrypt_cbff(packet, self._device_sn) if self._device_sn else packet
+
+    def build_metadata_query(self) -> bytearray:
+        """Read the app's 00/03 metadata, including supported languages."""
+        packet = self._build_feaa(cmd_1=0x00, cmd_2=0x03)
+        return self._encrypt_cbff(packet, self._device_sn) if self._device_sn else packet
+
+    def parse_metadata_response(self, data: bytearray) -> dict[str, Any] | None:
+        """Decode only a validated metadata response, never a status report."""
+        packet = self._decode_feaa_packet(data)
+        if packet is None or len(packet) < 25 or packet[6:8] != bytes((0x80, 0x03)):
+            return None
+        return {"cbff_language_mask": int.from_bytes(packet[16:18], "little")}
+
+    def parse_settings_response(self, data: bytearray) -> dict[str, Any] | None:
+        """Refresh settings from the full attribute replies handled by the app."""
+        packet = self._decode_feaa_packet(data)
+        if (
+            packet is None or len(packet) < 46
+            or packet[6] != 0x83 or packet[7] not in (0, 1, 2)
+        ):
+            return None
+        parsed = self._parse_cbff_fields(packet)
+        if self._is_data_suspect(parsed):
+            return None
+        self._remember_v21_settings(packet)
+        if packet[7] == 0:
+            self.attribute_revision += 1
+        keys = (
+            "language", "heater_offset", "tank_volume", "pump_type", "rf433_enabled",
+            "backlight", "startup_temp_diff", "shutdown_temp_diff", "wifi_enabled",
+            "auto_start_stop", "temp_unit", "altitude_unit",
+        )
+        return {key: parsed[key] for key in keys}
+
     def build_v21_time_sync(self, now: datetime) -> bytearray | None:
         """Build the Sunster app's V2.1 03/01 settings time-sync packet.
 
@@ -1476,6 +1556,9 @@ class ProtocolCBFF(HeaterProtocol):
         payload = bytearray(self._v21_settings)
         payload[2] = current_time & 0xFF
         payload[3] = current_time >> 8
+        # In clock-write form the APK reuses these setting slots for date.
+        # Uint8Array truncates the year to its low byte.
+        payload[4:8] = bytes((now.year & 0xFF, now.month, now.day, (now.weekday() + 1) % 7))
         packet = self._build_feaa(cmd_1=0x03, cmd_2=0x01, payload=payload)
         if self._device_sn:
             return self._encrypt_cbff(packet, self._device_sn)
@@ -1490,6 +1573,7 @@ class ProtocolCBFF(HeaterProtocol):
         """Store the status fields the app echoes in a 03/01 settings write."""
         if len(data) < 43:
             return
+        self.settings_revision += 1
         self._v21_settings = bytes(
             (
                 self._v21_altitude_unit_setting(data[20]),
@@ -1604,6 +1688,9 @@ class ProtocolCBFF(HeaterProtocol):
         # Byte 2: protocol_version (stored for diagnostics)
         parsed["cbff_protocol_version"] = _u8_to_number(data[2])
 
+        # Sunster V2.1 mainboard_type selects available operating modes.
+        parsed["cbff_mainboard_type"] = _u8_to_number(data[8])
+
         # Byte 10: run_state (2/5/6 = ON)
         parsed["running_state"] = 1 if _u8_to_number(data[10]) in CBFF_RUN_STATE_ON else 0
 
@@ -1633,7 +1720,15 @@ class ProtocolCBFF(HeaterProtocol):
             parsed["set_temp"] = run_param
 
         # Byte 15: fault_display
-        parsed["error_code"] = _u8_to_number(data[15]) & 0x3F
+        display = _u8_to_number(data[15])
+        fault = _u8_to_number(data[16])
+        parsed["error_display_raw"] = display
+        parsed["error_detail_raw"] = fault
+        parsed["error_code"] = display & 0x3F
+        parsed["error_family"] = ("XMZ", "TY", "DD1", "DD2")[display >> 6]
+        if fault >= 128:
+            parsed["error_code"] = display
+            parsed["error_family"] = {128: "XMZ", 129: "TY", 130: "JW"}.get(fault, "unknown")
 
         # Byte 17: temp_unit (lower nibble)
         parsed["temp_unit"] = _u8_to_number(data[17]) & 0x0F
@@ -1793,6 +1888,23 @@ class ProtocolHcalory(HeaterProtocol):
         If None, _build_mvp2_query_cmd() will use current system time.
         """
         self._custom_query_dt = dt
+
+    @staticmethod
+    def build_fuel_query() -> bytearray:
+        """Hcalory3.3.1 q2/h.h: read current-session DPID14 statistics."""
+        packet = bytearray.fromhex("00020001000100061400000100")
+        packet.append(sum(packet[8:]) & 255)
+        return packet
+
+    @staticmethod
+    def parse_fuel_response(data: bytes | bytearray) -> dict[str, int] | None:
+        """Decode q2/h.H, retaining exact centilitres instead of float counters."""
+        if len(data) < 19 or data[8] != 0x14 or sum(data[8:-1]) & 255 != data[-1]:
+            return None
+        return {
+            "session_runtime_minutes": int.from_bytes(data[12:15], "big"),
+            "session_fuel_centilitres": int.from_bytes(data[15:17], "big") * 100 + data[17],
+        }
 
     @staticmethod
     def parse_password_response(data: bytes | bytearray) -> bool | None:

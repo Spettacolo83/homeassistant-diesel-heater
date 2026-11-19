@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
 from typing import Any
 
@@ -10,10 +11,13 @@ from homeassistant import config_entries
 from homeassistant.components import bluetooth
 from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
 from homeassistant.const import CONF_ADDRESS
-from homeassistant.data_entry_flow import FlowResult
+from homeassistant.data_entry_flow import FlowResult, section
 from homeassistant.helpers import selector
 
 from .const import (
+    ABBA_MAX_LEVEL,
+    MAX_LEVEL,
+    CONF_FUEL_RATES,
     CONF_AUTO_OFFSET_MAX,
     CONF_CRONUS_HEATER_MODEL,
     CONF_EXTERNAL_TEMP_SENSOR,
@@ -45,6 +49,7 @@ from .const import (
     MIN_PIN,
 )
 from .hcalory import hcalory_variant_from_discovery, is_abba_named_controller
+from .fuel import fuel_rate_for_level
 
 _LOGGER = logging.getLogger(__name__)
 HEATGENIE_NAME_PATTERN = re.compile(r"^C1:[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}:FE:[0-9A-F]{2}$")
@@ -334,17 +339,87 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return VevorHeaterOptionsFlowHandler()
 
 
+def _validate_fuel_rate(value: Any) -> float:
+    """Reject negative/non-finite rates before storing user estimates."""
+    try:
+        rate = float(value)
+    except (TypeError, ValueError, OverflowError) as err:
+        raise vol.Invalid("Enter a non-negative litres-per-hour value") from err
+    if isinstance(value, bool) or not math.isfinite(rate) or rate < 0:
+        raise vol.Invalid("Enter a non-negative litres-per-hour value")
+    return rate
+
+
 class VevorHeaterOptionsFlowHandler(config_entries.OptionsFlow):
     """Handle options flow for Vevor Heater."""
+
+    def _applicable_options(self) -> set[str]:
+        """Use detected transport capabilities, not a configured field's presence."""
+        coordinator = getattr(self.config_entry, "runtime_data", None)
+        mode = getattr(coordinator, "protocol_mode", None)
+        # An unloaded entry has no validated protocol. Keep recovery credentials
+        # editable, but never advertise Cronus model selection without evidence.
+        known = type(mode) is int and mode in range(1, 10)
+        neo = (
+            getattr(coordinator, "is_dz06_neo", False) is True
+            or (not known and self.config_entry.data.get(CONF_NEO_CONTROLLER_TYPE) in ("air", "water"))
+        )
+        keys: set[str] = set()
+        if neo or not known:
+            keys.add(CONF_NEO_PASSWORD)
+        if not neo and (not known or mode in (1, 2, 3, 4, 6, 7)):
+            keys.add(CONF_PIN)
+        if not neo and mode == 9:
+            keys.add(CONF_CRONUS_HEATER_MODEL)
+        else:
+            keys.update((CONF_PRESET_AWAY_TEMP, CONF_PRESET_COMFORT_TEMP))
+        if not neo and (not known or mode in (1, 2, 3, 4, 6)):
+            keys.update((CONF_EXTERNAL_TEMP_SENSOR, CONF_AUTO_OFFSET_MAX))
+        if not neo and (not known or mode in (4, 5, 6, 7)):
+            keys.add(CONF_FORCE_TEMP_UNIT)
+        if known and not neo and mode != 9:
+            keys.add(CONF_FUEL_RATES)
+        return keys
+
+    def _fuel_schema(self) -> vol.Schema:
+        """Build only the selected heater's supported level inputs."""
+        mode = getattr(getattr(self.config_entry, "runtime_data", None), "protocol_mode", None)
+        maximum = ABBA_MAX_LEVEL if mode == 5 else MAX_LEVEL
+        saved = self.config_entry.data.get(CONF_FUEL_RATES)
+        return vol.Schema({
+            vol.Optional(f"level_{level}", default=fuel_rate_for_level(level, saved)):
+                vol.All(vol.Coerce(float), vol.Range(min=0))
+            for level in range(1, maximum + 1)
+        })
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Manage the options."""
+        applicable = self._applicable_options()
         if user_input is not None:
+            user_input = {key: value for key, value in user_input.items() if key in applicable}
+            if CONF_FUEL_RATES in user_input:
+                try:
+                    raw_rates = user_input[CONF_FUEL_RATES]
+                    if isinstance(raw_rates, dict):
+                        for value in raw_rates.values():
+                            _validate_fuel_rate(value)
+                    user_input[CONF_FUEL_RATES] = {
+                        key: _validate_fuel_rate(value)
+                        for key, value in self._fuel_schema()(user_input[CONF_FUEL_RATES]).items()
+                    }
+                except vol.Invalid:
+                    return self.async_show_form(
+                        step_id="init", data_schema=self._options_schema(),
+                        errors={CONF_FUEL_RATES: "invalid_fuel_rate"},
+                    )
             # Handle clearing of external sensor
             # EntitySelector returns None when cleared, store as empty string
-            if CONF_EXTERNAL_TEMP_SENSOR not in user_input or user_input.get(CONF_EXTERNAL_TEMP_SENSOR) is None:
+            if CONF_EXTERNAL_TEMP_SENSOR in applicable and (
+                CONF_EXTERNAL_TEMP_SENSOR not in user_input
+                or user_input.get(CONF_EXTERNAL_TEMP_SENSOR) is None
+            ):
                 user_input[CONF_EXTERNAL_TEMP_SENSOR] = ""
                 # Also clear auto_offset_max when sensor is cleared
                 user_input.pop(CONF_AUTO_OFFSET_MAX, None)
@@ -364,6 +439,13 @@ class VevorHeaterOptionsFlowHandler(config_entries.OptionsFlow):
             )
             return self.async_create_entry(title="", data={})
 
+        return self.async_show_form(
+            step_id="init", data_schema=self._options_schema()
+        )
+
+    def _options_schema(self) -> vol.Schema:
+        """Keep advanced fuel estimates collapsed within the existing form."""
+        applicable = self._applicable_options()
         # Get current external sensor value (may be empty string or None)
         current_external_sensor = self.config_entry.data.get(CONF_EXTERNAL_TEMP_SENSOR)
         # EntitySelector expects None for empty, not empty string
@@ -445,10 +527,13 @@ class VevorHeaterOptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Range(min=MIN_AUTO_OFFSET_MAX, max=MAX_AUTO_OFFSET_MAX),
             )
 
-        return self.async_show_form(
-            step_id="init",
-            data_schema=vol.Schema(schema_dict),
-            description_placeholders={
-                "note": "To clear the external temperature sensor, leave the field empty."
-            }
-        )
+        schema_dict = {
+            key: validator for key, validator in schema_dict.items()
+            if key.schema in applicable
+        }
+
+        if CONF_FUEL_RATES in applicable:
+            schema_dict[vol.Optional(CONF_FUEL_RATES)] = section(
+                self._fuel_schema(), {"collapsed": True}
+            )
+        return vol.Schema(schema_dict)

@@ -482,6 +482,7 @@ class TestProtocolAA66:
         }
 
         for frame, expected in frames.items():
+            expected.update(error_code_raw=bytearray.fromhex(frame)[17], error_family="XMZ")
             assert self.proto.parse(bytearray.fromhex(frame)) == expected
 
     def test_build_command_complete_aa55_packet_matrix(self):
@@ -836,6 +837,7 @@ class TestProtocolAA66Encrypted:
         data[19:26] = b"\x02\x3a\x01\x95\x00\x5a\x01"
 
         assert self.proto.parse(data) == {
+            "error_code_raw": 7, "error_family": "XMZ",
             "running_state": 2, "error_code": 7, "running_step": 3,
             "altitude": 123.4, "running_mode": 2, "set_level": 7,
             "temp_unit": 0, "set_temp": 26, "auto_start_stop": True,
@@ -1539,7 +1541,9 @@ class TestProtocolCBFF:
         )
 
         assert self.proto.parse(data) == {
+            "error_display_raw": 195, "error_detail_raw": 0, "error_family": "DD2",
             "connected": True, "cbff_protocol_version": 1,
+            "cbff_mainboard_type": 0,
             "running_state": 1, "running_step": 3, "running_mode": 2,
             "set_temp": 25, "set_level": 7, "error_code": 3,
             "temp_unit": 1, "cab_temperature": -5.0, "altitude_unit": 1,
@@ -1562,7 +1566,9 @@ class TestProtocolCBFF:
         )
 
         assert self.proto.parse(data) == {
+            "error_display_raw": 0, "error_detail_raw": 0, "error_family": "XMZ",
             "connected": True, "cbff_protocol_version": 0,
+            "cbff_mainboard_type": 1,
             "running_state": 0, "running_step": 0, "running_mode": 0,
             "set_temp": 0, "error_code": 0, "temp_unit": 0,
             "cab_temperature": 19.0, "altitude_unit": 1, "altitude": 330.0,

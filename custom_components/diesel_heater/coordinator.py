@@ -30,7 +30,13 @@ from homeassistant.helpers.event import async_track_state_change_event
 
 from .burnoff import BurnoffController, BurnoffPhase
 from .temperature import convert_native_temperature
-from .hcalory import HcaloryVariant, hcalory_variant_from_discovery, uses_mvp2_commands, is_abba_named_controller
+from .hcalory import (
+    HcaloryVariant,
+    hcalory_variant_from_discovery,
+    is_abba_named_controller,
+    uses_extended_error_codes,
+    uses_mvp2_commands,
+)
 from .const import (
     ABBA_MAX_LEVEL,
     ABBA_NOTIFY_UUID,
@@ -69,6 +75,7 @@ from .const import (
     FORCE_TEMP_UNIT_CELSIUS,
     FORCE_TEMP_UNIT_FAHRENHEIT,
     DOMAIN,
+    CONF_FUEL_RATES,
     FUEL_CONSUMPTION_TABLE,
     HEATGENIE_SERVICE_UUID,
     HCALORY_MVP1_NOTIFY_UUID,
@@ -140,6 +147,8 @@ from diesel_heater_ble import (
     _decrypt_data,
     _u8_to_number,
 )
+
+from .fuel import SessionFuel, fuel_rate_for_level
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -233,7 +242,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._v21_handshake_sent = False  # Track if Sunster V2.1 handshake was sent
         self._v21_handshake_event = asyncio.Event()
         self._v21_handshake_authenticated: bool | None = None
+        self._hcalory_command_lock = asyncio.Lock()
+        self._hcalory_fuel_event = asyncio.Event()
+        self._hcalory_fuel_waiting = False
+        self._hcalory_fuel_reply = None
+        self._session_fuel = SessionFuel()
         self._feaa_command_lock = asyncio.Lock()
+        self._cbff_metadata_requested = False
         self._heatgenie_status_event = asyncio.Event()
         self._heatgenie_command_lock = asyncio.Lock()
         self._heatgenie_last_status_at = 0.0
@@ -393,6 +408,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         )
 
     @property
+    def supports_cbff_ventilation(self) -> bool:
+        """Mirror Sunster's mainboard-type ventilation capability."""
+        return self._protocol_mode == 6 and self.data.get("cbff_mainboard_type") in (1, 11, 21)
+
+    @property
     def cronus_fuel_profile(self) -> dict[str, object] | None:
         """Return the selected profile when it matches the connected Cronus type."""
         if self._protocol_mode != 9:
@@ -543,6 +563,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         try:
             data = await self._store.async_load()
             if data:
+                self._session_fuel = SessionFuel.restore(data.get("hcalory_session_fuel"))
+                self._hcalory_refuel_rebase = data.get("hcalory_refuel_rebase") is True
                 # Load fuel consumption data
                 self._total_fuel_consumed = data.get(STORAGE_KEY_TOTAL_FUEL, 0.0)
                 self._daily_fuel_consumed = data.get(STORAGE_KEY_DAILY_FUEL, 0.0)
@@ -929,10 +951,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             # Send the offset command to the heater
             await self.async_set_heater_offset(new_offset)
 
-    async def async_save_data(self) -> None:
+    async def async_save_data(self) -> bool:
         """Save persistent fuel consumption, runtime data, and settings."""
         try:
             data = {
+                "hcalory_session_fuel": self._fuel_session().payload(),
+                "hcalory_refuel_rebase": getattr(self, "_hcalory_refuel_rebase", False),
                 # Fuel data
                 STORAGE_KEY_TOTAL_FUEL: self._total_fuel_consumed,
                 STORAGE_KEY_DAILY_FUEL: self._daily_fuel_consumed,
@@ -959,8 +983,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 len(self._daily_runtime_history),
                 self.data.get("auto_offset_enabled", False)
             )
+            return True
         except Exception as err:
             self._logger.warning("Could not save data: %s", err)
+        return False
 
     def _clean_old_history(self) -> None:
         """Remove history entries older than MAX_HISTORY_DAYS."""
@@ -1204,13 +1230,91 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             return 0.0
         return float(profile.get(mode, profile["heating"]))
 
+    def _fuel_session(self) -> SessionFuel:
+        if not isinstance(getattr(self, "_session_fuel", None), SessionFuel):
+            self._session_fuel = SessionFuel()
+        return self._session_fuel
+
+    def _supports_hcalory_fuel(self) -> bool:
+        return self._protocol_mode == 7 and getattr(self, "_hcalory_variant", None) == HcaloryVariant.MVP3_3
+
+    def _hcalory_lock(self) -> asyncio.Lock:
+        if not isinstance(getattr(self, "_hcalory_command_lock", None), asyncio.Lock):
+            self._hcalory_command_lock = asyncio.Lock()
+        return self._hcalory_command_lock
+
+    async def _read_hcalory_fuel(self) -> dict[str, int] | None:
+        """Optional read shares the command lock; failure never takes status offline."""
+        if not self._supports_hcalory_fuel() or self._stopping:
+            return None
+        async with self._hcalory_lock():
+            if not self._client or not self._client.is_connected or self._stopping:
+                return None
+            self._hcalory_fuel_event = asyncio.Event()
+            self._hcalory_fuel_reply = None
+            self._hcalory_fuel_waiting = True
+            try:
+                # Bound the whole optional transaction, including a hung GATT write.
+                async with asyncio.timeout(1.5):
+                    await self._write_gatt(ProtocolHcalory.build_fuel_query())
+                    await self._hcalory_fuel_event.wait()
+                return self._hcalory_fuel_reply
+            except Exception as err:
+                self._logger.debug("Optional Hcalory fuel report unavailable: %s", err)
+                return None
+            finally:
+                self._hcalory_fuel_waiting = False
+
+    def _consume_hcalory_fuel(self, report: dict[str, int] | None) -> float | None:
+        """Use a confirmed session counter instead of double-counting generic fuel."""
+        if not self._supports_hcalory_fuel():
+            return None
+        tracker = self._fuel_session()
+        before = tracker.payload()
+        tracker.observe_status(self.data.get("hcalory_status") == 0)
+        self.data["hcalory_fuel_report_available"] = report is not None
+        if report is None:
+            if tracker.active:
+                self.data["fuel_estimate_source"] = "controller_session"
+                self.data["hcalory_session_runtime_minutes"] = tracker.minutes
+                self.data["hcalory_session_fuel_litres"] = tracker.centilitres / 100
+            self._session_fuel_dirty = getattr(self, "_session_fuel_dirty", False) or before != tracker.payload()
+            return 0.0 if tracker.active else None
+        minutes, fuel = report["session_runtime_minutes"], report["session_fuel_centilitres"]
+        delta = tracker.accept(minutes, fuel)
+        self._session_fuel_dirty = getattr(self, "_session_fuel_dirty", False) or before != tracker.payload()
+        if (getattr(self, "_hcalory_refuel_rebase", False)
+                and tracker.minutes == minutes and tracker.centilitres == fuel):
+            self._session_skip_refuel_delta = True
+            self._hcalory_refuel_rebase = False
+        self.data["hcalory_session_runtime_minutes"] = tracker.minutes
+        self.data["hcalory_session_fuel_litres"] = tracker.centilitres / 100
+        self.data["fuel_estimate_source"] = "controller_session"
+        return delta / 100 if delta is not None else None
+
+    def _level_fuel_rate(self, level: int) -> float:
+        """Apply only this heater's local level-table overrides."""
+        entry = getattr(self, "config_entry", None)
+        return fuel_rate_for_level(
+            level, getattr(entry, "data", {}).get(CONF_FUEL_RATES)
+        )
+
     def _calculate_fuel_consumption(self, elapsed_seconds: float) -> float:
         """Calculate fuel consumed based on power level and elapsed time.
 
         Returns fuel consumed in liters.
         """
+        if self._supports_hcalory_fuel():
+            delta = getattr(self, "_session_fuel_delta", None)
+            if delta is not None:
+                self._session_fuel_delta = 0.0
+                return delta
+            if self._fuel_session().active:
+                return 0.0
         # Only consume fuel when actually running.
-        if not self._is_running_for_tracking():
+        if not self._is_running_for_tracking() or (
+            self._protocol_mode == 6 and self.data.get("running_mode") == RUNNING_MODE_VENTILATION
+        ):
             return 0.0
 
         if self._protocol_mode == 9:
@@ -1237,7 +1341,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if power_level is None:
             power_level = 1  # Fallback to minimum
 
-        consumption_rate = FUEL_CONSUMPTION_TABLE.get(power_level, 0.16)  # L/h
+        consumption_rate = self._level_fuel_rate(power_level)  # L/h
 
         # Calculate fuel consumed in this interval
         hours_elapsed = elapsed_seconds / 3600.0
@@ -1252,7 +1356,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if fuel_consumed > 0:
             self._total_fuel_consumed += fuel_consumed
             self._daily_fuel_consumed += fuel_consumed
-            self._fuel_consumed_since_reset += fuel_consumed
+            if not getattr(self, "_session_skip_refuel_delta", False):
+                self._fuel_consumed_since_reset += fuel_consumed
+        self._session_skip_refuel_delta = False
 
         # Calculate instantaneous consumption rate.
         warm_drive_rate = self._warm_drive_fuel_rate()
@@ -1275,9 +1381,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
             hourly_consumption = (
                 FUEL_CONSUMPTION_TABLE.get(power_level, 0.16)
-                if self._is_running_for_tracking()
+                if self._is_running_for_tracking() and not (
+                    self._protocol_mode == 6 and self.data.get("running_mode") == RUNNING_MODE_VENTILATION
+                )
                 else 0.0
             )
+
+            if hourly_consumption > 0:
+                hourly_consumption = self._level_fuel_rate(power_level)
 
         # Update data dictionary
         self.data["hourly_fuel_consumption"] = round(hourly_consumption, 2)
@@ -1297,8 +1408,21 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         remaining = tank_capacity - self._fuel_consumed_since_reset
         self.data["fuel_remaining"] = round(max(0.0, remaining), 2)
 
+    async def _account_before_refuel(self) -> None:
+        if not self._supports_hcalory_fuel() or not self._fuel_session().active:
+            return
+        report = await self._read_hcalory_fuel()
+        if report is not None:
+            await self._check_daily_reset()
+            self._session_fuel_delta = self._consume_hcalory_fuel(report)
+            self._update_fuel_tracking(0)
+        else:
+            # Exact split is unknown; do not assign pre-refuel fuel to the new tank.
+            self._hcalory_refuel_rebase = True
+
     async def async_reset_fuel_level(self) -> None:
         """Reset fuel level tracking (called when user refuels)."""
+        await self._account_before_refuel()
         self._fuel_consumed_since_reset = 0.0
         self.data["fuel_consumed_since_reset"] = 0.0
         self.data["last_refueled"] = dt_util.now().isoformat()
@@ -1334,6 +1458,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         # Clamp value between 0 and capacity
         current_level = max(0, min(capacity, current_level))
+
+        await self._account_before_refuel()
 
         # Calculate new consumed: capacity - current_level
         new_consumed = round(capacity - current_level, 2)
@@ -1737,6 +1863,19 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 self._consecutive_failures = 0
                 self._save_valid_data()
 
+                if (
+                    self._protocol_mode == 6
+                    and isinstance(self._protocol, ProtocolCBFF)
+                    and self.data.get("cbff_mainboard_type") is not None
+                    and not getattr(self, "_cbff_metadata_requested", False)
+                ):
+                    self._cbff_metadata_requested = True
+                    try:
+                        async with self._feaa_command_lock:
+                            await self._read_cbff_metadata_unlocked()
+                    except Exception as err:
+                        self._logger.debug("CBFF metadata read failed: %s", err)
+
                 # Identify the protocol from the first status response before
                 # attempting any optional protocol-specific initialization.
                 # Sunster FEAA uses a distinct 03/01 settings packet, never
@@ -1771,8 +1910,19 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 elapsed_seconds = current_time - self._last_update_time
                 self._last_update_time = current_time
 
+                report = None
+                if self._supports_hcalory_fuel():
+                    if connected_this_update:
+                        self._fuel_session().observe_connection()
+                    report = await self._read_hcalory_fuel()
+                if self._supports_hcalory_fuel():
+                    await self._check_daily_reset()
+                self._session_fuel_delta = self._consume_hcalory_fuel(report)
                 self._update_fuel_tracking(elapsed_seconds)
                 self._update_runtime_tracking(elapsed_seconds)
+
+                if getattr(self, "_session_fuel_dirty", False) and await self.async_save_data():
+                    self._session_fuel_dirty = False
 
                 # Save data periodically (every 5 minutes)
                 if current_time - self._last_save_time >= 300:
@@ -1805,6 +1955,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if self._client and self._client.is_connected:
             self._connection_attempts = 0  # Reset on successful connection
             return
+
+        # A new connection must read its own metadata, even after cancelled cleanup.
+        self._cbff_metadata_requested = False
 
         # Clean up any stale client before attempting new connection
         await self._cleanup_connection()
@@ -2377,6 +2530,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self.data.update(
             {
                 "connected": True,
+                "error_code": data[4] - 1 if data[4] > 1 else data[4],
                 "supply_voltage": data[6] / 10.0,
                 "set_temp": float(data[15]),
                 "cab_temperature": float(data[35]),
@@ -2504,6 +2658,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._notification_data = data
             return
 
+        if self._supports_hcalory_fuel() and len(data) > 8 and data[8] == 0x14:
+            report = ProtocolHcalory.parse_fuel_response(data)
+            if report is not None and getattr(self, "_hcalory_fuel_waiting", False):
+                self._hcalory_fuel_reply = report
+                self._hcalory_fuel_event.set()
+            return
+
         if isinstance(self._protocol, ProtocolHcalory):
             auth_result = self._protocol.parse_password_response(data)
             if auth_result is not None:
@@ -2530,6 +2691,18 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     self._logger.info("Sunster V2.1 handshake authenticated")
                 else:
                     self._logger.warning("Sunster V2.1 handshake rejected by heater")
+                return
+
+        if isinstance(protocol, ProtocolCBFF):
+            metadata = protocol.parse_metadata_response(parse_data)
+            if metadata is not None:
+                self.data.update(metadata)
+                self._notification_data = data
+                return
+            settings = protocol.parse_settings_response(parse_data)
+            if settings is not None:
+                self.data.update(settings)
+                self._notification_data = data
                 return
 
         if isinstance(protocol, ProtocolCBFF) and protocol.is_control_response(parse_data):
@@ -2566,6 +2739,19 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         if parsed is None:
             return
+
+        if protocol.protocol_mode == 7:
+            discovery = bluetooth.async_last_service_info(
+                self.hass, self.address, connectable=True
+            )
+            if discovery:
+                self._hcalory_error_extended = uses_extended_error_codes(
+                    getattr(self, "_hcalory_variant", None), discovery.manufacturer_data
+                )
+            parsed["hcalory_error_extended"] = (
+                getattr(self, "_hcalory_error_extended", False)
+                or getattr(self, "_hcalory_variant", None) == HcaloryVariant.MVP3_3
+            )
 
         # CBFF decryption status logging
         if parsed.pop("_cbff_decrypted", False):
@@ -2618,6 +2804,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         # Only a validated status may replace the selected protocol.
         self._protocol_mode = protocol.protocol_mode
         self._protocol = protocol
+        # Fault metadata belongs to this report, not a formerly selected family.
+        if "error_code" in parsed:
+            for field in (
+                "error_family", "error_code_raw", "error_display_raw",
+                "error_detail_raw", "hcalory_error_extended",
+            ):
+                self.data.pop(field, None)
         self.data.update(parsed)
 
         # Beta.34: Keep temperatures in native unit (no F→C conversion for Hcalory)
@@ -3395,8 +3588,17 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
     async def _send_command(self, command: int, argument: int, timeout: float = 5.0, max_retries: int = 1) -> bool:
         """Serialize protocol-specific commands."""
+        if self._protocol_mode == 7:
+            async with self._hcalory_lock():
+                return await self._send_command_unlocked(command, argument, timeout, max_retries)
         if self._protocol_mode == 6:
             async with self._feaa_command_lock:
+                if command in (14, 15, 16, 17, 18, 19, 20, 21) and isinstance(self._protocol, ProtocolCBFF):
+                    try:
+                        return await self._send_cbff_setting_unlocked(command, argument, timeout, max_retries)
+                    except Exception as err:
+                        self._logger.warning("CBFF settings transaction failed: %s", err)
+                        return False
                 return await self._send_command_unlocked(
                     command, argument, timeout, max_retries
                 )
@@ -3475,16 +3677,73 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         finally:
             self._heatgenie_pending_button = None
 
+    async def _read_cbff_metadata_unlocked(self) -> bool:
+        """Read language capabilities, as the app does on its attributes page."""
+        protocol = self._protocol
+        if not isinstance(protocol, ProtocolCBFF):
+            return False
+        if self.data.get("cbff_language_mask") is not None:
+            return True
+        self._notification_data = None
+        await self._write_gatt(protocol.build_metadata_query())
+        for _ in range(100):
+            await asyncio.sleep(0.05)
+            if self.data.get("cbff_language_mask") is not None:
+                return True
+        return False
+
+    async def _read_cbff_settings_unlocked(self) -> bool:
+        """Require a fresh full attribute reply rather than a status or bare ACK."""
+        protocol = self._protocol
+        if not isinstance(protocol, ProtocolCBFF):
+            return False
+        revision = protocol.attribute_revision
+        self._notification_data = None
+        await self._write_gatt(protocol.build_settings_query())
+        for _ in range(100):
+            await asyncio.sleep(0.05)
+            if protocol.attribute_revision != revision:
+                return True
+        return False
+
+    async def _send_cbff_setting_unlocked(
+        self, command: int, argument: int, timeout: float, max_retries: int
+    ) -> bool:
+        """Keep read/modify/write/readback within the FEAA transaction lock."""
+        protocol = self._protocol
+        if not isinstance(protocol, ProtocolCBFF):
+            return False
+        if protocol._v21_settings is None:
+            return False
+        if command == 14:
+            if not await self._read_cbff_metadata_unlocked():
+                return False
+            mask = self.data["cbff_language_mask"]
+            if argument != 0 and not (1 <= argument <= 8 and mask & (1 << (argument - 1))):
+                return False
+        if not await self._read_cbff_settings_unlocked():
+            return False
+        if not await self._send_command_unlocked(command, argument, timeout, max_retries):
+            return False
+        if not await self._read_cbff_settings_unlocked():
+            return False
+        index = {19: 0, 15: 1, 20: 4, 14: 5, 16: 6, 17: 7, 21: 8, 18: 12}[command]
+        snapshot = protocol._v21_settings
+        assert snapshot is not None
+        expected = argument & 0xFF
+        if command in (15, 19) and snapshot[index] in (128, 129):
+            expected = 128 + int(bool(argument))
+        return snapshot[index] == expected
+
     async def _send_v21_time_sync(self, now: datetime) -> bool:
         """Send the APK-defined FEAA 03/01 time-settings write."""
         if not isinstance(self._protocol, ProtocolCBFF):
             return False
-        packet = self._protocol.build_v21_time_sync(now)
-        if packet is None:
-            self._logger.warning("Sunster V2.1 time sync skipped: no status settings available")
-            return False
-
         async with self._feaa_command_lock:
+            packet = self._protocol.build_v21_time_sync(now)
+            if packet is None:
+                self._logger.warning("Sunster V2.1 time sync skipped: no status settings available")
+                return False
             self._notification_data = None
             await self._write_gatt(packet)
             for _ in range(100):
@@ -4309,13 +4568,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     await self.async_request_refresh()
                 return success
 
-            if not self.supports_aa66_ventilation:
+            if not (self.supports_aa66_ventilation or self.supports_cbff_ventilation):
                 self._logger.warning(
                     "Ventilation mode is not advertised by this controller"
                 )
                 return False
 
-            self._logger.info("Activating ventilation mode (AA66 set-mode 3)")
+            self._logger.info("Selecting ventilation mode (capability-gated set-mode 3)")
             success = await self._send_command(2, RUNNING_MODE_VENTILATION)
             if success:
                 await self._refresh_after_control_command()
@@ -4516,7 +4775,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._logger.info("🗣️ Setting language to %d (cmd 14)", language)
         success = await self._send_command(14, language)
         if success:
-            self.data["language"] = language
+            if self._protocol_mode != 6:
+                self.data["language"] = language
             self._logger.info("✅ Language set to %d", language)
             await self.async_request_refresh()
         else:

@@ -93,3 +93,9 @@ remove that compatibility path from already supported heaters.
 
 On a legacy short status payload without byte37, the temperature unit defaults
 to Celsius. The trailing checksum is not an optional unit field.
+
+## MVP3_3 fuel statistics
+
+The APK exposes a separate DPID14 current-session runtime/fuel report for MVP3_3.
+See [fuel accounting](FUEL.md#hcalory-mvp3_3-session-report) for units, reset handling,
+persistence, optional-read behavior and the distinction from generic hourly estimates.

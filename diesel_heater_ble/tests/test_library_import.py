@@ -105,11 +105,11 @@ class TestLibraryConstants:
 
     def test_error_names(self):
         assert ERROR_NAMES[0] == "No fault"
-        assert len(ERROR_NAMES) == 11
+        assert len(ERROR_NAMES) == 13
 
     def test_abba_error_names(self):
         assert ABBA_ERROR_NAMES[0] == "No fault"
-        assert 192 in ABBA_ERROR_NAMES  # CO alarm
+        assert 11 in ABBA_ERROR_NAMES  # CO alarm
 
 
 class TestLibraryParity:

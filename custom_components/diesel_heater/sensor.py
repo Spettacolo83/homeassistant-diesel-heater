@@ -23,10 +23,9 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import VevorHeaterConfigEntry
+from .faults import error_name
 from .const import (
     DOMAIN,
-    WARM_DRIVE_ERROR_NAMES,
-    ERROR_NAMES,
     RUNNING_MODE_NAMES,
     RUNNING_STEP_NAMES,
     CONF_NEO_CONTROLLER_TYPE,
@@ -529,11 +528,7 @@ class VevorErrorCodeSensor(VevorSensorBase):
     @property
     def native_value(self) -> str | None:
         """Return the state."""
-        error = self.coordinator.data.get("error_code", 0)
-        names = WARM_DRIVE_ERROR_NAMES if (
-            self.coordinator.is_warm_drive_controller
-        ) else ERROR_NAMES
-        return names.get(error, f"Unknown error ({error})")
+        return error_name(self.coordinator)
 
 
 # Fuel consumption sensors
@@ -555,6 +550,14 @@ class VevorHourlyFuelConsumptionSensor(VevorSensorBase):
     def native_value(self) -> float | None:
         """Return the state."""
         return self.coordinator.data.get("hourly_fuel_consumption")
+
+
+    @property
+    def extra_state_attributes(self) -> dict | None:
+        """Do not imply a coarse session counter is an instantaneous flow meter."""
+        if self.coordinator.data.get("fuel_estimate_source") == "controller_session":
+            return {"estimate_basis": "level_table"}
+        return None
 
 
 class VevorDailyFuelConsumedSensor(VevorSensorBase):
@@ -591,6 +594,20 @@ class VevorTotalFuelConsumedSensor(VevorSensorBase):
     def native_value(self) -> float | None:
         """Return the state."""
         return self.coordinator.data.get("total_fuel_consumed")
+
+
+    @property
+    def extra_state_attributes(self) -> dict | None:
+        """Identify the supported controller's session-derived accumulated estimate."""
+        data = self.coordinator.data
+        if data.get("fuel_estimate_source") != "controller_session":
+            return None
+        return {
+            "estimate_basis": "controller_session",
+            "session_estimated_fuel": data.get("hcalory_session_fuel_litres"),
+            "session_runtime_minutes": data.get("hcalory_session_runtime_minutes"),
+            "report_available": data.get("hcalory_fuel_report_available", False),
+        }
 
 
 class VevorDailyFuelHistorySensor(VevorSensorBase):
