@@ -1540,6 +1540,7 @@ class TestProtocolCBFF:
 
         assert self.proto.parse(data) == {
             "connected": True, "cbff_protocol_version": 1,
+            "cbff_mainboard_type": 0,
             "running_state": 1, "running_step": 3, "running_mode": 2,
             "set_temp": 25, "set_level": 7, "error_code": 3,
             "temp_unit": 1, "cab_temperature": -5.0, "altitude_unit": 1,
@@ -1563,6 +1564,7 @@ class TestProtocolCBFF:
 
         assert self.proto.parse(data) == {
             "connected": True, "cbff_protocol_version": 0,
+            "cbff_mainboard_type": 1,
             "running_state": 0, "running_step": 0, "running_mode": 0,
             "set_temp": 0, "error_code": 0, "temp_unit": 0,
             "cab_temperature": 19.0, "altitude_unit": 1, "altitude": 330.0,

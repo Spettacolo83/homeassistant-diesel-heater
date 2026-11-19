@@ -13,6 +13,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from . import VevorHeaterConfigEntry
 from .const import (
     BACKLIGHT_OPTIONS,
+    CBFF_LANGUAGE_OPTIONS,
     DOMAIN,
     HIGH_ALTITUDE_MODE_OPTIONS,
     LANGUAGE_OPTIONS,
@@ -173,6 +174,9 @@ class VevorHeaterModeSelect(SelectEntity):
         elif (
             self.coordinator.protocol_mode == 4
             and self.coordinator.supports_aa66_ventilation
+        ) or (
+            self.coordinator.protocol_mode == 6
+            and self.coordinator.supports_cbff_ventilation
         ):
             base_options.append(RUNNING_MODE_NAMES[RUNNING_MODE_VENTILATION])
 
@@ -249,32 +253,55 @@ class VevorHeaterLanguageSelect(SelectEntity):
         self._attr_unique_id = f"{coordinator.address}_language"
 
     @property
+    def options(self) -> list[str]:
+        """Return the family-specific, currently supported language choices."""
+        if self.coordinator.protocol_mode != 6:
+            return list(LANGUAGE_OPTIONS.values())
+        mask = self.coordinator.data.get("cbff_language_mask")
+        if type(mask) is int and 0 <= mask <= 0xFFFF:
+            return [
+                name for code, name in CBFF_LANGUAGE_OPTIONS.items()
+                if code == 0 or mask & (1 << (code - 1))
+            ]
+        # Before metadata arrives, only echo a valid observed value or turn off.
+        current = self.coordinator.data.get("language")
+        return [
+            name for code, name in CBFF_LANGUAGE_OPTIONS.items()
+            if code == 0 or code == current
+        ]
+
+    @property
     def available(self) -> bool:
-        """Return if entity is available."""
+        """Return whether the controller exposes a usable language setting."""
+        if self.coordinator.protocol_mode == 6:
+            return (
+                self.coordinator.data.get("connected", False)
+                and self.coordinator.data.get("language") in CBFF_LANGUAGE_OPTIONS
+            )
         return self.coordinator.data.get("connected", False)
 
     @property
     def current_option(self) -> str | None:
-        """Return the current language."""
+        """Return the current language using this controller's mapping."""
         language_code = self.coordinator.data.get("language")
+        if self.coordinator.protocol_mode == 6:
+            return CBFF_LANGUAGE_OPTIONS.get(language_code)
         if language_code is not None:
             return LANGUAGE_OPTIONS.get(language_code, f"Unknown ({language_code})")
         return None
 
     async def async_select_option(self, option: str) -> None:
-        """Change the language."""
-        # Find the language code for the selected option
-        language_code = None
-        for code, name in LANGUAGE_OPTIONS.items():
-            if name == option:
-                language_code = code
-                break
-
-        if language_code is not None:
-            _LOGGER.info("Changing language to: %s (code: %d)", option, language_code)
-            await self.coordinator.async_set_language(language_code)
-        else:
-            _LOGGER.error("Unknown language: %s", option)
+        """Change language only when the current options permit it."""
+        if option not in self.options:
+            _LOGGER.error("Unavailable language option: %s", option)
+            return
+        if self.coordinator.protocol_mode == 6 and not self.available:
+            _LOGGER.error("CBFF language setting unavailable")
+            return
+        mapping = CBFF_LANGUAGE_OPTIONS if self.coordinator.protocol_mode == 6 else LANGUAGE_OPTIONS
+        language_code = next(code for code, name in mapping.items() if name == option)
+        _LOGGER.info("Changing language to: %s (code: %d)", option, language_code)
+        await self.coordinator.async_set_language(language_code)
 
     async def async_added_to_hass(self) -> None:
         """When entity is added to hass."""

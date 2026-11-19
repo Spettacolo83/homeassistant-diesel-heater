@@ -275,7 +275,7 @@ The common and extended entity tables below are scoped by this matrix. A control
 | AA55 Encrypted | Baseline, Temperature Offset, Backlight, and Timer | No Language, Pump Type, Tank Volume, or unit switches |
 | AA66 Encrypted | Baseline, Temperature Offset, Backlight, Timer, Language, Pump Type, Tank Volume, Auto Start/Stop, Temperature Unit, Altitude Unit, and controller-advertised ventilation | Extended telemetry and ventilation are limited to the reported controller fields |
 | ABBA / HeaterCC | Baseline, Auto Start/Stop, Temperature Unit, Altitude Unit, High Altitude, and ventilation when the controller supports it | Level changes are relative controller steps; no timer, component bits, or intake/outlet probes |
-| CBFF / Sunster | Baseline, extended telemetry, Language, Pump Type, Tank Volume, Auto Start/Stop, Temperature Unit, Altitude Unit, and CBFF diagnostics | No component bits or intake/outlet probes |
+| CBFF / Sunster | Baseline, extended telemetry, controller-supported Language, Pump Type, Tank Volume, Auto Start/Stop, Temperature Unit, Altitude Unit, controller-advertised ventilation, and CBFF diagnostics | No component bits or intake/outlet probes |
 | Hcalory MVP1/MVP2 | Baseline except Altitude, plus Auto Start/Stop, Temperature Unit, and the three-position High Altitude Mode select | No auto-offset, timer, component bits, or intake/outlet probes |
 | Webasto Cronus | ThermoConnect Mode, controller-specific temperatures and durations, Continuous Run, and Interlock | Air and water capabilities differ; see the Cronus section below |
 | HeatGenie / Boygu | Baseline, Temperature Unit, optional Intake/Outlet Temperature, and Fuel Pump/Fan/Glow Plug binary sensors | No auto-offset, timer, or controller configuration selects |
@@ -650,6 +650,11 @@ This integration communicates via Bluetooth LE and supports nine protocol modes 
 | 192 | EC0 - Carbon monoxide alarm |
 
 ### CBFF Protocol (Sunster heaters)
+
+Ventilation is available when the controller reports a supported mainboard type.
+Selecting it preserves the heater’s on/off state; fan-level changes remain in ventilation mode.
+Language choices follow the Sunster controller’s reported capabilities.
+See the [CBFF protocol reference](docs/protocols/CBFF.md) for the controller-specific mappings.
 
 - **Service UUID**: `0000fff0-0000-1000-8000-00805f9b34fb`
 - **Write UUID**: `0000fff2` / **Notify UUID**: `0000fff1`

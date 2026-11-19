@@ -234,6 +234,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._v21_handshake_event = asyncio.Event()
         self._v21_handshake_authenticated: bool | None = None
         self._feaa_command_lock = asyncio.Lock()
+        self._cbff_metadata_requested = False
         self._heatgenie_status_event = asyncio.Event()
         self._heatgenie_command_lock = asyncio.Lock()
         self._heatgenie_last_status_at = 0.0
@@ -391,6 +392,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         return self.data.get("motherboard_version") in (3, 4, 5) or (
             self.data.get("running_mode") == RUNNING_MODE_VENTILATION
         )
+
+    @property
+    def supports_cbff_ventilation(self) -> bool:
+        """Mirror Sunster's mainboard-type ventilation capability."""
+        return self._protocol_mode == 6 and self.data.get("cbff_mainboard_type") in (1, 11, 21)
 
     @property
     def cronus_fuel_profile(self) -> dict[str, object] | None:
@@ -1210,7 +1216,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         Returns fuel consumed in liters.
         """
         # Only consume fuel when actually running.
-        if not self._is_running_for_tracking():
+        if not self._is_running_for_tracking() or (
+            self._protocol_mode == 6 and self.data.get("running_mode") == RUNNING_MODE_VENTILATION
+        ):
             return 0.0
 
         if self._protocol_mode == 9:
@@ -1275,7 +1283,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
             hourly_consumption = (
                 FUEL_CONSUMPTION_TABLE.get(power_level, 0.16)
-                if self._is_running_for_tracking()
+                if self._is_running_for_tracking() and not (
+                    self._protocol_mode == 6 and self.data.get("running_mode") == RUNNING_MODE_VENTILATION
+                )
                 else 0.0
             )
 
@@ -1737,6 +1747,19 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 self._consecutive_failures = 0
                 self._save_valid_data()
 
+                if (
+                    self._protocol_mode == 6
+                    and isinstance(self._protocol, ProtocolCBFF)
+                    and self.data.get("cbff_mainboard_type") is not None
+                    and not getattr(self, "_cbff_metadata_requested", False)
+                ):
+                    self._cbff_metadata_requested = True
+                    try:
+                        async with self._feaa_command_lock:
+                            await self._read_cbff_metadata_unlocked()
+                    except Exception as err:
+                        self._logger.debug("CBFF metadata read failed: %s", err)
+
                 # Identify the protocol from the first status response before
                 # attempting any optional protocol-specific initialization.
                 # Sunster FEAA uses a distinct 03/01 settings packet, never
@@ -1805,6 +1828,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if self._client and self._client.is_connected:
             self._connection_attempts = 0  # Reset on successful connection
             return
+
+        # A new connection must read its own metadata, even after cancelled cleanup.
+        self._cbff_metadata_requested = False
 
         # Clean up any stale client before attempting new connection
         await self._cleanup_connection()
@@ -2530,6 +2556,18 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     self._logger.info("Sunster V2.1 handshake authenticated")
                 else:
                     self._logger.warning("Sunster V2.1 handshake rejected by heater")
+                return
+
+        if isinstance(protocol, ProtocolCBFF):
+            metadata = protocol.parse_metadata_response(parse_data)
+            if metadata is not None:
+                self.data.update(metadata)
+                self._notification_data = data
+                return
+            settings = protocol.parse_settings_response(parse_data)
+            if settings is not None:
+                self.data.update(settings)
+                self._notification_data = data
                 return
 
         if isinstance(protocol, ProtocolCBFF) and protocol.is_control_response(parse_data):
@@ -3397,6 +3435,12 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """Serialize protocol-specific commands."""
         if self._protocol_mode == 6:
             async with self._feaa_command_lock:
+                if command in (14, 15, 16, 17, 18, 19, 20, 21) and isinstance(self._protocol, ProtocolCBFF):
+                    try:
+                        return await self._send_cbff_setting_unlocked(command, argument, timeout, max_retries)
+                    except Exception as err:
+                        self._logger.warning("CBFF settings transaction failed: %s", err)
+                        return False
                 return await self._send_command_unlocked(
                     command, argument, timeout, max_retries
                 )
@@ -3475,16 +3519,73 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         finally:
             self._heatgenie_pending_button = None
 
+    async def _read_cbff_metadata_unlocked(self) -> bool:
+        """Read language capabilities, as the app does on its attributes page."""
+        protocol = self._protocol
+        if not isinstance(protocol, ProtocolCBFF):
+            return False
+        if self.data.get("cbff_language_mask") is not None:
+            return True
+        self._notification_data = None
+        await self._write_gatt(protocol.build_metadata_query())
+        for _ in range(100):
+            await asyncio.sleep(0.05)
+            if self.data.get("cbff_language_mask") is not None:
+                return True
+        return False
+
+    async def _read_cbff_settings_unlocked(self) -> bool:
+        """Require a fresh full attribute reply rather than a status or bare ACK."""
+        protocol = self._protocol
+        if not isinstance(protocol, ProtocolCBFF):
+            return False
+        revision = protocol.attribute_revision
+        self._notification_data = None
+        await self._write_gatt(protocol.build_settings_query())
+        for _ in range(100):
+            await asyncio.sleep(0.05)
+            if protocol.attribute_revision != revision:
+                return True
+        return False
+
+    async def _send_cbff_setting_unlocked(
+        self, command: int, argument: int, timeout: float, max_retries: int
+    ) -> bool:
+        """Keep read/modify/write/readback within the FEAA transaction lock."""
+        protocol = self._protocol
+        if not isinstance(protocol, ProtocolCBFF):
+            return False
+        if protocol._v21_settings is None:
+            return False
+        if command == 14:
+            if not await self._read_cbff_metadata_unlocked():
+                return False
+            mask = self.data["cbff_language_mask"]
+            if argument != 0 and not (1 <= argument <= 8 and mask & (1 << (argument - 1))):
+                return False
+        if not await self._read_cbff_settings_unlocked():
+            return False
+        if not await self._send_command_unlocked(command, argument, timeout, max_retries):
+            return False
+        if not await self._read_cbff_settings_unlocked():
+            return False
+        index = {19: 0, 15: 1, 20: 4, 14: 5, 16: 6, 17: 7, 21: 8, 18: 12}[command]
+        snapshot = protocol._v21_settings
+        assert snapshot is not None
+        expected = argument & 0xFF
+        if command in (15, 19) and snapshot[index] in (128, 129):
+            expected = 128 + int(bool(argument))
+        return snapshot[index] == expected
+
     async def _send_v21_time_sync(self, now: datetime) -> bool:
         """Send the APK-defined FEAA 03/01 time-settings write."""
         if not isinstance(self._protocol, ProtocolCBFF):
             return False
-        packet = self._protocol.build_v21_time_sync(now)
-        if packet is None:
-            self._logger.warning("Sunster V2.1 time sync skipped: no status settings available")
-            return False
-
         async with self._feaa_command_lock:
+            packet = self._protocol.build_v21_time_sync(now)
+            if packet is None:
+                self._logger.warning("Sunster V2.1 time sync skipped: no status settings available")
+                return False
             self._notification_data = None
             await self._write_gatt(packet)
             for _ in range(100):
@@ -4309,13 +4410,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     await self.async_request_refresh()
                 return success
 
-            if not self.supports_aa66_ventilation:
+            if not (self.supports_aa66_ventilation or self.supports_cbff_ventilation):
                 self._logger.warning(
                     "Ventilation mode is not advertised by this controller"
                 )
                 return False
 
-            self._logger.info("Activating ventilation mode (AA66 set-mode 3)")
+            self._logger.info("Selecting ventilation mode (capability-gated set-mode 3)")
             success = await self._send_command(2, RUNNING_MODE_VENTILATION)
             if success:
                 await self._refresh_after_control_command()
@@ -4516,7 +4617,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._logger.info("🗣️ Setting language to %d (cmd 14)", language)
         success = await self._send_command(14, language)
         if success:
-            self.data["language"] = language
+            if self._protocol_mode != 6:
+                self.data["language"] = language
             self._logger.info("✅ Language set to %d", language)
             await self.async_request_refresh()
         else:

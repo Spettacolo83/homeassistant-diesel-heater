@@ -1543,6 +1543,7 @@ class TestProtocolCBFF:
 
         assert self.proto.parse(data) == {
             "connected": True, "cbff_protocol_version": 1,
+            "cbff_mainboard_type": 0,
             "running_state": 1, "running_step": 3, "running_mode": 2,
             "set_temp": 25, "set_level": 7, "error_code": 3,
             "temp_unit": 1, "cab_temperature": -5.0, "altitude_unit": 1,
@@ -1566,6 +1567,7 @@ class TestProtocolCBFF:
 
         assert self.proto.parse(data) == {
             "connected": True, "cbff_protocol_version": 0,
+            "cbff_mainboard_type": 1,
             "running_state": 0, "running_step": 0, "running_mode": 0,
             "set_temp": 0, "error_code": 0, "temp_unit": 0,
             "cab_temperature": 19.0, "altitude_unit": 1, "altitude": 330.0,
@@ -1771,7 +1773,7 @@ class TestProtocolCBFF:
 
         assert packet is not None
         assert packet[6:8] == bytes((0x03, 0x01))
-        assert packet[8:21] == bytes((2, 1, 58, 130, 0, 1, 2, 3, 4, 5, 6, 7, 8))
+        assert packet[8:21] == bytes((2, 1, 58, 130, 234, 10, 14, 3, 4, 5, 6, 7, 8))
 
     def test_v21_time_sync_converts_unit_capability_markers(self):
         """The 03/01 unit bytes use the app's capability conversion."""

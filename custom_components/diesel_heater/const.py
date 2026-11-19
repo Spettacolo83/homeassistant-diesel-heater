@@ -242,6 +242,21 @@ LANGUAGE_OPTIONS: Final = {
     4: "Russian",
 }
 
+# Sunster 2.2.000 app-service.js, offsets 841469-842500:
+# V2.1 macData.js language_contains_markers bits 0-7 enable codes 1-8.
+# Code 0 (Off) is always included; this mapping is distinct from legacy byte 26.
+CBFF_LANGUAGE_OPTIONS: Final = {
+    0: "Off",
+    1: "English",
+    2: "Chinese",
+    3: "Russian",
+    4: "German",
+    5: "Turkish",
+    6: "Korean",
+    7: "French",
+    8: "Polish",
+}
+
 # Temperature unit (byte 27)
 TEMP_UNIT_CELSIUS: Final = 0
 TEMP_UNIT_FAHRENHEIT: Final = 1

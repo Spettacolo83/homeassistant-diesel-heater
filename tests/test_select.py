@@ -31,6 +31,7 @@ def create_mock_coordinator(protocol_mode: int = 1) -> MagicMock:
     coordinator.last_update_success = True
     coordinator.protocol_mode = protocol_mode
     coordinator.supports_aa66_ventilation = False
+    coordinator.supports_cbff_ventilation = False
     coordinator.send_command = AsyncMock(return_value=True)
     coordinator.async_set_mode = AsyncMock()
     coordinator.async_set_language = AsyncMock()
