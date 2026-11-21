@@ -5744,6 +5744,13 @@ class TestBurnoffOnShutdown:
         assert (3, 0) not in [
             call[0] for call in coordinator._send_command.call_args_list
         ]
+        assert coordinator._burnoff.cycle.shutdown_after is True
+        coordinator._burnoff.restore_saved_mode = AsyncMock(return_value=True)
+        coordinator._power_off = AsyncMock()
+        await coordinator._burnoff.try_snapshot_write()
+        coordinator._power_off.assert_awaited_once()
+        assert not coordinator.burnoff_active
+
 
     @pytest.mark.asyncio
     async def test_restore_after_cooldown_ends(self):

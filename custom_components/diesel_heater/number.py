@@ -264,13 +264,12 @@ class VevorHeaterTemperatureNumber(
                 and self.coordinator.data.get("cronus_mode") != "ventilation"
             )
 
-        # Check if in Level mode (RUNNING_MODE_LEVEL = 2)
-        from .const import RUNNING_MODE_LEVEL
-        running_mode = self.coordinator.data.get("running_mode")
-        if running_mode == RUNNING_MODE_LEVEL:
-            return False
+        from .const import RUNNING_MODE_TEMPERATURE, RUNNING_STEP_VENTILATION
 
-        return True
+        return (
+            self.coordinator.data.get("running_mode") == RUNNING_MODE_TEMPERATURE
+            and self.coordinator.data.get("running_step") != RUNNING_STEP_VENTILATION
+        )
 
     @property
     def native_value(self) -> float | None:

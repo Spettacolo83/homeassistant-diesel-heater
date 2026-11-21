@@ -492,6 +492,16 @@ class TestClimateHelperMethods:
         # Should return default (21)
         assert climate._get_comfort_temp() == 21
 
+    def test_presets_convert_celsius_configuration_for_fahrenheit_heater(self):
+        coordinator = create_mock_coordinator()
+        coordinator._heater_uses_fahrenheit = True
+        entry = create_mock_config_entry()
+        entry.data = {"preset_away_temp": 8, "preset_comfort_temp": 21}
+        climate = VevorHeaterClimate(coordinator, entry)
+
+        assert climate._get_away_temp() == 46
+        assert climate._get_comfort_temp() == 70
+
     def test_get_comfort_temp_configured(self):
         """Test _get_comfort_temp returns configured value."""
         coordinator = create_mock_coordinator()
