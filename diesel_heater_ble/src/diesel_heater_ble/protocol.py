@@ -318,6 +318,8 @@ class ProtocolAA55(VevorCommandMixin, HeaterProtocol):
     name = "AA55"
 
     def parse(self, data: bytearray) -> dict[str, Any] | None:
+        if len(data) < 17:
+            return None
         parsed: dict[str, Any] = {}
 
         parsed["running_state"] = _u8_to_number(data[3])
@@ -352,6 +354,8 @@ class ProtocolAA66(VevorCommandMixin, HeaterProtocol):
     name = "AA66"
 
     def parse(self, data: bytearray) -> dict[str, Any] | None:
+        if len(data) < 18:
+            return None
         parsed: dict[str, Any] = {}
 
         parsed["running_state"] = _u8_to_number(data[3])
@@ -704,10 +708,10 @@ class ProtocolCronus(HeaterProtocol):
 
     def parse_records(self, records: dict[str, bytes]) -> dict[str, Any] | None:
         """Normalize a complete Cronus record cache into integration state."""
-        controller_type = self._int(records, "h1_available")
-        if controller_type is None:
+        controller_type = records.get("h1_available")
+        if controller_type not in (b"\x01", b"\x02"):
             return None
-        prefix = "water" if controller_type == 1 else "air"
+        prefix = "water" if controller_type == b"\x01" else "air"
         state = self._int(records, f"{prefix}_state")
         state_real = self._int(records, f"{prefix}_state_real")
         mode = self._int(records, f"{prefix}_mode")

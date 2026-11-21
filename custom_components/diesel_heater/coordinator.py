@@ -789,7 +789,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             if not await self._async_read_cronus_record("h1_available"):
                 raise UpdateFailed("Cronus controller type did not reply")
 
-            is_water = self._cronus_records["h1_available"] == bytes((1,))
+            controller_type = self._cronus_records["h1_available"]
+            if controller_type not in (b"\x01", b"\x02"):
+                raise UpdateFailed("Cronus did not report a supported controller type")
+            is_water = controller_type == b"\x01"
             prefix = "water" if is_water else "air"
             required_records = (
                 f"{prefix}_state", f"{prefix}_state_real", f"{prefix}_mode",
@@ -857,7 +860,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         This compares the heater's internal temperature sensor with an external
         reference sensor and calculates an offset to compensate for any difference.
-        The offset is sent to the heater via BLE command 12, so the heater itself
+        The offset is sent to the heater via BLE command 20, so the heater itself
         uses the corrected temperature for auto-start/stop logic.
 
         The offset is limited by CONF_AUTO_OFFSET_MAX and throttled to avoid
@@ -1894,6 +1897,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                         self._logger.debug("Auto time sync failed (non-critical): %s", sync_err)
                 elif (
                     (connected_this_update or self._protocol_mode == 5)
+                    and self._protocol_mode != 6
                     and self.supports_time_sync
                     and not self._time_synced_this_connection
                 ):
@@ -2471,7 +2475,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     "hot_water_temperature": hot_water_temperature,
                     "water_temperature": water_temperature,
                     "set_temp": self._dz06_neo_display_temperature(data[15]),
-                    "cab_temperature": self._dz06_neo_display_temperature(data[35]),
+                    "cab_temperature": self._dz06_neo_display_temperature(
+                        int.from_bytes(data[35:36], "big", signed=True)
+                    ),
                     "altitude": int.from_bytes(data[32:34], "big"),
                     "neo_run_type": run_type,
                 })
@@ -3195,7 +3201,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             and "write" in write_char.properties
             and "write-without-response" not in write_char.properties
         )
-        await self._client.write_gatt_char(write_char, packet, response=response)
+        async with asyncio.timeout(20):
+            await self._client.write_gatt_char(write_char, packet, response=response)
         self._logger.debug(
             "Sent %d bytes to %s (char %s)",
             len(packet), protocol_name, char_uuid[-4:]
@@ -3379,9 +3386,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                     "Warm Drive %s write sent but 5C16 confirmation failed", action
                 )
                 return False
-            self._logger.debug(
-                "Warm Drive %s: 5C16 confirmation received", action
-            )
+            config = self._warm_drive_board_config
+            if config is None or any(config[index] != value for index, value in overrides.items()):
+                self._logger.warning("Warm Drive %s readback did not match the requested settings", action)
+                return False
         else:  # pragma: no cover - production writes have an active BLE client
             for index, value in overrides.items():
                 self._warm_drive_board_config[index] = value & 0xFF
@@ -3868,6 +3876,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 for i in range(iterations):
                     await asyncio.sleep(0.05)
                     if self._notification_data:
+                        if command not in (0, 1) and self._protocol_mode in (1, 2, 3, 4):
+                            reply = self._notification_data
+                            if self._protocol_mode in (2, 4) and len(reply) == 48:
+                                reply = _decrypt_data(reply)
+                            if len(reply) < 3 or reply[2] != command:
+                                self._notification_data = None
+                                continue
                         if (
                             self._protocol_mode == 6
                             and isinstance(self._protocol, ProtocolCBFF)
@@ -4516,8 +4531,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     async def async_set_cronus_mode(self, mode_name: str) -> None:
         """Set a controller mode exposed by ThermoConnect."""
         controller_type = self.data.get("cronus_controller_type")
-        if self._protocol_mode != 9 or controller_type not in ("air", "water"):
-            self._logger.warning("Cronus mode is unavailable until the controller type is known")
+        if self._protocol_mode != 9 or controller_type != "air":
+            self._logger.warning("Cronus mode changes require an air controller")
             return
         mode_value = {
             "heating": 0,
@@ -5005,7 +5020,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if success:
             await self.async_request_refresh()
 
-    async def async_set_timer_start(self, minutes_from_midnight: int) -> None:
+    async def async_set_timer_start(self, minutes_from_midnight: int) -> bool:
         """Set timer start time (command 11, issue #48).
 
         Only supported on AA55/AA66 encrypted protocols.
@@ -5015,7 +5030,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """
         if self._protocol_mode not in (2, 4):
             self._logger.warning("Timer not supported on protocol mode %d", self._protocol_mode)
-            return
+            return False
 
         # Clamp to valid range
         minutes = max(0, min(1439, minutes_from_midnight))
@@ -5024,8 +5039,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         if success:
             await self.async_request_refresh()
+        return success
 
-    async def async_set_timer_duration(self, minutes: int) -> None:
+
+    async def async_set_timer_duration(self, minutes: int) -> bool:
         """Set timer duration (command 12, issue #48).
 
         Only supported on AA55/AA66 encrypted protocols.
@@ -5035,7 +5052,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """
         if self._protocol_mode not in (2, 4):
             self._logger.warning("Timer not supported on protocol mode %d", self._protocol_mode)
-            return
+            return False
 
         # Clamp to valid range
         minutes = max(0, min(65535, minutes))
@@ -5044,6 +5061,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         if success:
             await self.async_request_refresh()
+        return success
+
 
     async def async_send_raw_command(self, command: int, argument: int) -> bool:
         """Send a raw command to the heater for debugging purposes.
