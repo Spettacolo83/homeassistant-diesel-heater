@@ -1291,9 +1291,9 @@ class ProtocolCBFF(HeaterProtocol):
         elif command == 2:
             if argument == 3:
                 # The APK offers aMode only for these mainboard types. A mode
-                # choice preserves power state; it must not start an off heater.
-                if self._mainboard_type not in (1, 11, 21) or self._last_power_on is None:
-                    raise ValueError("CBFF ventilation requires a supported status snapshot")
+                # choice is only sent while the heater is already on.
+                if self._mainboard_type not in (1, 11, 21) or not self._last_power_on:
+                    raise ValueError("CBFF ventilation selection requires a supported, powered-on controller")
                 param = self._last_fan_level or 1
                 payload = bytes([3, param, 0xFF, 0xFF])
             elif argument == 1:
@@ -1395,11 +1395,19 @@ class ProtocolCBFF(HeaterProtocol):
         if len(data) < 46:
             return None
 
-        # Encrypted FEAA settings also carry a CBFF transport header. They
-        # must not fall through as suspect legacy telemetry.
+        # A decoded FEAA envelope takes precedence over the legacy header.
         envelope = self._decode_feaa_packet(data)
-        if envelope is not None and envelope[6:8] != bytes((0x80, 0)):
-            return None
+        if envelope is not None:
+            if envelope[6:8] != bytes((0x80, 0)) and not self._is_feaa_run_reply(envelope):
+                return None
+            parsed = self._parse_cbff_fields(envelope)
+            if self._is_data_suspect(parsed):
+                return None
+            if envelope is not data:
+                parsed["_cbff_decrypted"] = True
+            self._update_last_state(parsed)
+            self._remember_v21_settings(envelope)
+            return parsed
 
         # Validate the envelope before interpreting plausible-looking fields.
         raw_status = self._is_status_packet(data)
@@ -1468,11 +1476,24 @@ class ProtocolCBFF(HeaterProtocol):
             return None
         return len(packet) > 8 and packet[8] == 0x01
 
+    @staticmethod
+    def _is_feaa_run_reply(packet: bytearray) -> bool:
+        """Recognize Sunster V2.1 power and run-control reply opcodes."""
+        return packet[6] == 0x81 and packet[7] in (0, 1, 2)
+
     def is_control_response(self, data: bytearray) -> bool:
         """Recognize a checksum/length-validated FEAA control/settings reply."""
         packet = self._decode_feaa_packet(data)
         return packet is not None and (
-            (packet[6] == 0x81 and packet[7] in (0, 1))
+            self._is_feaa_run_reply(packet)
+            or (packet[6] == 0x83 and packet[7] == 1)
+        )
+
+    def is_control_ack_only(self, data: bytearray) -> bool:
+        """Keep short run acknowledgements and settings replies out of telemetry."""
+        packet = self._decode_feaa_packet(data)
+        return packet is not None and (
+            (self._is_feaa_run_reply(packet) and len(packet) < 46)
             or (packet[6] == 0x83 and packet[7] == 1)
         )
 
@@ -1490,7 +1511,11 @@ class ProtocolCBFF(HeaterProtocol):
             if command in (0, 1):
                 return False
             expected = 0x83 if command in (14, 15, 16, 17, 18, 19, 20, 21) else 0x81
-            return packet[6] == expected and self.is_control_response(data)
+            if packet[6] != expected:
+                return False
+            if self._is_feaa_run_reply(packet):
+                return len(packet) < 46 or not self._is_data_suspect(self._parse_cbff_fields(packet))
+            return packet[7] == 1
         candidates = [data]
         if self._device_sn:
             candidates.append(self._decrypt_cbff(data, self._device_sn))
