@@ -2705,7 +2705,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 self._notification_data = data
                 return
 
-        if isinstance(protocol, ProtocolCBFF) and protocol.is_control_response(parse_data):
+        if isinstance(protocol, ProtocolCBFF) and protocol.is_control_ack_only(parse_data):
             self._notification_data = data
             return
 
@@ -4533,8 +4533,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     async def async_set_mode(self, mode: int) -> bool:
         """Set running mode (0=Manual, 1=Level, 2=Temperature, 3=Ventilation).
 
-        Mode 3 (Ventilation) is ABBA-only and only works when heater is in standby.
-        It activates fan-only mode without heating.
+        Ventilation uses the supported controller-specific fan-only mode.
         """
         if self._burnoff.active and not self._burnoff.cycle.applying:
             self._logger.info("Ignoring mode change during burn-off")
@@ -4572,6 +4571,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 self._logger.warning(
                     "Ventilation mode is not advertised by this controller"
                 )
+                return False
+
+            if self._protocol_mode == 6 and self.data.get("running_state") != 1:
+                self._logger.info("CBFF ventilation mode selection requires the heater to be on")
                 return False
 
             self._logger.info("Selecting ventilation mode (capability-gated set-mode 3)")
