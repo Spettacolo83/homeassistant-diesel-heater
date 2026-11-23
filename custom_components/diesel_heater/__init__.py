@@ -521,8 +521,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: DieselHeaterConfigEntry)
             for coord in target_coords:
                 _LOGGER.info("Setting timer on heater: %s", coord.address)
                 try:
-                    await coord.async_set_timer_start(start_minutes)
-                    await coord.async_set_timer_duration(duration)
+                    if not await coord.async_set_timer_start(start_minutes):
+                        raise HomeAssistantError("The timer start time was not confirmed")
+                    if not await coord.async_set_timer_duration(duration):
+                        raise HomeAssistantError("Start time accepted, but duration was not confirmed")
                 except Exception as err:
                     raise HomeAssistantError(
                         translation_domain=DOMAIN,

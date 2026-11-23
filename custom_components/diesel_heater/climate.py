@@ -283,15 +283,17 @@ class VevorHeaterClimate(
 
     def _get_away_temp(self) -> int:
         """Get configured away preset temperature."""
-        return self._config_entry.data.get(
+        celsius = self._config_entry.data.get(
             CONF_PRESET_AWAY_TEMP, DEFAULT_PRESET_AWAY_TEMP
         )
+        return round(celsius * 9 / 5 + 32) if self.coordinator._heater_uses_fahrenheit else celsius
 
     def _get_comfort_temp(self) -> int:
         """Get configured comfort preset temperature."""
-        return self._config_entry.data.get(
+        celsius = self._config_entry.data.get(
             CONF_PRESET_COMFORT_TEMP, DEFAULT_PRESET_COMFORT_TEMP
         )
+        return round(celsius * 9 / 5 + 32) if self.coordinator._heater_uses_fahrenheit else celsius
 
     @property
     def preset_mode(self) -> str | None:
@@ -321,11 +323,7 @@ class VevorHeaterClimate(
         return self._current_preset if self._current_preset else PRESET_NONE
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
-        """Set new preset mode.
-
-        Note: Presets are only used for Celsius heaters currently.
-        Future enhancement: Add Fahrenheit preset support.
-        """
+        """Set the preset using the heater’s native unit."""
         if self.coordinator.protocol_mode == 9 or not self._temperature_control_available:
             raise HomeAssistantError("Temperature presets require Temperature mode")
         self._current_preset = preset_mode

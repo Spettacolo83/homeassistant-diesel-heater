@@ -40,12 +40,12 @@ def test_ventilation_capability_tracks_validated_board(board, encrypted):
             p.build_command(2, 3, 1234)
 
 
-@pytest.mark.parametrize("power,expected", [(1, 0), (2, 1), (5, 1), (6, 1)])
-def test_ventilation_mode_preserves_power_state(power, expected):
+@pytest.mark.parametrize("power", [2, 5, 6])
+def test_ventilation_mode_uses_powered_on_command(power):
     p = ProtocolCBFF()
     p.parse(status(power=power))
     packet = p.build_command(2, 3, 1234)
-    assert packet[6:12] == bytes((1, expected, 3, 4, 255, 255))
+    assert packet[6:12] == bytes((1, 1, 3, 4, 255, 255))
 
 
 @pytest.mark.parametrize("power,expected", [(1, 0), (2, 1)])
@@ -87,14 +87,16 @@ def test_clock_payload_matches_apk_date_slots_without_mutating_settings(encrypte
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("board", [0, 1, 10, 11, 20, 21])
-async def test_coordinator_enforces_cbff_capability(board):
+@pytest.mark.parametrize("powered_on", [False, True])
+async def test_coordinator_enforces_cbff_capability(board, powered_on):
     h = create_mock_coordinator()
     h._protocol_mode = 6
     h.data["cbff_mainboard_type"] = board
+    h.data["running_state"] = int(powered_on)
     h._send_command = AsyncMock(return_value=True)
     h._refresh_after_control_command = AsyncMock()
     result = await h.async_set_mode(3)
-    assert result == (board in (1, 11, 21))
+    assert result == (powered_on and board in (1, 11, 21))
     if result:
         h._send_command.assert_awaited_once_with(2, 3)
     else:
@@ -262,7 +264,7 @@ def test_cbff_fan_only_does_not_count_estimated_fuel():
 
 def test_ventilation_uses_confirmed_fan_level_or_apk_default_one():
     p = ProtocolCBFF()
-    p.parse(status(mode=0, power=1))
+    p.parse(status(mode=0, power=2))
     assert p.build_command(2, 3, 1234)[9] == 1
     p.parse(status(mode=1, level=4))
     p.parse(status(mode=2, level=24))
@@ -291,3 +293,56 @@ async def test_connected_poll_does_not_reset_cbff_metadata():
     await h._ensure_connected()
     assert h._cbff_metadata_requested is True
     h._cleanup_connection.assert_not_called()
+
+
+def test_off_controller_does_not_build_ventilation_selection():
+    protocol = ProtocolCBFF()
+    protocol.parse(status(power=1))
+    with pytest.raises(ValueError, match="powered-on"):
+        protocol.build_command(2, 3, 1234)
+
+
+@pytest.mark.parametrize("subcommand", [0, 1, 2])
+@pytest.mark.parametrize("encrypted", [False, True])
+def test_cbff_ventilation_reply_updates_running_mode(subcommand, encrypted):
+    coordinator = create_mock_coordinator()
+    coordinator._protocol_mode = 6
+    protocol = coordinator._protocols[6]
+    coordinator._protocol = protocol
+    coordinator.data["running_mode"] = 1
+    frame = status(mode=3)
+    frame = protocol._build_feaa(0x81, subcommand, frame[8:-1])
+    if encrypted:
+        protocol.set_device_sn("E466E5BC086D")
+        frame = protocol._encrypt_cbff(frame, "E466E5BC086D")
+
+    coordinator._notification_callback(0, frame)
+
+    assert VevorHeaterModeSelect(coordinator).current_option == "Ventilation"
+    assert protocol.matches_response(frame, 2)
+    assert not protocol.matches_response(frame, 1)
+
+
+def test_short_cbff_reply_acknowledges_without_updating_telemetry():
+    coordinator = create_mock_coordinator()
+    coordinator._protocol_mode = 6
+    protocol = coordinator._protocols[6]
+    coordinator._protocol = protocol
+    coordinator.data["running_mode"] = 1
+    frame = protocol._build_feaa(0x81, 1)
+
+    coordinator._notification_callback(0, frame)
+
+    assert coordinator._notification_data == frame
+    assert coordinator.data["running_mode"] == 1
+    assert protocol.matches_response(frame, 2)
+    assert not protocol.matches_response(frame, 1)
+
+
+def test_invalid_cbff_ventilation_telemetry_does_not_confirm_command():
+    protocol = ProtocolCBFF()
+    frame = status(mode=3)
+    frame[23:25] = bytes((255, 255))
+    frame = protocol._build_feaa(0x81, 1, frame[8:-1])
+    assert protocol.parse(frame) is None
+    assert not protocol.matches_response(frame, 2)

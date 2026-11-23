@@ -704,11 +704,10 @@ class BurnoffController:
         await self._host.async_save_data()
         self.notify_state()
 
-    async def mark_restoring(self) -> None:
+    async def mark_restoring(self, *, shutdown_after: bool = False) -> None:
         """Remember that the snapshot still needs to be written to the ECU."""
         self.cycle.phase = BurnoffPhase.RESTORING
-        # Cycle is over; remaining work is restore, not delayed Off.
-        self.cycle.shutdown_after = False
+        self.cycle.shutdown_after = shutdown_after
         await self._host.async_save_data()
         self.notify_state()
 
@@ -719,8 +718,12 @@ class BurnoffController:
                 return
             if not self.ecu_can_restore():
                 return
-            if await self.restore_saved_mode():
-                await self.clear_state()
+            if not await self.restore_saved_mode():
+                return
+            shutdown_after = self.cycle.shutdown_after and not self.ecu_shutdown_observed()
+            await self.clear_state()
+        if shutdown_after and not self.ecu_shutdown_observed():
+            await self._host._power_off()
 
     async def disable(self) -> None:
         """Drop deferred in-run state and restore if a cycle is live.
@@ -775,10 +778,10 @@ class BurnoffController:
             # Soot is gone once the timer finishes, even if restore waits for cooldown.
             self.reset_accumulator()
             if not self.ecu_can_restore() or not await self.restore_saved_mode():
-                await self.mark_restoring()
+                await self.mark_restoring(shutdown_after=shutdown_after)
                 return
             await self.clear_state()
-        if shutdown_after:
+        if shutdown_after and not self.ecu_shutdown_observed():
             await self._host._power_off()
 
     async def start(self, *, shutdown_after: bool = True) -> None:

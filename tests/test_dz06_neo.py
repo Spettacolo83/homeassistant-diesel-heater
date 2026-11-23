@@ -258,7 +258,7 @@ def test_5a25_parses_warm_drive_status_layout() -> None:
     frame[16] = 21
     frame[32:34] = (1500).to_bytes(2, "big")
     frame[34] = 2
-    frame[35] = 21
+    frame[35] = 255
 
     coordinator._notification_callback(FFF2, frame)
 
@@ -272,7 +272,7 @@ def test_5a25_parses_warm_drive_status_layout() -> None:
     assert coordinator.data["pump_frequency"] == 2.1
     assert "set_level" not in coordinator.data
     assert coordinator.data["set_temp"] == 24.0
-    assert coordinator.data["cab_temperature"] == 21.0
+    assert coordinator.data["cab_temperature"] == -1.0
     assert coordinator.data["altitude"] == 1500
 
 
@@ -874,7 +874,8 @@ async def test_warm_drive_config_write_requires_a_5c16_confirmation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_warm_drive_config_write_refreshes_after_5c16_confirmation() -> None:
+@pytest.mark.parametrize("applied", [True, False])
+async def test_warm_drive_config_write_refreshes_after_5c16_confirmation(applied: bool) -> None:
     """A confirmed native write refreshes the coordinator state."""
     coordinator = coordinator_for_layout(True)
     config = bytearray(range(24))
@@ -882,7 +883,13 @@ async def test_warm_drive_config_write_refreshes_after_5c16_confirmation() -> No
     coordinator._warm_drive_board_config = config
     coordinator._client = object()
     coordinator._write_gatt = AsyncMock()
-    coordinator._send_dz06_neo_configuration = AsyncMock(return_value=True)
+    async def readback():
+        coordinator._warm_drive_board_config = bytearray(config)
+        if applied:
+            coordinator._warm_drive_board_config[14] = 1
+        return True
+
+    coordinator._send_dz06_neo_configuration = AsyncMock(side_effect=readback)
 
     result = await coordinator._async_write_warm_drive_config(
         {14: 1},
@@ -890,9 +897,12 @@ async def test_warm_drive_config_write_refreshes_after_5c16_confirmation() -> No
         "Auto Start/Stop",
     )
 
-    assert result is True
+    assert result is applied
     coordinator._send_dz06_neo_configuration.assert_awaited_once()
-    coordinator.async_request_refresh.assert_awaited_once()
+    if applied:
+        coordinator.async_request_refresh.assert_awaited_once()
+    else:
+        coordinator.async_request_refresh.assert_not_awaited()
 
 
 @pytest.mark.asyncio
