@@ -127,6 +127,13 @@
         "thermo_top_evo_4_diesel": "Thermo Top Evo 4 kW Diesel",
         "thermo_top_evo_5_diesel": "Thermo Top Evo 5 kW Diesel"
       }
+    },
+    "force_temp_unit": {
+      "options": {
+        "auto": "Auto (follow firmware)",
+        "celsius": "Force Celsius",
+        "fahrenheit": "Force Fahrenheit"
+      }
     }
   },
   "entity": {
@@ -330,15 +337,6 @@
       },
       "run_burnoff": {
         "name": "Run Burn-off"
-      }
-    }
-  },
-  "selector": {
-    "force_temp_unit": {
-      "options": {
-        "auto": "Auto (follow firmware)",
-        "celsius": "Force Celsius",
-        "fahrenheit": "Force Fahrenheit"
       }
     }
   }
