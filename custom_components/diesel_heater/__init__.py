@@ -358,7 +358,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: DieselHeaterConfigEntry) -> bool:
     """Set up Diesel Heater from a config entry."""
-    address: str = entry.data[CONF_ADDRESS]
+    address: str = entry.data[CONF_ADDRESS].replace("-", ":").upper()
 
     _LOGGER.debug("Setting up Diesel Heater with address: %s", address)
 
@@ -367,7 +367,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: DieselHeaterConfigEntry)
 
     # Get BLE device from Home Assistant's bluetooth integration
     ble_device = bluetooth.async_ble_device_from_address(
-        hass, address.upper(), connectable=True
+        hass, address, connectable=True
     )
 
     if not ble_device:
@@ -378,35 +378,43 @@ async def async_setup_entry(hass: HomeAssistant, entry: DieselHeaterConfigEntry)
     # Create coordinator
     coordinator = VevorHeaterCoordinator(hass, ble_device, entry)
 
-    # Load persistent fuel data
-    await coordinator.async_load_data()
-
-    # Do not freeze an unknown protocol's entity set after a failed first poll.
-    # Cronus optional records have individual deadlines and need a larger
-    # bounded startup budget than a single-frame controller.
     initial_timeout = 90.0 if coordinator.is_cronus_device else 30.0
     try:
+        await coordinator.async_load_data()
         await asyncio.wait_for(
             coordinator.async_config_entry_first_refresh(), timeout=initial_timeout
         )
+        if not coordinator.data.get("connected") or (
+            coordinator.protocol_mode == 0 and not coordinator.is_dz06_neo
+        ) or (
+            coordinator.protocol_mode == 9
+            and coordinator.data.get("cronus_controller_type") not in ("air", "water")
+        ):
+            raise ConfigEntryNotReady("Waiting for a validated heater protocol and capabilities")
+    except asyncio.CancelledError:
+        await coordinator.async_shutdown()
+        raise
+    except ConfigEntryNotReady:
+        await coordinator.async_shutdown()
+        raise
     except Exception as err:
         await coordinator.async_shutdown()
         raise ConfigEntryNotReady(
             f"Waiting for a validated heater status (startup budget {initial_timeout:g}s)"
         ) from err
 
-    if not coordinator.data.get("connected") or (coordinator.protocol_mode == 0 and not coordinator.is_dz06_neo) or (
-        coordinator.protocol_mode == 9
-        and coordinator.data.get("cronus_controller_type") not in ("air", "water")
-    ):
-        await coordinator.async_shutdown()
-        raise ConfigEntryNotReady("Waiting for a validated heater protocol and capabilities")
-
-    # Store only an identified coordinator with a valid initial snapshot
     entry.runtime_data = coordinator
-
-    # Forward entry setup to platforms
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    try:
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    except (Exception, asyncio.CancelledError):
+        try:
+            await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+        except Exception:
+            _LOGGER.exception("Failed to unload platforms after setup failed")
+        finally:
+            del entry.runtime_data
+            await coordinator.async_shutdown()
+        raise
 
     # Register debug service (only once)
     if not hass.services.has_service(DOMAIN, SERVICE_SEND_COMMAND):
@@ -443,19 +451,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: DieselHeaterConfigEntry)
                     translation_placeholders={"device_id": device_id or "all"},
                 )
 
+            failures = []
             for coord in target_coords:
                 _LOGGER.info("Sending command to heater: %s", coord.address)
                 try:
-                    await coord.async_send_raw_command(command, argument)
+                    if not await coord.async_send_raw_command(command, argument):
+                        failures.append(f"{coord.address}: command not confirmed")
                 except Exception as err:
-                    raise HomeAssistantError(
-                        translation_domain=DOMAIN,
-                        translation_key="command_failed",
-                        translation_placeholders={
-                            "address": coord.address,
-                            "error": str(err),
-                        },
-                    ) from err
+                    failures.append(f"{coord.address}: {err}")
+            if failures:
+                raise HomeAssistantError(
+                    "Command failed for " + ", ".join(failures)
+                    + f" ({len(target_coords) - len(failures)} confirmed)"
+                )
 
         hass.services.async_register(
             DOMAIN,

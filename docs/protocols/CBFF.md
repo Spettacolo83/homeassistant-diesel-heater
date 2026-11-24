@@ -62,7 +62,7 @@ semantics are:
 | Power off | `01`, `00` | last mode, last parameter, `FF FF` |
 | Set temperature | `01`, `01` | `02`, target, `FF FF` |
 | Set level | `01`, `01` | `01`, level, `FF FF` |
-| Select ventilation | `01`, current power state | `03`, remembered fan level or `01`, `FF FF` |
+| Select ventilation (heater already on) | `01`, `01` | `03`, remembered fan level or `01`, `FF FF` |
 | Set ventilation level | `01`, current power state | `03`, level, `FF FF` |
 | Read settings | `03`, `00` | none |
 | Read metadata | `00`, `03` | none |
@@ -71,8 +71,10 @@ semantics are:
 The heater requires mode and parameter together. For power and mode changes,
 the integration preserves the last controller-reported mode and parameter.
 Ventilation is offered only for validated mainboard types `1`, `11`, and `21`,
-matching the app's mode list. Selecting ventilation preserves the reported
-on/off state. Fan-level changes retain mode `3` rather than selecting heating.
+matching the app's mode list. The mode selector sends a change only when the
+heater is already on. Full validated `81/00`–`81/02` replies can carry the
+reported mode; short acknowledgements do not confirm it. Fan-level changes
+retain mode `3` rather than selecting heating.
 
 FEAA settings use the app's `03/01` command and a complete 13-byte settings
 snapshot. A settings change reads current attributes with `03/00`, modifies

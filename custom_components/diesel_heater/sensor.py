@@ -9,7 +9,6 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.const import (
-    CONCENTRATION_PARTS_PER_MILLION,
     EntityCategory,
     PERCENTAGE,
     UnitOfElectricPotential,
@@ -32,6 +31,14 @@ from .const import (
 )
 from .temperature import NativeTemperatureMixin
 from .coordinator import VevorHeaterCoordinator
+
+
+try:
+    from homeassistant.const import UnitOfRatio
+except ImportError:
+    from homeassistant.const import CONCENTRATION_PARTS_PER_MILLION as CO_UNIT
+else:
+    CO_UNIT = UnitOfRatio.PARTS_PER_MILLION
 
 
 PARALLEL_UPDATES = 1
@@ -844,7 +851,7 @@ class VevorCOSensor(VevorSensorBase):
     """
 
     _attr_device_class = SensorDeviceClass.CO
-    _attr_native_unit_of_measurement = CONCENTRATION_PARTS_PER_MILLION
+    _attr_native_unit_of_measurement = CO_UNIT
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_icon = "mdi:molecule-co"
