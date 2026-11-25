@@ -712,6 +712,8 @@ class ProtocolCronus(HeaterProtocol):
         if controller_type not in (b"\x01", b"\x02"):
             return None
         prefix = "water" if controller_type == b"\x01" else "air"
+        if not all(records.get(f"{prefix}_{name}") for name in ("state", "state_real", "mode")):
+            return None
         state = self._int(records, f"{prefix}_state")
         state_real = self._int(records, f"{prefix}_state_real")
         mode = self._int(records, f"{prefix}_mode")
@@ -1525,6 +1527,17 @@ class ProtocolCBFF(HeaterProtocol):
             for candidate in candidates
         )
 
+    def reports_ventilation(self, data: bytearray) -> bool:
+        """Require telemetry from this reply, not the previous mode or a bare ACK."""
+        packet = self._decode_feaa_packet(data)
+        if packet is not None:
+            return len(packet) >= 46 and packet[11] == 3
+        if self._device_sn:
+            decrypted = self._decrypt_cbff(data, self._device_sn)
+            if self._is_status_packet(decrypted) and not self._is_data_suspect(self._parse_cbff_fields(decrypted)):
+                return decrypted[11] == 3
+        return self._is_status_packet(data) and data[11] == 3
+
     def _decode_feaa_packet(self, data: bytearray) -> bytearray | None:
         """Return a validated raw FEAA packet from raw or encrypted input."""
         if self._has_valid_feaa_packet(data):
@@ -1856,9 +1869,10 @@ class ProtocolCBFF(HeaterProtocol):
         parsed["heater_mode"] = _u8_to_number(data[43])
 
         # Bytes 44-45: remain_run_time (uint16 LE, 65535=not available)
-        remain = data[44] | (data[45] << 8)
-        if remain != 65535:
-            parsed["remain_run_time"] = remain
+        if len(data) >= 47:
+            remain = data[44] | (data[45] << 8)
+            if remain != 65535:
+                parsed["remain_run_time"] = remain
 
         return parsed
 

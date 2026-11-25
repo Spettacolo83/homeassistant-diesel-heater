@@ -287,14 +287,19 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
 
         if user_input is not None:
-            address = user_input[CONF_ADDRESS].upper()
+            address = user_input[CONF_ADDRESS].strip().upper().replace("-", ":")
 
             # Validate MAC address format
-            if not re.match(r"^([0-9A-F]{2}[:-]){5}([0-9A-F]{2})$", address):
+            if not re.match(r"^([0-9A-F]{2}:){5}[0-9A-F]{2}$", address):
                 errors[CONF_ADDRESS] = "invalid_mac"
             else:
                 await self.async_set_unique_id(address)
                 self._abort_if_unique_id_configured()
+                if any(
+                    (entry.data.get(CONF_ADDRESS) or "").replace("-", ":").upper() == address
+                    for entry in self._async_current_entries()
+                ):
+                    return self.async_abort(reason="already_configured")
 
                 return self.async_create_entry(
                     title=f"Vevor Heater {address[-5:].replace(':', '')}",
@@ -433,10 +438,16 @@ class VevorHeaterOptionsFlowHandler(config_entries.OptionsFlow):
                 else:
                     new_data[key] = value
 
-            self.hass.config_entries.async_update_entry(
-                self.config_entry,
-                data=new_data,
+            reload_fields = {
+                CONF_PIN, CONF_NEO_PASSWORD, CONF_FORCE_TEMP_UNIT,
+                CONF_EXTERNAL_TEMP_SENSOR, CONF_CRONUS_HEATER_MODEL,
+            }
+            reload_needed = any(
+                self.config_entry.data.get(key) != new_data.get(key) for key in reload_fields
             )
+            self.hass.config_entries.async_update_entry(self.config_entry, data=new_data)
+            if reload_needed:
+                self.hass.config_entries.async_schedule_reload(self.config_entry.entry_id)
             return self.async_create_entry(title="", data={})
 
         return self.async_show_form(

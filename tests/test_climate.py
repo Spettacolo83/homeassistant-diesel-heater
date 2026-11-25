@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import pytest
+from homeassistant.const import UnitOfTemperature
 from unittest.mock import MagicMock, AsyncMock
 
 # Import stubs first
@@ -984,8 +985,8 @@ class TestClimateTemperatureUnit:
         config_entry = create_mock_config_entry()
         climate = VevorHeaterClimate(coordinator, config_entry)
 
-        # The unit is set via _attr_temperature_unit
-        assert climate._attr_temperature_unit is not None
+        # The controller-provided unit remains the native unit.
+        assert climate.native_temperature_unit == UnitOfTemperature.CELSIUS
 
     def test_supported_features(self):
         """Test supported features include required features."""

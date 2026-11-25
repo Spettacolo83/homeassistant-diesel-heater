@@ -547,7 +547,7 @@ class BurnoffController:
             if remaining is None or remaining <= 0:
                 self._create_task(self.complete())
             else:
-                self._create_task(self.apply_max_power())
+                self._create_task(self.reapply_max_power(self.cycle))
 
     def _will_retry_after_abort(self, *, was_in_run: bool, nearly_done: bool) -> bool:
         """Return True if this external abort should resume on the next RUNNING."""
@@ -677,13 +677,25 @@ class BurnoffController:
         except Exception:
             self._host._logger.exception("Burn-off wait failed")
 
+    async def reapply_max_power(self, cycle: BurnoffCycle) -> None:
+        """Apply a queued write only for the cycle that still owns it."""
+        async with self.lock:
+            if (
+                self.cycle is cycle and cycle.phase == BurnoffPhase.RUNNING
+                and not self.cancel_event.is_set()
+                and self._host.data.get("running_step") in BURNOFF_HEAT_STEPS
+                and self._host.data.get("running_mode") != RUNNING_MODE_VENTILATION
+            ):
+                await self.apply_max_power()
+
     async def apply_max_power(self) -> bool:
         """Switch to Level mode and set maximum heater level."""
-        self.cycle.applying = True
+        cycle = self.cycle
+        cycle.applying = True
         try:
-            return bool(await self._host.async_apply_burnoff_max_power(self.cycle))
+            return bool(await self._host.async_apply_burnoff_max_power(cycle))
         finally:
-            self.cycle.applying = False
+            cycle.applying = False
 
     async def restore_saved_mode(self) -> bool:
         """Restore the heating mode and setpoint captured before burn-off."""
@@ -720,10 +732,21 @@ class BurnoffController:
                 return
             if not await self.restore_saved_mode():
                 return
-            shutdown_after = self.cycle.shutdown_after and not self.ecu_shutdown_observed()
-            await self.clear_state()
-        if shutdown_after and not self.ecu_shutdown_observed():
-            await self._host._power_off()
+            await self.finish_restored_cycle()
+
+    async def finish_restored_cycle(self) -> None:
+        """Preserve shutdown intent until an Off request succeeds."""
+        state = self._host.data.get("running_state")
+        if self.cycle.shutdown_after and (state is None or not self.ecu_shutdown_observed()):
+            if self.cycle.saved_mode is not None or self.cycle.phase != BurnoffPhase.RESTORING:
+                self.cycle.saved_mode = None
+                self.cycle.saved_level = None
+                self.cycle.saved_temp = None
+                self.cycle.saved_protocol_state = None
+                await self.mark_restoring(shutdown_after=True)
+            if state is None or not await self._host._power_off():
+                return
+        await self.clear_state()
 
     async def disable(self) -> None:
         """Drop deferred in-run state and restore if a cycle is live.
@@ -778,11 +801,9 @@ class BurnoffController:
             # Soot is gone once the timer finishes, even if restore waits for cooldown.
             self.reset_accumulator()
             if not self.ecu_can_restore() or not await self.restore_saved_mode():
-                await self.mark_restoring(shutdown_after=shutdown_after)
+                await self.mark_restoring(shutdown_after=self.cycle.shutdown_after)
                 return
-            await self.clear_state()
-        if shutdown_after and not self.ecu_shutdown_observed():
-            await self._host._power_off()
+            await self.finish_restored_cycle()
 
     async def start(self, *, shutdown_after: bool = True) -> None:
         """Run at max power, optionally shutting down when the timer expires."""
@@ -829,6 +850,12 @@ class BurnoffController:
                 self.cycle.saved_level,
                 self.cycle.saved_temp,
             )
+
+            if await self._host.async_save_data() is False:
+                self.cycle = BurnoffCycle()
+                self._host._logger.warning("Burn-off aborted before changing heater output: snapshot save failed")
+                self.notify_state()
+                return
 
             if not await self.apply_max_power():
                 self.cycle.phase = BurnoffPhase.AWAITING_STATUS

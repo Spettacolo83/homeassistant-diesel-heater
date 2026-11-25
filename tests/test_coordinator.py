@@ -169,7 +169,11 @@ def create_mock_coordinator() -> VevorHeaterCoordinator:
     coordinator._last_runtime_reset_date = datetime.now().strftime("%Y-%m-%d")
 
     # Connection state
-    coordinator._last_update_time = 0.0
+    coordinator.update_interval = timedelta(seconds=15)
+    coordinator._last_update_time = None
+    coordinator._command_lock = asyncio.Lock()
+    coordinator._warm_drive_config_lock = asyncio.Lock()
+    coordinator._neo_poll_native = None
     coordinator._last_save_time = 0.0
     coordinator._last_valid_data = {}
     coordinator._consecutive_failures = 0
@@ -3014,7 +3018,7 @@ class TestAsyncUpdateData:
         coordinator._client.is_connected = True
         coordinator._send_command = AsyncMock(return_value=True)
         coordinator._consecutive_failures = 5
-        coordinator._last_update_time = time.time() - 60
+        coordinator._last_update_time = time.monotonic() - 60
         coordinator._last_save_time = time.time()
         coordinator._save_valid_data = MagicMock()
         coordinator._update_fuel_tracking = MagicMock()
@@ -3040,7 +3044,7 @@ class TestAsyncUpdateData:
         # First two calls fail, third succeeds
         coordinator._send_command = AsyncMock(side_effect=[False, False, True])
         coordinator._consecutive_failures = 0
-        coordinator._last_update_time = time.time() - 60
+        coordinator._last_update_time = time.monotonic() - 60
         coordinator._last_save_time = time.time()
         coordinator._save_valid_data = MagicMock()
         coordinator._update_fuel_tracking = MagicMock()
@@ -3065,7 +3069,7 @@ class TestAsyncUpdateData:
         coordinator._client.is_connected = True
         coordinator._send_command = AsyncMock(return_value=True)
         coordinator._consecutive_failures = 0
-        coordinator._last_update_time = time.time() - 60
+        coordinator._last_update_time = time.monotonic() - 60
         coordinator._last_save_time = time.time() - 301  # Over 5 minutes ago
         coordinator._save_valid_data = MagicMock()
         coordinator._update_fuel_tracking = MagicMock()
@@ -3089,7 +3093,7 @@ class TestAsyncUpdateData:
         coordinator._send_command = AsyncMock(return_value=False)  # All fail
         coordinator._consecutive_failures = 1  # Within tolerance
         coordinator._max_stale_cycles = 3
-        coordinator._last_update_time = time.time()
+        coordinator._last_update_time = time.monotonic()
         coordinator._handle_connection_failure = MagicMock()
 
         result = await coordinator._async_update_data()
@@ -3112,7 +3116,7 @@ class TestAsyncUpdateData:
         coordinator._ensure_connected = AsyncMock()
         coordinator._consecutive_failures = 1
         coordinator._max_stale_cycles = 3
-        coordinator._last_update_time = time.time()
+        coordinator._last_update_time = time.monotonic()
 
         await coordinator._async_update_data()
 
@@ -3134,7 +3138,7 @@ class TestAsyncUpdateData:
         coordinator._send_command = AsyncMock(return_value=False)
         coordinator._consecutive_failures = 4  # Beyond tolerance
         coordinator._max_stale_cycles = 3
-        coordinator._last_update_time = time.time()
+        coordinator._last_update_time = time.monotonic()
         coordinator._handle_connection_failure = MagicMock()
 
         from homeassistant.helpers.update_coordinator import UpdateFailed
@@ -3156,7 +3160,7 @@ class TestAsyncUpdateData:
         coordinator._send_command = AsyncMock(side_effect=Exception("BLE error"))
         coordinator._consecutive_failures = 2
         coordinator._max_stale_cycles = 3
-        coordinator._last_update_time = time.time()
+        coordinator._last_update_time = time.monotonic()
         coordinator._handle_connection_failure = MagicMock()
 
         result = await coordinator._async_update_data()
@@ -3725,12 +3729,13 @@ class TestABBAToggleGuard:
         coordinator = create_mock_coordinator()
         coordinator._protocol_mode = 5  # ABBA
         coordinator.data["running_state"] = 1  # Already on
-        coordinator._send_command = AsyncMock()
+        coordinator._notification_data = bytearray((0xAB, 0xBA, 0x11, 0xCC, coordinator.data["running_state"]))
+        coordinator._send_command_unlocked = AsyncMock(return_value=True)
 
         await coordinator.async_turn_on()
 
         # Should not send command
-        coordinator._send_command.assert_not_called()
+        coordinator._send_command_unlocked.assert_awaited_once_with(1, 0)
 
     @pytest.mark.asyncio
     async def test_turn_on_proceeds_when_off_abba(self):
@@ -3738,12 +3743,13 @@ class TestABBAToggleGuard:
         coordinator = create_mock_coordinator()
         coordinator._protocol_mode = 5  # ABBA
         coordinator.data["running_state"] = 0  # Off
-        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator._notification_data = bytearray((0xAB, 0xBA, 0x11, 0xCC, coordinator.data["running_state"]))
+        coordinator._send_command_unlocked = AsyncMock(return_value=True)
         coordinator.async_request_refresh = AsyncMock()
 
         await coordinator.async_turn_on()
 
-        coordinator._send_command.assert_called_once_with(3, 1)
+        assert coordinator._send_command_unlocked.await_args_list == [call(1, 0), call(3, 1)]
         coordinator.async_request_refresh.assert_called_once()
 
     @pytest.mark.asyncio
@@ -3752,12 +3758,13 @@ class TestABBAToggleGuard:
         coordinator = create_mock_coordinator()
         coordinator._protocol_mode = 5  # ABBA
         coordinator.data["running_state"] = 0  # Already off
-        coordinator._send_command = AsyncMock()
+        coordinator._notification_data = bytearray((0xAB, 0xBA, 0x11, 0xCC, coordinator.data["running_state"]))
+        coordinator._send_command_unlocked = AsyncMock(return_value=True)
 
         await coordinator.async_turn_off()
 
         # Should not send command
-        coordinator._send_command.assert_not_called()
+        coordinator._send_command_unlocked.assert_awaited_once_with(1, 0)
 
     @pytest.mark.asyncio
     async def test_turn_off_proceeds_when_on_abba(self):
@@ -3765,12 +3772,13 @@ class TestABBAToggleGuard:
         coordinator = create_mock_coordinator()
         coordinator._protocol_mode = 5  # ABBA
         coordinator.data["running_state"] = 1  # On
-        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator._notification_data = bytearray((0xAB, 0xBA, 0x11, 0xCC, coordinator.data["running_state"]))
+        coordinator._send_command_unlocked = AsyncMock(return_value=True)
         coordinator.async_request_refresh = AsyncMock()
 
         await coordinator.async_turn_off(immediate=True)
 
-        coordinator._send_command.assert_called_once_with(3, 0)
+        assert coordinator._send_command_unlocked.await_args_list == [call(1, 0), call(3, 0)]
         coordinator.async_request_refresh.assert_called_once()
 
     @pytest.mark.asyncio
@@ -3780,11 +3788,12 @@ class TestABBAToggleGuard:
         coordinator._protocol_mode = 5
         coordinator.data["running_state"] = 1
         coordinator.data["running_step"] = 4
-        coordinator._send_command = AsyncMock()
+        coordinator._notification_data = bytearray((0xAB, 0xBA, 0x11, 0xCC, coordinator.data["running_state"]))
+        coordinator._send_command_unlocked = AsyncMock(return_value=True)
 
         await coordinator.async_turn_on()
 
-        coordinator._send_command.assert_not_called()
+        coordinator._send_command_unlocked.assert_awaited_once_with(1, 0)
 
     @pytest.mark.asyncio
     async def test_turn_off_skipped_during_cooldown_abba(self):
@@ -3793,11 +3802,12 @@ class TestABBAToggleGuard:
         coordinator._protocol_mode = 5
         coordinator.data["running_state"] = 1
         coordinator.data["running_step"] = 4
-        coordinator._send_command = AsyncMock()
+        coordinator._notification_data = bytearray((0xAB, 0xBA, 0x11, 0xCC, coordinator.data["running_state"]))
+        coordinator._send_command_unlocked = AsyncMock(return_value=True)
 
         await coordinator.async_turn_off()
 
-        coordinator._send_command.assert_not_called()
+        coordinator._send_command_unlocked.assert_awaited_once_with(1, 0)
 
     @pytest.mark.asyncio
     async def test_turn_on_proceeds_non_abba_protocol(self):
@@ -3805,13 +3815,13 @@ class TestABBAToggleGuard:
         coordinator = create_mock_coordinator()
         coordinator._protocol_mode = 1  # AA55, not ABBA
         coordinator.data["running_state"] = 1  # Already on, but not ABBA
-        coordinator._send_command = AsyncMock(return_value=True)
+        coordinator._send_command_unlocked = AsyncMock(return_value=True)
         coordinator.async_request_refresh = AsyncMock()
 
         await coordinator.async_turn_on()
 
         # Should still send command for non-ABBA
-        coordinator._send_command.assert_called_once_with(3, 1)
+        coordinator._send_command_unlocked.assert_awaited_once_with(3, 1, 5.0, 1)
 
 
 # ---------------------------------------------------------------------------
@@ -5522,6 +5532,8 @@ class TestBurnoffOnShutdown:
         _set_heating(coordinator)
         coordinator.data["set_level"] = 6
         coordinator._send_command = AsyncMock(return_value=True)
+        coordinator._notification_data = bytearray((0xAB, 0xBA, 0x11, 0xCC, 1))
+        coordinator._send_command_unlocked = AsyncMock(return_value=True)
         coordinator._burnoff.cycle.phase = BurnoffPhase.RUNNING
         coordinator._burnoff.cycle.saved_mode = RUNNING_MODE_LEVEL
         coordinator._burnoff.cycle.saved_level = 4
@@ -5532,7 +5544,7 @@ class TestBurnoffOnShutdown:
         assert (2, RUNNING_MODE_LEVEL) in commands
         # ABBA restores level with down steps, from its sixth step back to 4.
         assert commands.count((5, -1)) == 2
-        assert commands[-1] == (3, 0)
+        assert coordinator._send_command_unlocked.await_args_list == [call(1, 0), call(3, 0)]
         assert coordinator.burnoff_active is False
 
     def _active_burnoff(self, coordinator) -> None:
@@ -5541,6 +5553,7 @@ class TestBurnoffOnShutdown:
         coordinator.data["running_step"] = RUNNING_STEP_RUNNING
         coordinator.data["running_mode"] = RUNNING_MODE_LEVEL
         coordinator._send_command = AsyncMock(return_value=True)
+        coordinator._send_command_unlocked = AsyncMock(return_value=True)
         coordinator._burnoff.cycle.phase = BurnoffPhase.RUNNING
         coordinator._burnoff.cycle.shutdown_after = True
         coordinator._burnoff.cycle.saved_mode = RUNNING_MODE_TEMPERATURE
@@ -6706,7 +6719,7 @@ class TestCronusTransactionSafety:
             await coordinator._async_update_cronus_data()
 
         assert coordinator._cronus_records == current
-        assert "cronus_state" not in coordinator.data
+        assert coordinator.data["cronus_state"] == 1
 
     @pytest.mark.asyncio
     async def test_clears_missing_optional_record_from_current_snapshot(self):
@@ -6739,7 +6752,7 @@ class TestCronusTransactionSafety:
         coordinator = create_mock_coordinator()
         coordinator._protocol_mode = 9
         coordinator.config_entry.data[CONF_CRONUS_HEATER_MODEL] = "thermo_top_evo_5_diesel"
-        coordinator._last_update_time = time.time() - 3600
+        coordinator._last_update_time = time.monotonic() - 3600
         coordinator._last_save_time = time.time()
         coordinator.async_save_data = AsyncMock()
         current = {
@@ -6762,7 +6775,7 @@ class TestCronusTransactionSafety:
 
         assert result["cronus_controller_type"] == "water"
         assert result["hourly_fuel_consumption"] == 0.47
-        assert result["daily_runtime_hours"] == 1.0
+        assert result["daily_runtime_hours"] == pytest.approx(15 / 3600, abs=0.01)
 
     @pytest.mark.asyncio
     async def test_cronus_air_level_is_ventilation_only_and_clamped(self):

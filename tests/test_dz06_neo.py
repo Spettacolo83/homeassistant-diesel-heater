@@ -1,5 +1,6 @@
 """Focused tests for the experimentally supported Sunster Neo transport."""
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock
 
@@ -14,8 +15,8 @@ from custom_components.diesel_heater.const import (
     RUNNING_MODE_VENTILATION,
     RUNNING_STATE_ON,
     RUNNING_STEP_COOLDOWN,
-    RUNNING_STEP_SELF_TEST,
     RUNNING_STEP_RUNNING,
+    RUNNING_STEP_SELF_TEST,
     RUNNING_STEP_STANDBY,
     RUNNING_STEP_VENTILATION,
 )
@@ -50,6 +51,9 @@ def coordinator_for_layout(
 ) -> VevorHeaterCoordinator:
     coordinator = VevorHeaterCoordinator.__new__(VevorHeaterCoordinator)
     coordinator._stopping = False
+    coordinator._command_lock = asyncio.Lock()
+    coordinator._warm_drive_config_lock = asyncio.Lock()
+    coordinator._neo_poll_native = None
     coordinator._background_tasks = set()
     coordinator._protocol_mode = 0
     coordinator._ble_device = SimpleNamespace(name=name)
@@ -868,7 +872,8 @@ async def test_warm_drive_config_write_requires_a_5c16_confirmation() -> None:
     )
 
     assert result is False
-    assert coordinator._warm_drive_board_config[14] == 14
+    assert coordinator._warm_drive_board_config is None
+    assert config[14] == 14
     assert "auto_start_stop" not in coordinator.data
     coordinator.async_request_refresh.assert_not_awaited()
 
@@ -921,7 +926,8 @@ async def test_warm_drive_config_write_does_not_update_cache_on_failure() -> Non
     )
 
     assert result is False
-    assert coordinator._warm_drive_board_config[14] == 14
+    assert coordinator._warm_drive_board_config is None
+    assert config[14] == 14
     assert "auto_start_stop" not in coordinator.data
     coordinator.async_request_refresh.assert_not_awaited()
 

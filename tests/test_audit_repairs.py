@@ -7,7 +7,7 @@ These exercise production parsers/coordinator logic; they do not operate heaters
 import asyncio
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 
@@ -178,13 +178,18 @@ async def test_toggle_switch_is_idempotent(mode, enabled):
     coordinator = create_mock_coordinator()
     coordinator._protocol_mode = mode
     coordinator.data["auto_start_stop"] = enabled
-    coordinator._send_command = AsyncMock()
+    coordinator._send_command = AsyncMock(return_value=True)
+    coordinator._send_command_unlocked = AsyncMock(return_value=True)
     await coordinator.async_set_auto_start_stop(enabled)
     coordinator._send_command.assert_not_awaited()
     coordinator.data["auto_start_stop"] = not enabled
-    coordinator._send_command.return_value = True
     await coordinator.async_set_auto_start_stop(enabled)
-    coordinator._send_command.assert_awaited_once_with(18, int(enabled))
+    if mode == 7:
+        assert coordinator._send_command_unlocked.await_args_list == [
+            call(1, 0), call(1, 0), call(18, int(enabled)),
+        ]
+    else:
+        coordinator._send_command.assert_awaited_once_with(18, int(enabled))
 
 
 @pytest.mark.asyncio

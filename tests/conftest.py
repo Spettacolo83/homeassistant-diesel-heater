@@ -133,6 +133,9 @@ class _StubConfigFlow:
     def _set_confirm_only(self):
         pass
 
+    def _async_current_entries(self):
+        return getattr(self, "_current_entries", [])
+
     def _async_current_ids(self):
         return getattr(self, "_current_ids", set())
 

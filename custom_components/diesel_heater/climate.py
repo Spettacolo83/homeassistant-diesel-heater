@@ -108,30 +108,25 @@ class VevorHeaterClimate(
             maximum = int(coordinator.data.get("neo_max_target") or 36)
             self._attr_target_temperature_step = 1.0
             if coordinator._heater_uses_fahrenheit:
-                self._attr_temperature_unit = UnitOfTemperature.FAHRENHEIT
                 self._attr_min_temp = int((minimum * 9 / 5) + 32)
                 self._attr_max_temp = int((maximum * 9 / 5) + 32)
             else:
-                self._attr_temperature_unit = UnitOfTemperature.CELSIUS
                 self._attr_min_temp = minimum
                 self._attr_max_temp = maximum
         elif coordinator._heater_uses_fahrenheit:
-            self._attr_temperature_unit = UnitOfTemperature.FAHRENHEIT
             self._attr_min_temp = 50 if coordinator.protocol_mode == 8 else 32
             self._attr_max_temp = 104
             self._attr_target_temperature_step = 1.0
         elif coordinator.protocol_mode == 9:
-            self._attr_temperature_unit = UnitOfTemperature.CELSIUS
             self._attr_min_temp = 5
             self._attr_max_temp = 35
         else:
-            self._attr_temperature_unit = UnitOfTemperature.CELSIUS
             self._attr_min_temp = 10 if coordinator.protocol_mode == 8 else 0
             self._attr_max_temp = 40
             self._attr_target_temperature_step = 1.0
 
     @property
-    def temperature_unit(self):
+    def native_temperature_unit(self):
         return UnitOfTemperature.FAHRENHEIT if self.coordinator._heater_uses_fahrenheit else UnitOfTemperature.CELSIUS
 
     @property
@@ -210,12 +205,12 @@ class VevorHeaterClimate(
         return self._attr_preset_modes
 
     @property
-    def current_temperature(self) -> float | None:
+    def native_current_temperature(self) -> float | None:
         """Return the current temperature (interior/cabin temperature)."""
         return self.coordinator.data.get("cab_temperature")
 
     @property
-    def target_temperature(self) -> float | None:
+    def native_target_temperature(self) -> float | None:
         """Return the target temperature."""
         if self.coordinator.protocol_mode != 9 and not self._temperature_control_available:
             return None
@@ -233,6 +228,11 @@ class VevorHeaterClimate(
                 return target
             return self._restored_abba_target
         return target
+
+    if not hasattr(ClimateEntity, "native_temperature_unit"):
+        temperature_unit = native_temperature_unit
+        current_temperature = native_current_temperature
+        target_temperature = native_target_temperature
 
     @property
     def hvac_mode(self) -> HVACMode:

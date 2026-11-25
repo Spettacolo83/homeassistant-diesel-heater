@@ -682,6 +682,7 @@ class TestManualStep:
         )
 
         assert result["type"] == "create_entry"
+        assert result["data"][CONF_ADDRESS] == "AA:BB:CC:DD:EE:FF"
 
     async def test_invalid_mac_shows_error(self):
         flow = VevorHeaterConfigFlow()
