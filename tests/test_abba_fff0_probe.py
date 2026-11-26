@@ -234,3 +234,35 @@ async def test_confirmed_abba_reconnect_does_not_reuse_mvp1_candidate():
     packets = [call.args[1] for call in client.write_gatt_char.await_args_list]
     assert all(packet[:4] in (bytes.fromhex("baab04cc"), bytes.fromhex("baab05ea")) for packet in packets)
     assert sum(packet[:4] == bytes.fromhex("baab05ea") for packet in packets) == 2
+
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bd39_writer_role", [None, "notify"])
+async def test_incomplete_bd39_uses_valid_hcalory_fff0(bd39_writer_role):
+    coordinator, client = candidate("Hcalory")
+    notify = SimpleNamespace(uuid=source.HCALORY_MVP2_NOTIFY_UUID, properties=["notify"])
+    bd39 = SimpleNamespace(uuid=source.HCALORY_MVP2_SERVICE_UUID, characteristics=[notify])
+    if bd39_writer_role is not None:
+        bd39.characteristics.append(
+            SimpleNamespace(uuid=source.HCALORY_MVP2_WRITE_UUID, properties=[bd39_writer_role])
+        )
+    client.services.insert(0, bd39)
+
+    async def respond(char, packet, response):
+        if packet[:2] == bytes((0, 2)):
+            coordinator._notification_callback(0, hcalory_status(0, 0))
+
+    client.write_gatt_char = AsyncMock(side_effect=respond)
+    with (
+        patch.object(source, "establish_connection", AsyncMock(return_value=client)),
+        patch.object(source.asyncio, "sleep", AsyncMock()),
+    ):
+        await coordinator._ensure_connected()
+
+    assert coordinator.protocol_mode == 7
+    assert not coordinator._hcalory_mvp2_device
+    assert coordinator._hcalory_write_char is client.services[1].characteristics[1]
+    client.start_notify.assert_awaited_once_with(
+        source.HCALORY_MVP1_NOTIFY_UUID, coordinator._notification_callback
+    )

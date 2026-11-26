@@ -313,6 +313,8 @@ def test_cbff_ventilation_reply_updates_running_mode(subcommand, encrypted):
     frame = status(mode=3)
     frame = protocol._build_feaa(0x81, subcommand, frame[8:-1])
     if encrypted:
+        protocol.set_v21_mode(True)
+        coordinator._v21_handshake_authenticated = True
         protocol.set_device_sn("E466E5BC086D")
         frame = protocol._encrypt_cbff(frame, "E466E5BC086D")
 

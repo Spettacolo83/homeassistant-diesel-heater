@@ -587,6 +587,27 @@ class TestUserStep:
         assert result["data"][CONF_NEO_PASSWORD] == 100000000
 
 
+    async def test_discovered_device_keeps_picker_credentials(self):
+        flow = VevorHeaterConfigFlow()
+        flow._discovered_devices[MOCK_ADDRESS] = _make_ble_discovery(name="Air Heater")
+
+        form = await flow.async_step_user(
+            {CONF_ADDRESS: MOCK_ADDRESS, CONF_PIN: 0, CONF_NEO_PASSWORD: 12345678}
+        )
+        assert form["step_id"] == "confirm"
+        entry = await flow.async_step_confirm({})
+        assert entry["data"][CONF_PIN] == 0
+        assert entry["data"][CONF_NEO_PASSWORD] == 12345678
+
+    async def test_discovered_device_uses_its_pin_default_if_picker_omits_pin(self):
+        flow = VevorHeaterConfigFlow()
+        flow._discovered_devices[MOCK_ADDRESS] = _make_ble_discovery(
+            name="Heater5816", service_uuids=[HCALORY_MVP2_SERVICE_UUID]
+        )
+        await flow.async_step_user({CONF_ADDRESS: MOCK_ADDRESS})
+        entry = await flow.async_step_confirm({})
+        assert entry["data"][CONF_PIN] == 0
+
     async def test_select_device_creates_entry(self):
         flow = VevorHeaterConfigFlow()
 
