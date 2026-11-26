@@ -121,6 +121,7 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Initialize the config flow."""
         self._discovery_info: BluetoothServiceInfoBleak | None = None
         self._discovered_devices: dict[str, BluetoothServiceInfoBleak] = {}
+        self._selected_credentials: dict[str, int] = {}
 
     async def async_step_bluetooth(
         self, discovery_info: BluetoothServiceInfoBleak
@@ -148,8 +149,12 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Confirm discovery."""
         assert self._discovery_info is not None
-        default_pin = _default_pin_for_discovery(self._discovery_info)
-        default_neo_password = DEFAULT_NEO_PASSWORD
+        default_pin = self._selected_credentials.get(
+            CONF_PIN, _default_pin_for_discovery(self._discovery_info)
+        )
+        default_neo_password = self._selected_credentials.get(
+            CONF_NEO_PASSWORD, DEFAULT_NEO_PASSWORD
+        )
 
         if user_input is not None:
             data = {
@@ -204,6 +209,11 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             if discovery_info := self._discovered_devices.get(address):
                 self._discovery_info = discovery_info
+                self._selected_credentials = {
+                    key: user_input[key]
+                    for key in (CONF_PIN, CONF_NEO_PASSWORD)
+                    if key in user_input
+                }
                 return await self.async_step_confirm()
 
             return self.async_create_entry(
@@ -263,10 +273,7 @@ class VevorHeaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user",
             data_schema=vol.Schema({
                 vol.Required(CONF_ADDRESS): vol.In(devices),
-                vol.Optional(
-                    CONF_PIN,
-                    default=DEFAULT_PIN
-                ): vol.All(
+                vol.Optional(CONF_PIN): vol.All(
                     vol.Coerce(int),
                     vol.Range(min=MIN_PIN, max=MAX_PIN),
                 ),

@@ -5,6 +5,10 @@
 
 ## Transport and detection
 
+If the advertised name contains `CRONUS` after its prefix, select the controller
+from the Bluetooth device list under **Add Integration**. Home Assistant's
+automatic name matching requires a fixed prefix.
+
 ThermoConnect identifies Cronus controllers by a Cronus advertised name and
 this proprietary characteristic pair:
 
