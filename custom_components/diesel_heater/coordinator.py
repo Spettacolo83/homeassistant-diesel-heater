@@ -2153,11 +2153,17 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                         # Find both characteristics before assigning direction.
                         fff1_char = None
                         fff2_char = None
+                        ffe1_char = None
+                        ffe0_char = None
                         for char in service.characteristics:
                             if char.uuid.lower() == DZ06_NEO_WRITE_UUID.lower():
                                 fff1_char = char
                             elif char.uuid.lower() == DZ06_NEO_NOTIFY_UUID.lower():
                                 fff2_char = char
+                            elif char.uuid.lower() == CHARACTERISTIC_UUID:
+                                ffe1_char = char
+                            elif char.uuid.lower() == SERVICE_UUID:
+                                ffe0_char = char
 
                         legacy_abba = (
                             fff1_char
@@ -2172,20 +2178,35 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                             and ("notify" in fff2_char.properties or "indicate" in fff2_char.properties)
                         )
 
+                        # AirHeaterPro also accepts FFE1 writes and subscribes
+                        # to the notifying characteristic under the FFF0 service.
+                        hybrid_abba = (
+                            ffe1_char
+                            and ffe0_char
+                            and (
+                                "write" in ffe1_char.properties
+                                or "write-without-response" in ffe1_char.properties
+                            )
+                            and "notify" in ffe0_char.properties
+                        )
+
                         if split_neo:
                             self._is_abba_device = True
                             self._logger.info("Detected DZ06 split FFF0 layout: FFF1=write, FFF2=notify")
                             self._characteristic = fff2_char
                             self._active_char_uuid = fff2_char.uuid
                             self._abba_write_char = fff1_char
-                        elif legacy_abba:
-                            self._logger.info("Detected ABBA/HeaterCC legacy FFF0 layout")
+                        elif legacy_abba or hybrid_abba:
+                            self._logger.info(
+                                "Detected ABBA FFF0 transport (%s)",
+                                "legacy" if legacy_abba else "FFE1 write / FFE0 notify",
+                            )
                             self._is_abba_device = True
                             self._protocol_mode = 5
                             self._protocol = self._protocols[5]
-                            self._characteristic = fff1_char
-                            self._active_char_uuid = fff1_char.uuid
-                            self._abba_write_char = fff2_char
+                            self._characteristic = fff1_char if legacy_abba else ffe0_char
+                            self._active_char_uuid = self._characteristic.uuid
+                            self._abba_write_char = fff2_char if legacy_abba else ffe1_char
                         else:
                             self._logger.info(
                                 "FFF0 layout does not match ABBA/HeaterCC; "
@@ -2342,8 +2363,13 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 self._logger.debug("Cronus ready; polling record cache")
             elif (
                 self._is_abba_device
-                and self._active_char_uuid.lower() == ABBA_NOTIFY_UUID.lower()
-                and self._abba_write_char.uuid.lower() == ABBA_WRITE_UUID.lower()
+                and (
+                    self._active_char_uuid.lower(),
+                    self._abba_write_char.uuid.lower(),
+                ) in (
+                    (ABBA_NOTIFY_UUID, ABBA_WRITE_UUID),
+                    (SERVICE_UUID, CHARACTERISTIC_UUID),
+                )
             ):
                 # Both HeaterCC apps initialize the clock after subscription,
                 # without waiting for the first status report.
@@ -2655,6 +2681,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
     def _parse_response(self, data: bytearray) -> None:
         """Parse response from heater using protocol handler classes."""
+        # The hybrid transport is selected by its GATT roles. Only ABBA status
+        # can validate it; unrelated replies must not establish another family.
+        if (
+            self._is_abba_device
+            and (self._active_char_uuid or "").lower() == SERVICE_UUID
+            and (len(data) < 21 or data[:4] != b"\xab\xba\x11\xcc")
+        ):
+            return
         if len(data) < 8:
             # AA77 ACK is 10 bytes - check before discarding
             header_short = (_u8_to_number(data[0]) << 8) | _u8_to_number(data[1]) if len(data) >= 2 else 0
@@ -3196,8 +3230,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     async def _write_gatt(self, packet: bytearray) -> None:
         """Write a packet to the appropriate BLE characteristic.
 
-        Preserve no-response writes except for legacy ABBA FFF2 characteristics
-        that advertise only acknowledged writes. Heater status still arrives
+        Preserve no-response writes except for ABBA characteristics that
+        advertise only acknowledged writes. Heater status still arrives
         separately through notifications.
         """
         if self._stopping:
@@ -3223,12 +3257,19 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             char_uuid = write_char.uuid if write_char else "unknown"
             protocol_name = "Vevor/Sunster"
 
-        # AirHeaterCC writes through the discovered FFF2 characteristic without
-        # forcing WRITE_NO_RESPONSE. Honor write-only ABBA controllers, including
-        # the read-only ABBA probe while FFF0 identity is still undecided.
+        # AirHeaterCC and AirHeaterPro use the discovered characteristic.
+        # Honor acknowledged-only ABBA writers, including the legacy status
+        # probe while FFF0 identity is still undecided.
         response = (
             packet[:2] == bytes((0xBA, 0xAB))
-            and char_uuid.lower() == ABBA_WRITE_UUID.lower()
+            and (
+                char_uuid.lower() == ABBA_WRITE_UUID.lower()
+                or (
+                    self._is_abba_device
+                    and char_uuid.lower() == CHARACTERISTIC_UUID
+                    and (self._active_char_uuid or "").lower() == SERVICE_UUID
+                )
+            )
             and "write" in write_char.properties
             and "write-without-response" not in write_char.properties
         )

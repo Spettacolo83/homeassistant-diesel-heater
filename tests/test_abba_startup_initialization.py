@@ -3,6 +3,7 @@
 import asyncio
 import time
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -382,3 +383,84 @@ async def test_timed_out_cleanup_clears_partial_session_references():
     assert h._active_char_uuid is None
     assert not h._legacy_fff0_candidate
     assert not h._time_synced_this_connection
+
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("write_properties", "status", "connected"),
+    [
+        (["write", "write-without-response"], abba_status(unit=0, target=20), True),
+        (["write"], abba_status(unit=0, target=20), True),
+        (["write", "write-without-response"], None, False),
+        (["write", "write-without-response"], bytearray.fromhex("abba11cc010114"), False),
+        (
+            ["write", "write-without-response"],
+            bytearray.fromhex("aa770000000000000000"),
+            False,
+        ),
+    ],
+    ids=["reported-layout", "acknowledged-write", "silent", "truncated-status", "foreign-frame"],
+)
+async def test_hybrid_fff0_requires_abba_status_on_ffe0(write_properties, status, connected):
+    heater, client = controller(hint=True)
+    heater._ble_device.name = "Heater5275"
+    notify = SimpleNamespace(uuid=source.SERVICE_UUID, properties=["notify"])
+    writer = SimpleNamespace(uuid=source.CHARACTERISTIC_UUID, properties=write_properties)
+    indicate = SimpleNamespace(
+        uuid="0000ae05-0000-1000-8000-00805f9b34fb", properties=["indicate"]
+    )
+    client.services[0].characteristics = [writer, indicate, notify]
+    packets = []
+
+    async def write(characteristic, packet, response):
+        client.start_notify.assert_awaited_with(notify.uuid, heater._notification_callback)
+        assert characteristic is writer
+        assert response == ("write-without-response" not in write_properties)
+        packets.append(bytes(packet))
+        if packet == bytes.fromhex("baab04cc00000035") and status is not None:
+            heater._notification_callback(0, status)
+
+    client.write_gatt_char = AsyncMock(side_effect=write)
+    with (
+        patch.object(source, "establish_connection", AsyncMock(return_value=client)),
+        patch.object(source.asyncio, "sleep", AsyncMock()),
+        patch.object(
+            source.dt_util, "now", return_value=datetime(2026, 11, 8, 13, 14, 15, tzinfo=UTC)
+        ),
+    ):
+        data = await heater._async_update_data()
+        assert bool(data.get("connected")) is connected
+        assert heater._time_synced_this_connection is connected
+        assert heater.protocol_mode == 5
+        assert not heater.is_dz06_neo
+        assert packets[:2] == [
+            bytes.fromhex("baab05ea0d0e0f007e"),
+            bytes.fromhex("baab04cc00000035"),
+        ]
+        if connected:
+            assert data["set_temp"] == 20
+            await heater._async_update_data()
+            assert sum(packet.startswith(bytes.fromhex("baab05ea")) for packet in packets) == 1
+            await heater._cleanup_connection()
+            await heater._async_update_data()
+            assert sum(packet.startswith(bytes.fromhex("baab05ea")) for packet in packets) == 2
+
+
+@pytest.mark.asyncio
+async def test_hybrid_fff0_requires_both_characteristics_with_matching_roles():
+    heater, client = controller()
+    client.services[0].characteristics = [
+        SimpleNamespace(uuid=source.SERVICE_UUID, properties=["indicate"]),
+        SimpleNamespace(uuid=source.CHARACTERISTIC_UUID, properties=["write"]),
+    ]
+    client.write_gatt_char = AsyncMock()
+
+    with (
+        patch.object(source, "establish_connection", AsyncMock(return_value=client)),
+        patch.object(source.asyncio, "sleep", AsyncMock()),
+        pytest.raises(source.BleakError, match="Could not find heater characteristic"),
+    ):
+        await heater._ensure_connected()
+    client.start_notify.assert_not_awaited()
+    client.write_gatt_char.assert_not_awaited()
