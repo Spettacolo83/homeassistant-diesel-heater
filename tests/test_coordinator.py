@@ -1318,6 +1318,16 @@ class TestTemperatureOffsetAdvanced:
         # Raw should be 20 - 2 = 18 (sensor reading before heater offset)
         assert coordinator.data["cab_temperature_raw"] == 18.0
 
+    def test_missing_controller_offset_does_not_create_raw_reading(self):
+        coordinator = create_mock_coordinator()
+        coordinator.data.update(cab_temperature=20.0, heater_offset=None)
+        coordinator.config_entry.data = {"temperature_offset": 2.0}
+
+        coordinator._apply_ui_temperature_offset()
+
+        assert coordinator.data["cab_temperature"] == 22.0
+        assert coordinator.data["cab_temperature_raw"] is None
+
     def test_offset_applies_correctly(self):
         """Test temperature offset applies correctly."""
         coordinator = create_mock_coordinator()

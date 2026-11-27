@@ -315,7 +315,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             "case_temperature": None,
             "cab_temperature": None,
             "cab_temperature_raw": None,  # Raw temperature before any offset
-            "heater_offset": 0,  # Current offset sent to heater (cmd 20)
+            "heater_offset": None,  # Controller-reported or confirmed offset
             "connected": False,
             "auto_start_stop": None,  # Automatic Start/Stop flag
             "warm_drive_max_heat": None,  # Warm Drive 5C16 work mode: 2=Max Heat
@@ -2969,9 +2969,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         # Calculate the TRUE raw sensor temperature (before heater's internal offset)
         # Stored calibration offsets are Celsius differences.
         # Example: reported=18°C, heater_offset=-2°C → raw_sensor=18-(-2)=20°C
-        heater_offset = self.data.get("heater_offset", 0)
+        heater_offset = self.data.get("heater_offset")
         delta_scale = 1.8 if self._heater_uses_fahrenheit else 1.0
-        raw_sensor_temp = reported_temp - heater_offset * delta_scale
+        raw_sensor_temp = (
+            reported_temp - heater_offset * delta_scale if heater_offset is not None else None
+        )
         self.data["cab_temperature_raw"] = raw_sensor_temp
 
         # Get configured manual offset (default to 0.0 if not set)

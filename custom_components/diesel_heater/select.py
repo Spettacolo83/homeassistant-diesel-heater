@@ -1,8 +1,6 @@
 """Select platform for Vevor Diesel Heater."""
 from __future__ import annotations
 
-PARALLEL_UPDATES = 1
-
 import logging
 
 from homeassistant.components.select import SelectEntity
@@ -22,10 +20,6 @@ from .const import (
     RUNNING_MODE_TEMPERATURE,
     RUNNING_MODE_VENTILATION,
     RUNNING_MODE_NAMES,
-    RUNNING_STATE_OFF,
-    RUNNING_STATE_ON,
-    RUNNING_STEP_COOLDOWN,
-    RUNNING_STEP_NAMES,
     RUNNING_STEP_STANDBY,
     RUNNING_STEP_VENTILATION,
     TANK_VOLUME_OPTIONS,
@@ -33,6 +27,9 @@ from .const import (
     WARM_DRIVE_TANK_VOLUME_OPTIONS,
 )
 from .coordinator import VevorHeaterCoordinator
+from .operating_state import reported_running_mode
+
+PARALLEL_UPDATES = 1
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -207,60 +204,9 @@ class VevorHeaterModeSelect(SelectEntity):
     @property
     def current_option(self) -> str | None:
         """Return the reported control mode or a known operating state."""
-        coordinator = self.coordinator
-        data = coordinator.data
-        protocol = coordinator.protocol_mode
-        step = data.get("running_step")
-        mode = data.get("running_mode")
-        if not data.get("connected"):
+        if not self.coordinator.data.get("connected"):
             return None
-
-        if protocol == 8:
-            # HeatGenie F2 machine states are independent of its heat mode.
-            special_mode = {
-                7: "Manual Fuel Pump",
-                8: "Ventilation",
-                9: "Start/Stop Mode",
-                10: "Start/Stop Mode",
-            }.get(data.get("heatgenie_raw_state"))
-            if special_mode is not None:
-                return special_mode
-
-        # Hcalory also reports the fan step while starting a burn; its
-        # status nibble is what identifies actual ventilation.
-        neo = protocol == 0 and coordinator.is_dz06_neo is True
-        if (protocol == 7 and data.get("hcalory_status") == 0xC) or (
-            (protocol == 5 or neo) and step == RUNNING_STEP_VENTILATION
-        ):
-            return RUNNING_MODE_NAMES[RUNNING_MODE_VENTILATION]
-        if mode in (RUNNING_MODE_LEVEL, RUNNING_MODE_TEMPERATURE):
-            return RUNNING_MODE_NAMES[mode]
-        if (
-            (protocol == 6 or (protocol == 4 and coordinator.supports_aa66_ventilation))
-            and mode == RUNNING_MODE_VENTILATION
-            and data.get("running_state") == RUNNING_STATE_ON
-        ):
-            return RUNNING_MODE_NAMES[RUNNING_MODE_VENTILATION]
-
-        # Preserve a reported heat mode above, including while the device is
-        # stopped. If it reports no heat mode, show only substantiated states.
-        if protocol == 7 and data.get("hcalory_status") == 0xF:
-            return "Fault"
-        if protocol == 8:
-            return {
-                0: "Resetting",
-                4: "Cooldown",
-                5: "Standby",
-                6: "Fault",
-            }.get(data.get("heatgenie_raw_state"))
-        if protocol in (1, 2, 3, 4, 5, 6, 7) or neo:
-            if step == RUNNING_STEP_COOLDOWN:
-                return RUNNING_STEP_NAMES[RUNNING_STEP_COOLDOWN]
-            # AirHeaterBLE also lists its closed/Standby state at step 5.
-            standby = step == RUNNING_STEP_STANDBY or (protocol in (1, 2, 3, 4) and step == 5)
-            if standby and data.get("running_state") == RUNNING_STATE_OFF:
-                return RUNNING_STEP_NAMES[RUNNING_STEP_STANDBY]
-        return None
+        return reported_running_mode(self.coordinator)
 
     async def async_select_option(self, option: str) -> None:
         """Send a mode change only for controller-supported controls."""

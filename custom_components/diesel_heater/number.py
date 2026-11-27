@@ -343,7 +343,7 @@ class VevorHeaterOffsetNumber(CoordinatorEntity[VevorHeaterCoordinator], NumberE
     @property
     def native_value(self) -> float:
         """Return the current value."""
-        return self.coordinator.data.get("heater_offset", 0)
+        return self.coordinator.data.get("heater_offset") or 0
 
     async def async_set_native_value(self, value: float) -> None:
         """Set new value."""
