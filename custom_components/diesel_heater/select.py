@@ -23,6 +23,7 @@ from .const import (
     RUNNING_MODE_VENTILATION,
     RUNNING_MODE_NAMES,
     RUNNING_STATE_OFF,
+    RUNNING_STATE_ON,
     RUNNING_STEP_COOLDOWN,
     RUNNING_STEP_NAMES,
     RUNNING_STEP_STANDBY,
@@ -155,20 +156,14 @@ class VevorHeaterModeSelect(SelectEntity):
         self._attr_unique_id = f"{coordinator.address}_running_mode"
 
     @property
-    def _cbff_status_option(self) -> str | None:
-        """Display a confirmed CBFF shutdown step alongside the control modes."""
-        data = self.coordinator.data
-        if self.coordinator.protocol_mode != 6 or not data.get("connected"):
-            return None
-        step = data.get("running_step")
-        if step == RUNNING_STEP_COOLDOWN:
-            return RUNNING_STEP_NAMES[RUNNING_STEP_COOLDOWN]
-        if step == RUNNING_STEP_STANDBY and data.get("running_state") == RUNNING_STATE_OFF:
-            return RUNNING_STEP_NAMES[RUNNING_STEP_STANDBY]
-        return None
-
-    @property
     def options(self) -> list[str]:
+        """Include the displayed state so Home Assistant can render it."""
+        options = self._writable_options()
+        if (reported := self.current_option) is not None and reported not in options:
+            options.append(reported)
+        return options
+
+    def _writable_options(self) -> list[str]:
         """Return available running mode options.
 
         ABBA exposes fan-only only from standby. AA66 controllers expose it
@@ -196,9 +191,6 @@ class VevorHeaterModeSelect(SelectEntity):
         ):
             base_options.append(RUNNING_MODE_NAMES[RUNNING_MODE_VENTILATION])
 
-        if status_option := self._cbff_status_option:
-            base_options.append(status_option)
-
         return base_options
 
     @property
@@ -214,38 +206,73 @@ class VevorHeaterModeSelect(SelectEntity):
 
     @property
     def current_option(self) -> str | None:
-        """Return the current running mode."""
-        if status_option := self._cbff_status_option:
-            return status_option
+        """Return the reported control mode or a known operating state."""
+        coordinator = self.coordinator
+        data = coordinator.data
+        protocol = coordinator.protocol_mode
+        step = data.get("running_step")
+        mode = data.get("running_mode")
+        if not data.get("connected"):
+            return None
 
-        # Check if currently ventilating (ABBA specific)
-        running_step = self.coordinator.data.get("running_step")
-        if running_step == RUNNING_STEP_VENTILATION:
+        if protocol == 8:
+            # HeatGenie F2 machine states are independent of its heat mode.
+            special_mode = {
+                7: "Manual Fuel Pump",
+                8: "Ventilation",
+                9: "Start/Stop Mode",
+                10: "Start/Stop Mode",
+            }.get(data.get("heatgenie_raw_state"))
+            if special_mode is not None:
+                return special_mode
+
+        # Hcalory also reports the fan step while starting a burn; its
+        # status nibble is what identifies actual ventilation.
+        neo = protocol == 0 and coordinator.is_dz06_neo is True
+        if (protocol == 7 and data.get("hcalory_status") == 0xC) or (
+            (protocol == 5 or neo) and step == RUNNING_STEP_VENTILATION
+        ):
+            return RUNNING_MODE_NAMES[RUNNING_MODE_VENTILATION]
+        if mode in (RUNNING_MODE_LEVEL, RUNNING_MODE_TEMPERATURE):
+            return RUNNING_MODE_NAMES[mode]
+        if (
+            (protocol == 6 or (protocol == 4 and coordinator.supports_aa66_ventilation))
+            and mode == RUNNING_MODE_VENTILATION
+            and data.get("running_state") == RUNNING_STATE_ON
+        ):
             return RUNNING_MODE_NAMES[RUNNING_MODE_VENTILATION]
 
-        mode = self.coordinator.data.get("running_mode")
-        if mode is not None:
-            return RUNNING_MODE_NAMES.get(mode)
+        # Preserve a reported heat mode above, including while the device is
+        # stopped. If it reports no heat mode, show only substantiated states.
+        if protocol == 7 and data.get("hcalory_status") == 0xF:
+            return "Fault"
+        if protocol == 8:
+            return {
+                0: "Resetting",
+                4: "Cooldown",
+                5: "Standby",
+                6: "Fault",
+            }.get(data.get("heatgenie_raw_state"))
+        if protocol in (1, 2, 3, 4, 5, 6, 7) or neo:
+            if step == RUNNING_STEP_COOLDOWN:
+                return RUNNING_STEP_NAMES[RUNNING_STEP_COOLDOWN]
+            # AirHeaterBLE also lists its closed/Standby state at step 5.
+            standby = step == RUNNING_STEP_STANDBY or (protocol in (1, 2, 3, 4) and step == 5)
+            if standby and data.get("running_state") == RUNNING_STATE_OFF:
+                return RUNNING_STEP_NAMES[RUNNING_STEP_STANDBY]
         return None
 
     async def async_select_option(self, option: str) -> None:
-        """Change the running mode."""
-        # Home Assistant requires the displayed state to be in options.
-        # Standby and Cooldown are informational, so they never send a command.
-        if option in (RUNNING_STEP_NAMES[RUNNING_STEP_STANDBY], RUNNING_STEP_NAMES[RUNNING_STEP_COOLDOWN]):
+        """Send a mode change only for controller-supported controls."""
+        if option not in self._writable_options():
+            # Display-only states may appear as options, including after a
+            # state transition that removed them from the current list.
             return
-        # Find the mode value for the selected option
-        mode_value = None
         for mode, name in RUNNING_MODE_NAMES.items():
             if name == option:
-                mode_value = mode
-                break
-
-        if mode_value is not None:
-            _LOGGER.info("Changing running mode to: %s (value: %d)", option, mode_value)
-            await self.coordinator.async_set_mode(mode_value)
-        else:
-            _LOGGER.error("Unknown running mode: %s", option)
+                _LOGGER.info("Changing running mode to: %s (value: %d)", option, mode)
+                await self.coordinator.async_set_mode(mode)
+                return
 
     async def async_added_to_hass(self) -> None:
         """When entity is added to hass."""

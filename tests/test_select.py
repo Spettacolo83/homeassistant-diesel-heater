@@ -1244,3 +1244,65 @@ class TestCronusModeSelect:
         coordinator.data["cronus_controller_type"] = "water"
 
         assert not CronusModeSelect(coordinator).available
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("protocol", "data", "expected"),
+    [
+        (1, {"running_state": 0, "running_mode": 0, "running_step": 0}, "Standby"),
+        (2, {"running_state": 0, "running_mode": 0, "running_step": 4}, "Cooldown"),
+        (3, {"running_state": 0, "running_mode": 0, "running_step": 0}, "Standby"),
+        (4, {"running_state": 0, "running_mode": 0, "running_step": 5}, "Standby"),
+        (5, {"running_state": 0, "running_mode": None, "running_step": 0}, "Standby"),
+        (7, {"hcalory_status": 0xC, "running_mode": 0, "running_step": 6}, "Ventilation"),
+        (7, {"hcalory_status": 0xF, "running_mode": 0, "running_step": 0}, "Fault"),
+        (8, {"heatgenie_raw_state": 5, "running_mode": 0, "running_step": 0}, "Standby"),
+        (8, {"heatgenie_raw_state": 7, "running_mode": 0}, "Manual Fuel Pump"),
+        (8, {"heatgenie_raw_state": 8, "running_mode": 0, "running_step": 6}, "Ventilation"),
+        (8, {"heatgenie_raw_state": 9, "running_mode": 0, "running_step": 0}, "Start/Stop Mode"),
+        (8, {"heatgenie_raw_state": 10, "running_mode": 0}, "Start/Stop Mode"),
+        (0, {"running_state": 1, "running_mode": 1, "running_step": 6}, "Ventilation"),
+    ],
+)
+async def test_reported_noncontrol_state_is_visible_without_sending_commands(protocol, data, expected):
+    coordinator = create_mock_coordinator(protocol)
+    coordinator.is_dz06_neo = protocol == 0
+    coordinator.data.update(data)
+    entity = VevorHeaterModeSelect(coordinator)
+    assert entity.current_option == expected
+    assert expected in entity.options
+    await entity.async_select_option(expected)
+    coordinator.async_set_mode.assert_not_awaited()
+
+
+@pytest.mark.parametrize("protocol", range(1, 9))
+def test_mode_select_preserves_confirmed_level_in_standby(protocol):
+    coordinator = create_mock_coordinator(protocol)
+    coordinator.data.update(running_state=0, running_mode=1, running_step=0)
+    entity = VevorHeaterModeSelect(coordinator)
+    assert entity.current_option == "Level"
+    assert "Standby" not in entity.options
+
+
+def test_hcalory_fan_step_during_ignition_does_not_override_heating_mode():
+    coordinator = create_mock_coordinator(7)
+    coordinator.data.update(hcalory_status=0x8, running_state=1, running_mode=2, running_step=6)
+    assert VevorHeaterModeSelect(coordinator).current_option == "Temperature"
+
+
+def test_mode_select_leaves_unrecognized_active_telemetry_unknown():
+    coordinator = create_mock_coordinator(3)
+    coordinator.data.update(running_state=1, running_mode=0xFF, running_step=3)
+    entity = VevorHeaterModeSelect(coordinator)
+    assert entity.current_option is None
+    assert entity.options == ["Level", "Temperature"]
+
+
+@pytest.mark.parametrize("mode", ["Heating", "Ventilation", "Boost", "Eco"])
+def test_cronus_mode_is_in_its_own_options(mode):
+    coordinator = create_mock_coordinator(9)
+    coordinator.data.update(cronus_controller_type="air", cronus_mode=mode.lower())
+    entity = CronusModeSelect(coordinator)
+    assert entity.current_option == mode
+    assert mode in entity._attr_options

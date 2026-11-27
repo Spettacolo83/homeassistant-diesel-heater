@@ -353,9 +353,9 @@ def test_invalid_cbff_ventilation_telemetry_does_not_confirm_command():
     ("power", "mode", "step", "expected"),
     [
         (1, 0, 0, "Standby"),
-        (1, 2, 0, "Standby"),
+        (1, 2, 0, "Temperature"),
         (3, 0, 4, "Cooldown"),
-        (2, 2, 4, "Cooldown"),
+        (2, 2, 4, "Temperature"),
         (5, 2, 0, "Temperature"),
         (2, 3, 6, "Ventilation"),
     ],
