@@ -578,7 +578,7 @@ class BurnoffController:
 
     async def resume_paused_cycle(self) -> None:
         """Continue the paused cycle without reading a new setpoint from the heater."""
-        async with self.lock:
+        async with self._host.ble_operation(), self.lock:
             if self.cycle.phase != BurnoffPhase.PAUSED:
                 return
             if (
@@ -679,7 +679,7 @@ class BurnoffController:
 
     async def reapply_max_power(self, cycle: BurnoffCycle) -> None:
         """Apply a queued write only for the cycle that still owns it."""
-        async with self.lock:
+        async with self._host.ble_operation(), self.lock:
             if (
                 self.cycle is cycle and cycle.phase == BurnoffPhase.RUNNING
                 and not self.cancel_event.is_set()
@@ -725,7 +725,7 @@ class BurnoffController:
 
     async def try_snapshot_write(self) -> None:
         """Write the saved mode/setpoint now that the ECU can accept settings."""
-        async with self.lock:
+        async with self._host.ble_operation(), self.lock:
             if self.cycle.phase != BurnoffPhase.RESTORING:
                 return
             if not self.ecu_can_restore():
@@ -775,7 +775,7 @@ class BurnoffController:
             with suppress(asyncio.CancelledError, Exception):
                 await task
 
-        async with self.lock:
+        async with self._host.ble_operation(), self.lock:
             if not self.active:
                 return
             if restore:
@@ -788,7 +788,7 @@ class BurnoffController:
 
     async def complete(self) -> None:
         """Finish burn-off: restore previous mode, then power off if requested."""
-        async with self.lock:
+        async with self._host.ble_operation(), self.lock:
             if not self.active:
                 return
             # Don't send Off if the ECU already stopped (ABBA toggle would restart).
@@ -807,7 +807,7 @@ class BurnoffController:
 
     async def start(self, *, shutdown_after: bool = True) -> None:
         """Run at max power, optionally shutting down when the timer expires."""
-        async with self.lock:
+        async with self._host.ble_operation(), self.lock:
             if self.active:
                 if shutdown_after and not self.cycle.shutdown_after:
                     self.cycle.shutdown_after = True
