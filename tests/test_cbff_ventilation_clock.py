@@ -346,3 +346,49 @@ def test_invalid_cbff_ventilation_telemetry_does_not_confirm_command():
     frame = protocol._build_feaa(0x81, 1, frame[8:-1])
     assert protocol.parse(frame) is None
     assert not protocol.matches_response(frame, 2)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("power", "mode", "step", "expected"),
+    [
+        (1, 0, 0, "Standby"),
+        (1, 2, 0, "Temperature"),
+        (3, 0, 4, "Cooldown"),
+        (2, 2, 4, "Temperature"),
+        (5, 2, 0, "Temperature"),
+        (2, 3, 6, "Ventilation"),
+    ],
+)
+async def test_cbff_mode_select_displays_reported_operating_state(power, mode, step, expected):
+    frame = status(mode=mode, power=power)
+    frame[14] = step
+    frame[-1] = sum(frame[:-1]) & 255
+
+    coordinator = create_mock_coordinator()
+    coordinator._protocol_mode = 6
+    coordinator.data.update(ProtocolCBFF().parse(frame))
+    coordinator.async_set_mode = AsyncMock()
+    entity = VevorHeaterModeSelect(coordinator)
+
+    assert entity.available
+    assert entity.current_option == expected
+    assert expected in entity.options
+    if expected in ("Standby", "Cooldown"):
+        await entity.async_select_option(expected)
+        coordinator.async_set_mode.assert_not_awaited()
+
+    coordinator.data["connected"] = False
+    assert not entity.available
+    assert "Standby" not in entity.options
+    assert "Cooldown" not in entity.options
+
+
+def test_cbff_mode_select_does_not_assume_missing_status_means_standby():
+    coordinator = create_mock_coordinator()
+    coordinator._protocol_mode = 6
+    coordinator.data.update(connected=True, running_state=None, running_mode=None, running_step=None)
+    entity = VevorHeaterModeSelect(coordinator)
+
+    assert entity.current_option is None
+    assert "Standby" not in entity.options

@@ -659,13 +659,13 @@ class TestVevorHeaterOffsetSensor:
 
         assert sensor.native_value == -5
 
-    def test_native_value_default_zero(self):
-        """Test native_value defaults to 0 when missing."""
+    def test_missing_offset_has_no_reported_value(self):
         coordinator = create_mock_coordinator()
         del coordinator.data["heater_offset"]
         sensor = VevorHeaterOffsetSensor(coordinator)
 
-        assert sensor.native_value == 0
+        assert sensor.native_value is None
+        assert not sensor.available
 
     def test_available_always_when_coordinator_available(self):
         """Test available is True when coordinator is available."""
@@ -1495,3 +1495,61 @@ class TestCronusSensorSetup:
         assert any(isinstance(entity, VevorHourlyFuelConsumptionSensor) for entity in entities)
         assert any(isinstance(entity, VevorFuelRemainingSensor) for entity in entities)
         assert any(isinstance(entity, VevorTotalRuntimeSensor) for entity in entities)
+
+
+@pytest.mark.parametrize("protocol", [1, 2, 3, 4])
+def test_airheaterble_step_five_is_standby(protocol):
+    coordinator = create_mock_coordinator(protocol_mode=protocol)
+    coordinator.data["running_step"] = 5
+    assert VevorRunningStepSensor(coordinator).native_value == "Standby"
+
+
+@pytest.mark.parametrize("raw_state", [9, 10])
+def test_heatgenie_start_stop_step_has_app_label(raw_state):
+    coordinator = create_mock_coordinator(protocol_mode=8)
+    coordinator.data["heatgenie_raw_state"] = raw_state
+    assert VevorRunningStepSensor(coordinator).native_value == "Start/Stop Mode"
+
+
+@pytest.mark.parametrize(
+    ("protocol", "reported", "label"),
+    [
+        (5, {"running_step": 6}, "Ventilation"),
+        (6, {"running_step": 0, "running_state": 0}, "Standby"),
+        (7, {"running_step": 6, "hcalory_status": 0xC}, "Ventilation"),
+        (8, {"heatgenie_raw_state": 10}, "Start/Stop Mode"),
+    ],
+)
+def test_mode_sensor_matches_reported_mode_selector(protocol, reported, label):
+    from custom_components.diesel_heater.select import VevorHeaterModeSelect
+
+    coordinator = create_mock_coordinator(protocol_mode=protocol)
+    coordinator.data.update(connected=True, running_mode=0, **reported)
+    assert VevorRunningModeSensor(coordinator).native_value == label
+    assert VevorHeaterModeSelect(coordinator).current_option == label
+
+
+@pytest.mark.parametrize(
+    ("sensor_class", "data"),
+    [
+        (VevorRunningStepSensor, {"running_step": None}),
+        (VevorRunningModeSensor, {"running_mode": None, "running_step": None}),
+        (VevorRunningModeSensor, {"running_mode": 0, "running_step": None}),
+        (VevorHeaterOffsetSensor, {"heater_offset": None}),
+        (VevorLastRefueledSensor, {"last_refueled": "invalid timestamp"}),
+    ],
+)
+def test_missing_or_invalid_sensor_values_are_unavailable(sensor_class, data):
+    coordinator = create_mock_coordinator(protocol_mode=6)
+    coordinator.data.update(data)
+    sensor = sensor_class(coordinator)
+    assert sensor.native_value is None
+    assert not sensor.available
+
+
+def test_reported_zero_offset_remains_available():
+    coordinator = create_mock_coordinator(protocol_mode=6)
+    coordinator.data["heater_offset"] = 0
+    sensor = VevorHeaterOffsetSensor(coordinator)
+    assert sensor.native_value == 0
+    assert sensor.available

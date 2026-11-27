@@ -1,8 +1,6 @@
 """Select platform for Vevor Diesel Heater."""
 from __future__ import annotations
 
-PARALLEL_UPDATES = 1
-
 import logging
 
 from homeassistant.components.select import SelectEntity
@@ -29,6 +27,9 @@ from .const import (
     WARM_DRIVE_TANK_VOLUME_OPTIONS,
 )
 from .coordinator import VevorHeaterCoordinator
+from .operating_state import reported_running_mode
+
+PARALLEL_UPDATES = 1
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -153,6 +154,13 @@ class VevorHeaterModeSelect(SelectEntity):
 
     @property
     def options(self) -> list[str]:
+        """Include the displayed state so Home Assistant can render it."""
+        options = self._writable_options()
+        if (reported := self.current_option) is not None and reported not in options:
+            options.append(reported)
+        return options
+
+    def _writable_options(self) -> list[str]:
         """Return available running mode options.
 
         ABBA exposes fan-only only from standby. AA66 controllers expose it
@@ -195,31 +203,22 @@ class VevorHeaterModeSelect(SelectEntity):
 
     @property
     def current_option(self) -> str | None:
-        """Return the current running mode."""
-        # Check if currently ventilating (ABBA specific)
-        running_step = self.coordinator.data.get("running_step")
-        if running_step == RUNNING_STEP_VENTILATION:
-            return RUNNING_MODE_NAMES[RUNNING_MODE_VENTILATION]
-
-        mode = self.coordinator.data.get("running_mode")
-        if mode is not None:
-            return RUNNING_MODE_NAMES.get(mode)
-        return None
+        """Return the reported control mode or a known operating state."""
+        if not self.coordinator.data.get("connected"):
+            return None
+        return reported_running_mode(self.coordinator)
 
     async def async_select_option(self, option: str) -> None:
-        """Change the running mode."""
-        # Find the mode value for the selected option
-        mode_value = None
+        """Send a mode change only for controller-supported controls."""
+        if option not in self._writable_options():
+            # Display-only states may appear as options, including after a
+            # state transition that removed them from the current list.
+            return
         for mode, name in RUNNING_MODE_NAMES.items():
             if name == option:
-                mode_value = mode
-                break
-
-        if mode_value is not None:
-            _LOGGER.info("Changing running mode to: %s (value: %d)", option, mode_value)
-            await self.coordinator.async_set_mode(mode_value)
-        else:
-            _LOGGER.error("Unknown running mode: %s", option)
+                _LOGGER.info("Changing running mode to: %s (value: %d)", option, mode)
+                await self.coordinator.async_set_mode(mode)
+                return
 
     async def async_added_to_hass(self) -> None:
         """When entity is added to hass."""

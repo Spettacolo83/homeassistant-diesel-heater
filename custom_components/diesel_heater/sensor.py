@@ -22,15 +22,11 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import VevorHeaterConfigEntry
-from .faults import error_name
-from .const import (
-    DOMAIN,
-    RUNNING_MODE_NAMES,
-    RUNNING_STEP_NAMES,
-    CONF_NEO_CONTROLLER_TYPE,
-)
-from .temperature import NativeTemperatureMixin
+from .const import CONF_NEO_CONTROLLER_TYPE, DOMAIN, RUNNING_MODE_MANUAL
 from .coordinator import VevorHeaterCoordinator
+from .faults import error_name
+from .operating_state import reported_running_mode, reported_running_step
+from .temperature import NativeTemperatureMixin
 
 
 try:
@@ -377,15 +373,12 @@ class VevorHeaterOffsetSensor(VevorSensorBase):
     @property
     def native_value(self) -> int | None:
         """Return the state."""
-        return self.coordinator.data.get("heater_offset", 0)
+        return self.coordinator.data.get("heater_offset")
 
     @property
     def available(self) -> bool:
-        """Return if entity is available."""
-        if not self.coordinator.last_update_success:
-            return False
-        # Hcalory doesn't support temperature offset commands (@Xev, issue #34)
-        return self.coordinator.protocol_mode != 7
+        """Return whether a supported controller has supplied an offset."""
+        return self.coordinator.protocol_mode != 7 and super().available
 
 
 class VevorSupplyVoltageSensor(VevorSensorBase):
@@ -418,22 +411,7 @@ class VevorRunningStepSensor(VevorSensorBase):
     @property
     def native_value(self) -> str | None:
         """Return the state."""
-        if self.coordinator.protocol_mode == 8:
-            raw_state = self.coordinator.data.get("heatgenie_raw_state")
-            return {
-                0: "Resetting",
-                1: "Ignition",
-                2: "Temperature Control",
-                3: "Manual Control",
-                4: "Cooldown",
-                5: "Standby",
-                6: "Error",
-                7: "Manual Fuel Pump",
-                8: "Ventilation",
-                9: "Start/Stop Mode",
-            }.get(raw_state, f"Unknown ({raw_state})")
-        step = self.coordinator.data.get("running_step")
-        return RUNNING_STEP_NAMES.get(step, f"Unknown ({step})")
+        return reported_running_step(self.coordinator)
 
 
 class VevorRunningModeSensor(VevorSensorBase):
@@ -448,8 +426,12 @@ class VevorRunningModeSensor(VevorSensorBase):
     @property
     def native_value(self) -> str | None:
         """Return the state."""
+        if (reported := reported_running_mode(self.coordinator)) is not None:
+            return reported
         mode = self.coordinator.data.get("running_mode")
-        return RUNNING_MODE_NAMES.get(mode, f"Unknown ({mode})")
+        if mode is None or mode == RUNNING_MODE_MANUAL:
+            return None
+        return f"Unknown ({mode})"
 
 
 class VevorSetLevelSensor(VevorSensorBase):
@@ -811,7 +793,7 @@ class VevorLastRefueledSensor(VevorSensorBase):
     @property
     def available(self) -> bool:
         """Return if entity is available."""
-        return self.coordinator.data.get("last_refueled") is not None
+        return self.native_value is not None
 
 
 class VevorFuelConsumedSinceResetSensor(VevorSensorBase):
