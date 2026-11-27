@@ -22,6 +22,9 @@ from .const import (
     RUNNING_MODE_TEMPERATURE,
     RUNNING_MODE_VENTILATION,
     RUNNING_MODE_NAMES,
+    RUNNING_STATE_OFF,
+    RUNNING_STEP_COOLDOWN,
+    RUNNING_STEP_NAMES,
     RUNNING_STEP_STANDBY,
     RUNNING_STEP_VENTILATION,
     TANK_VOLUME_OPTIONS,
@@ -152,6 +155,19 @@ class VevorHeaterModeSelect(SelectEntity):
         self._attr_unique_id = f"{coordinator.address}_running_mode"
 
     @property
+    def _cbff_status_option(self) -> str | None:
+        """Display a confirmed CBFF shutdown step alongside the control modes."""
+        data = self.coordinator.data
+        if self.coordinator.protocol_mode != 6 or not data.get("connected"):
+            return None
+        step = data.get("running_step")
+        if step == RUNNING_STEP_COOLDOWN:
+            return RUNNING_STEP_NAMES[RUNNING_STEP_COOLDOWN]
+        if step == RUNNING_STEP_STANDBY and data.get("running_state") == RUNNING_STATE_OFF:
+            return RUNNING_STEP_NAMES[RUNNING_STEP_STANDBY]
+        return None
+
+    @property
     def options(self) -> list[str]:
         """Return available running mode options.
 
@@ -180,6 +196,9 @@ class VevorHeaterModeSelect(SelectEntity):
         ):
             base_options.append(RUNNING_MODE_NAMES[RUNNING_MODE_VENTILATION])
 
+        if status_option := self._cbff_status_option:
+            base_options.append(status_option)
+
         return base_options
 
     @property
@@ -196,6 +215,9 @@ class VevorHeaterModeSelect(SelectEntity):
     @property
     def current_option(self) -> str | None:
         """Return the current running mode."""
+        if status_option := self._cbff_status_option:
+            return status_option
+
         # Check if currently ventilating (ABBA specific)
         running_step = self.coordinator.data.get("running_step")
         if running_step == RUNNING_STEP_VENTILATION:
@@ -208,6 +230,10 @@ class VevorHeaterModeSelect(SelectEntity):
 
     async def async_select_option(self, option: str) -> None:
         """Change the running mode."""
+        # Home Assistant requires the displayed state to be in options.
+        # Standby and Cooldown are informational, so they never send a command.
+        if option in (RUNNING_STEP_NAMES[RUNNING_STEP_STANDBY], RUNNING_STEP_NAMES[RUNNING_STEP_COOLDOWN]):
+            return
         # Find the mode value for the selected option
         mode_value = None
         for mode, name in RUNNING_MODE_NAMES.items():
