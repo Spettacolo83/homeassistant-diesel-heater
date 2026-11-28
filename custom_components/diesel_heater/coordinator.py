@@ -3699,7 +3699,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     ) -> bool:
         """Write one HeatGenie command and confirm it from an F2 report."""
         if self.data.get("heatgenie_raw_state") == ProtocolHeatGenie.PRIMING_STATE and (
-            command == 2 or (command == 3 and argument == 1)
+            command == 2 or (command == 3 and argument)
         ):
             self._logger.warning("Stop HeatGenie priming before requesting heat or changing mode")
             return False

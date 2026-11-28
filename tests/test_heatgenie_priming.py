@@ -141,12 +141,12 @@ async def test_stale_or_disconnected_report_cannot_start_priming():
 
 
 @pytest.mark.asyncio
-async def test_priming_blocks_regular_heat_and_mode_commands():
+@pytest.mark.parametrize(("command", "argument"), [(3, 1), (3, 2), (3, -1), (2, 1)])
+async def test_priming_blocks_regular_heat_and_mode_commands(command, argument):
     coordinator = heater()
     report(coordinator, state=7, flags=1, seconds=19)
     coordinator._write_gatt = AsyncMock()
-    assert not await coordinator._send_heatgenie_command(3, 1, 5)
-    assert not await coordinator._send_heatgenie_command(2, 1, 5)
+    assert not await coordinator._send_heatgenie_command(command, argument, 5)
     coordinator._write_gatt.assert_not_awaited()
 
 
