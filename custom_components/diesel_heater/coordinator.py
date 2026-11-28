@@ -3240,8 +3240,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     async def _write_gatt(self, packet: bytearray) -> None:
         """Write a packet to the appropriate BLE characteristic.
 
-        Preserve no-response writes except for ABBA characteristics that
-        advertise only acknowledged writes. Heater status still arrives
+        Use acknowledged writes for write-only ABBA transports and for
+        compatible AA66 FFE1 characteristics. Heater status still arrives
         separately through notifications.
         """
         if self._stopping:
@@ -3283,6 +3283,17 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             and "write" in write_char.properties
             and "write-without-response" not in write_char.properties
         )
+        # AirHeaterBLE's Android Zhimi-BLE plugin maps write type 0 to an
+        # acknowledged GATT write. Include the initial FFE1 status probe
+        # because it is sent before the first AA66 report identifies mode 4.
+        if (
+            self._protocol_mode in (0, 4)
+            and char_uuid.lower() == CHARACTERISTIC_UUID
+            and len(packet) == 8
+            and packet[:2] == b"\xaa\x55"
+            and "write" in write_char.properties
+        ):
+            response = True
         async with asyncio.timeout(20):
             await self._client.write_gatt_char(write_char, packet, response=response)
         self._logger.debug(
