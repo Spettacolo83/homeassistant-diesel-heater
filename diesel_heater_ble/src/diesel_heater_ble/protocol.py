@@ -504,9 +504,9 @@ class ProtocolAA55Encrypted(VevorCommandMixin, HeaterProtocol):
             timer_start = (data[21] << 8) | data[22]
             timer_duration = (data[23] << 8) | data[24]
             timer_enabled = data[25] == 1
-            parsed["supports_timer"] = (
-                data[25] in (0, 1) and timer_start != 65535 and timer_duration != 65535
-            )
+            # The enable switch and time fields have independent sentinels.
+            # In particular, 0xFFFF duration must not hide a valid enable switch.
+            parsed["supports_timer"] = True if data[25] in (0, 1) else False if data[25] == 255 else None
 
             parsed["timer_start_minutes"] = timer_start
             parsed["timer_duration_minutes"] = timer_duration
@@ -623,9 +623,9 @@ class ProtocolAA66Encrypted(VevorCommandMixin, HeaterProtocol):
             timer_start = (data[21] << 8) | data[22]
             timer_duration = (data[23] << 8) | data[24]
             timer_enabled = data[25] == 1
-            parsed["supports_timer"] = (
-                data[25] in (0, 1) and timer_start != 65535 and timer_duration != 65535
-            )
+            # The enable switch and time fields have independent sentinels.
+            # In particular, 0xFFFF duration must not hide a valid enable switch.
+            parsed["supports_timer"] = True if data[25] in (0, 1) else False if data[25] == 255 else None
 
             parsed["timer_start_minutes"] = timer_start
             parsed["timer_duration_minutes"] = timer_duration

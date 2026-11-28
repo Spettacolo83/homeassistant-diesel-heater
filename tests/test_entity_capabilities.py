@@ -11,7 +11,7 @@ from custom_components.diesel_heater.capabilities import (
     controller_capabilities,
 )
 from custom_components.diesel_heater.hcalory import HcaloryVariant
-from diesel_heater_ble import ProtocolAA66Encrypted, ProtocolHcalory
+from diesel_heater_ble import ProtocolAA55Encrypted, ProtocolAA66Encrypted, ProtocolHcalory
 
 from .test_coordinator import create_mock_coordinator
 from .test_protocol import _make_aa66enc_data
@@ -162,3 +162,13 @@ async def test_hcalory_co_registration_matches_app_model_and_report(variant, raw
     else:
         assert len(co) == 1
         assert co[0].native_value == expected
+
+
+@pytest.mark.parametrize("protocol", [ProtocolAA55Encrypted(), ProtocolAA66Encrypted()])
+@pytest.mark.parametrize("enable,expected", [(0, True), (1, True), (255, False), (2, None)])
+def test_timer_enable_is_independent_of_duration(protocol, enable, expected):
+    frame = bytearray(48)
+    frame[21:26] = bytes((0, 120, 255, 255, enable))
+    report = protocol.parse(frame)
+    assert report["supports_timer"] is expected
+    assert report["timer_enabled"] is (enable == 1)
