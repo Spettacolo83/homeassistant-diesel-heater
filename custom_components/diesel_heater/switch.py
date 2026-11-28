@@ -12,6 +12,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import VevorHeaterConfigEntry
+from .capabilities import controller_capabilities
 from .const import CONF_EXTERNAL_TEMP_SENSOR, DOMAIN, RUNNING_MODE_TEMPERATURE, RUNNING_STATE_ON
 from .coordinator import VevorHeaterCoordinator
 
@@ -24,43 +25,42 @@ async def async_setup_entry(
     """Set up Vevor Heater switch.
 
     Entities are created conditionally based on the detected BLE protocol.
-    Mode 0 (unknown) creates all entities as safe fallback.
     """
     coordinator = entry.runtime_data
-    mode = coordinator.protocol_mode
+    capabilities = controller_capabilities(coordinator)
 
     # Core switches (all protocols)
     entities: list[SwitchEntity] = [
         VevorHeaterPowerSwitch(coordinator),
     ]
-    if mode != 9:
+    if capabilities["non_cronus"]:
         entities.append(VevorBurnoffSwitch(coordinator))
 
     # Auto Temperature Offset (not available for Hcalory - @Xev, issue #34)
-    if mode in (1, 2, 3, 4, 6):
+    if capabilities["auto_offset"]:
         entities.append(VevorAutoOffsetSwitch(coordinator))
 
     # Auto Start/Stop (AA66Encrypted, ABBA, CBFF, Hcalory)
-    if (mode in (0, 4, 5, 6, 7) and coordinator.is_dz06_neo is not True) or coordinator.is_warm_drive_controller is True:
+    if capabilities["auto_start_stop"]:
         entities.append(VevorAutoStartStopSwitch(coordinator))
-    if coordinator.is_warm_drive_controller is True:
+    if capabilities["warm_drive"]:
         entities.append(VevorWarmDriveMaxHeatSwitch(coordinator))
 
     # Temperature unit (AA66Encrypted, ABBA, CBFF, Hcalory)
-    if mode in (0, 4, 5, 6, 7, 8) and coordinator.is_dz06_neo is not True:
+    if capabilities["temp_unit"]:
         entities.append(VevorTempUnitSwitch(coordinator))
 
     # Altitude unit (AA66Encrypted, ABBA, CBFF only - NOT Hcalory)
     # @Xev confirmed Hcalory has no altitude sensor (issue #34)
-    if mode in (0, 4, 5, 6) and coordinator.is_dz06_neo is not True:
+    if capabilities["altitude_unit"]:
         entities.append(VevorAltitudeUnitSwitch(coordinator))
 
     # High altitude (ABBA only)
-    if mode in (0, 5) and coordinator.is_dz06_neo is not True:
+    if capabilities["abba"]:
         entities.append(VevorHighAltitudeSwitch(coordinator))
 
     # Timer (AA55/AA66 encrypted only - issue #48)
-    if mode in (2, 4):
+    if capabilities["timer"]:
         entities.append(VevorTimerSwitch(coordinator))
 
     async_add_entities(entities)

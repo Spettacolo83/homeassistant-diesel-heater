@@ -10,6 +10,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import VevorHeaterConfigEntry
+from .capabilities import controller_capabilities
 from .const import DOMAIN
 from .coordinator import VevorHeaterCoordinator
 
@@ -21,20 +22,19 @@ async def async_setup_entry(
 ) -> None:
     """Set up Vevor Heater buttons."""
     coordinator = entry.runtime_data
-    if coordinator.protocol_mode == 9:
-        if coordinator.has_cronus_fuel_estimate:
-            async_add_entities([VevorResetFuelLevelButton(coordinator)])
-        return
-
-    entities = [
-        VevorResetFuelLevelButton(coordinator),
-        VevorPowerOffNowButton(coordinator),
-        VevorRunBurnoffButton(coordinator),
-    ]
-    if coordinator.supports_time_sync:
-        entities.insert(0, VevorTimeSyncButton(coordinator))
-
-    async_add_entities(entities)
+    capabilities = controller_capabilities(coordinator)
+    entities: list[ButtonEntity] = []
+    if capabilities["time_sync"]:
+        entities.append(VevorTimeSyncButton(coordinator))
+    if capabilities["fuel"]:
+        entities.append(VevorResetFuelLevelButton(coordinator))
+    if capabilities["burnoff"]:
+        entities.extend([
+            VevorPowerOffNowButton(coordinator),
+            VevorRunBurnoffButton(coordinator),
+        ])
+    if entities:
+        async_add_entities(entities)
 
 
 class VevorTimeSyncButton(CoordinatorEntity[VevorHeaterCoordinator], ButtonEntity):

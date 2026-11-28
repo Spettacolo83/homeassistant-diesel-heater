@@ -205,8 +205,8 @@ class TestAsyncSetupEntry:
 
         async_add_entities.assert_called_once()
         call_args = async_add_entities.call_args[0][0]
-        # Mode 0 creates all 6 sensors
-        assert len(call_args) == 6
+        # Mode 0 does not invent an Auto Start/Stop capability
+        assert len(call_args) == 5
 
     @pytest.mark.asyncio
     async def test_async_setup_entry_protocol_mode_5(self):

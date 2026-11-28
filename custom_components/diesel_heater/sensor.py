@@ -23,11 +23,11 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import VevorHeaterConfigEntry
 from .faults import error_name
+from .capabilities import controller_capabilities
 from .const import (
     DOMAIN,
     RUNNING_MODE_NAMES,
     RUNNING_STEP_NAMES,
-    CONF_NEO_CONTROLLER_TYPE,
 )
 from .temperature import NativeTemperatureMixin
 from .coordinator import VevorHeaterCoordinator
@@ -51,10 +51,9 @@ async def async_setup_entry(
     """Set up Vevor Heater sensors.
 
     Entities are created conditionally based on the detected BLE protocol.
-    Mode 0 (unknown) creates all entities as safe fallback.
     """
     coordinator = entry.runtime_data
-    mode = coordinator.protocol_mode
+    capabilities = controller_capabilities(coordinator)
 
     # Telemetry shared by the established protocols and ThermoConnect.
     entities: list[VevorSensorBase] = [
@@ -63,10 +62,10 @@ async def async_setup_entry(
         VevorProtocolSensor(coordinator),
     ]
 
-    if mode != 9 or coordinator.data.get("cronus_controller_type") == "air":
+    if capabilities["level_telemetry"]:
         entities.append(VevorSetLevelSensor(coordinator))
 
-    if mode != 9:
+    if capabilities["non_cronus"]:
         entities.extend([
             VevorErrorCodeSensor(coordinator),
             VevorRunningStepSensor(coordinator),
@@ -76,12 +75,12 @@ async def async_setup_entry(
             VevorBurnoffHoursSensor(coordinator),
         ])
 
-    if mode != 9 and coordinator.is_dz06_neo is not True:
+    if capabilities["case_temperature"]:
         entities.append(VevorCaseTemperatureSensor(coordinator))
 
     # These are integration-local estimates. Cronus exposes them only after a
     # matching, user-selected model profile supplies the documented fuel curve.
-    if mode != 9 or coordinator.has_cronus_fuel_estimate:
+    if capabilities["fuel"]:
         entities.extend([
             VevorHourlyFuelConsumptionSensor(coordinator),
             VevorDailyFuelConsumedSensor(coordinator),
@@ -95,59 +94,52 @@ async def async_setup_entry(
             VevorFuelConsumedSinceResetSensor(coordinator),
         ])
 
-    if mode == 9:
+    if capabilities["cronus"]:
         entities.extend([
             VevorAuxTemperatureSensor(coordinator, "cronus_external_temperature", "External Temperature"),
             VevorAuxTemperatureSensor(coordinator, "cronus_coolant_temperature", "Coolant Temperature"),
             VevorCronusDurationSensor(coordinator, "cronus_duration", "Configured Run Duration"),
             VevorCronusDurationSensor(coordinator, "cronus_max_duration", "Maximum Run Duration"),
         ])
-        if coordinator.data.get("cronus_controller_type") == "water":
+        if capabilities["cronus_water"]:
             entities.append(VevorCronusModeSensor(coordinator))
-        if coordinator.data.get("cronus_controller_type") == "air":
+        if capabilities["cronus_air"]:
             entities.append(VevorCronusAirPressureSensor(coordinator))
 
     # Altitude sensor (not available for Hcalory - @Xev, issue #34)
-    if mode not in (7, 9):
+    if capabilities["altitude"]:
         entities.append(VevorAltitudeSensor(coordinator))
 
     # Extended sensors (encrypted protocols + CBFF: heater_offset, CO, raw temp)
-    if mode in (0, 2, 4, 6) and coordinator.is_dz06_neo is not True:
+    if capabilities["heater_offset"]:
         entities.extend([
             VevorRawInteriorTemperatureSensor(coordinator),
             VevorHeaterOffsetSensor(coordinator),
-            VevorCOSensor(coordinator),
         ])
+    if capabilities["co_sensor"]:
+        entities.append(VevorCOSensor(coordinator))
 
     # CBFF-only sensors (HW/SW version, remaining run time, temp diff)
-    if mode in (0, 6) and coordinator.is_dz06_neo is not True:
+    if capabilities["cbff"]:
         entities.extend([
             VevorHardwareVersionSensor(coordinator),
             VevorSoftwareVersionSensor(coordinator),
             VevorRemainingRunTimeSensor(coordinator),
-            VevorStartupTempDiffSensor(coordinator),
-            VevorShutdownTempDiffSensor(coordinator),
         ])
 
-    if coordinator.is_warm_drive_controller:
-        entities.append(VevorMotorSpeedSensor(coordinator))
-        entities.append(VevorPumpFrequencySensor(coordinator))
-    if coordinator.is_warm_drive_controller:
-        entities.append(
-            VevorAuxTemperatureSensor(
-                coordinator, "fire_temperature", "Fire Temperature"
-            )
-        )
+    if capabilities["startup_temp_diff"]:
+        entities.append(VevorStartupTempDiffSensor(coordinator))
+    if capabilities["shutdown_temp_diff"]:
+        entities.append(VevorShutdownTempDiffSensor(coordinator))
 
-    if (
-        coordinator.is_warm_drive_controller
-        and (
-            (
-                coordinator.data.get("neo_controller_type")
-                or entry.data.get(CONF_NEO_CONTROLLER_TYPE)
-            ) == "water"
-        )
-    ):
+    if capabilities["warm_drive"]:
+        entities.extend([
+            VevorMotorSpeedSensor(coordinator),
+            VevorPumpFrequencySensor(coordinator),
+            VevorAuxTemperatureSensor(coordinator, "fire_temperature", "Fire Temperature"),
+        ])
+
+    if capabilities["warm_drive_water"]:
         entities.extend([
             VevorAuxTemperatureSensor(
                 coordinator, "hot_water_temperature", "Hot Water Temperature"
@@ -158,9 +150,9 @@ async def async_setup_entry(
         ])
 
     # A HeatGenie frame omits each probe that the controller marks unsupported.
-    if mode == 8 and coordinator.data.get("intake_temperature") is not None:
+    if capabilities["intake_temperature"]:
         entities.append(VevorAuxTemperatureSensor(coordinator, "intake_temperature", "Intake Temperature"))
-    if mode == 8 and coordinator.data.get("outlet_temperature") is not None:
+    if capabilities["outlet_temperature"]:
         entities.append(VevorAuxTemperatureSensor(coordinator, "outlet_temperature", "Outlet Temperature"))
     async_add_entities(entities)
 

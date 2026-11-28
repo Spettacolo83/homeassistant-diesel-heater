@@ -16,6 +16,7 @@ from homeassistant.util.percentage import (
 )
 
 from . import VevorHeaterConfigEntry
+from .capabilities import controller_capabilities
 from .const import (
     ABBA_MAX_LEVEL,
     DOMAIN,
@@ -39,13 +40,8 @@ async def async_setup_entry(
 ) -> None:
     """Set up Vevor Heater fan from config entry."""
     coordinator = entry.runtime_data
-    if coordinator.protocol_mode != 9 and (
-        not coordinator.is_dz06_neo
-        or (
-            coordinator.is_warm_drive_controller
-            and coordinator.data.get("neo_controller_type") == "air"
-        )
-    ):
+    capabilities = controller_capabilities(coordinator)
+    if capabilities["level_fan"]:
         async_add_entities([VevorHeaterFan(coordinator)])
 
 

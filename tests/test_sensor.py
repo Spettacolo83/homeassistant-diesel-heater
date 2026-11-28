@@ -455,6 +455,7 @@ class TestAsyncSetupEntry:
     async def test_async_setup_entry_adds_warm_drive_motor_speed(self):
         """The explicit Warm Drive motor-speed field survives initial offline setup."""
         coordinator = create_mock_coordinator(protocol_mode=0)
+        coordinator.is_dz06_neo = True
         coordinator.is_warm_drive_controller = True
         async_add_entities = MagicMock()
 
@@ -473,6 +474,7 @@ class TestAsyncSetupEntry:
     @pytest.mark.asyncio
     async def test_async_setup_entry_adds_warm_drive_water_temperatures(self):
         coordinator = create_mock_coordinator(protocol_mode=0)
+        coordinator.is_dz06_neo = True
         coordinator.is_warm_drive_controller = True
         coordinator.data["neo_controller_type"] = "water"
         async_add_entities = MagicMock()
@@ -495,6 +497,7 @@ class TestAsyncSetupEntry:
     @pytest.mark.asyncio
     async def test_async_setup_entry_omits_water_temperatures_for_air_controller(self):
         coordinator = create_mock_coordinator(protocol_mode=0)
+        coordinator.is_dz06_neo = True
         coordinator.is_warm_drive_controller = True
         coordinator.data["neo_controller_type"] = "air"
         async_add_entities = MagicMock()
@@ -527,12 +530,14 @@ class TestAsyncSetupEntry:
         async_add_entities.assert_called_once()
         call_args = async_add_entities.call_args[0][0]
         # Mode 0 creates all sensors (21 core + altitude + 3 extended + 5 CBFF = 30)
-        assert len(call_args) == 30
+        assert len(call_args) == 22
 
     @pytest.mark.asyncio
     async def test_async_setup_entry_protocol_mode_2(self):
         """Test async_setup_entry with protocol mode 2 (encrypted)."""
         coordinator = create_mock_coordinator(protocol_mode=2)
+
+        coordinator.data.update(supports_co_sensor=True)
 
         entry = MagicMock()
         entry.runtime_data = coordinator
@@ -550,6 +555,8 @@ class TestAsyncSetupEntry:
     async def test_async_setup_entry_protocol_mode_6(self):
         """Test async_setup_entry with protocol mode 6 (CBFF)."""
         coordinator = create_mock_coordinator(protocol_mode=6)
+
+        coordinator.data.update(supports_co_sensor=True, supports_startup_temp_diff=True, supports_shutdown_temp_diff=True)
 
         entry = MagicMock()
         entry.runtime_data = coordinator
@@ -576,6 +583,7 @@ class TestHeatGenieEntitySetup:
         """Create entities only for probes present in the status frame."""
         coordinator = create_mock_coordinator(protocol_mode=8)
         coordinator.data["intake_temperature"] = 18.5
+        coordinator.data["supports_intake_temperature"] = True
 
         entry = MagicMock()
         entry.runtime_data = coordinator

@@ -876,8 +876,8 @@ class TestAsyncSetupEntry:
     """Tests for async_setup_entry with different protocol modes."""
 
     @pytest.mark.asyncio
-    async def test_setup_entry_protocol_mode_0_creates_all_entities(self):
-        """Test protocol mode 0 (unknown) creates all entities as fallback."""
+    async def test_setup_entry_protocol_mode_0_does_not_create_optional_entities(self):
+        """Test protocol mode 0 (unknown) omits optional entities as fallback."""
         coordinator = create_mock_coordinator()
         coordinator.protocol_mode = 0
 
@@ -891,7 +891,7 @@ class TestAsyncSetupEntry:
         async_add_entities.assert_called_once()
         entities = async_add_entities.call_args[0][0]
         # Mode 0: mode + language + pump_type + tank_volume + backlight = 5
-        assert len(entities) == 5
+        assert len(entities) == 1
 
     @pytest.mark.asyncio
     async def test_setup_entry_protocol_mode_1_creates_mode_only(self):
@@ -918,6 +918,8 @@ class TestAsyncSetupEntry:
         coordinator = create_mock_coordinator()
         coordinator.protocol_mode = 2
 
+        coordinator.data.update(supports_backlight=True)
+
         entry = MagicMock()
         entry.runtime_data = coordinator
         async_add_entities = MagicMock()
@@ -935,6 +937,8 @@ class TestAsyncSetupEntry:
         """Test protocol mode 4 (AA66Encrypted) creates all entities."""
         coordinator = create_mock_coordinator()
         coordinator.protocol_mode = 4
+
+        coordinator.data.update(supports_language=True, supports_pump_type=True, supports_tank_volume=True, supports_backlight=True)
 
         entry = MagicMock()
         entry.runtime_data = coordinator
@@ -972,6 +976,8 @@ class TestAsyncSetupEntry:
         coordinator = create_mock_coordinator()
         coordinator.protocol_mode = 6
 
+        coordinator.data.update(supports_language=True, supports_pump_type=True, supports_tank_volume=True, supports_backlight=True)
+
         entry = MagicMock()
         entry.runtime_data = coordinator
         async_add_entities = MagicMock()
@@ -1001,10 +1007,10 @@ class TestAsyncSetupEntry:
         entity_types = [type(e).__name__ for e in entities]
 
         assert "VevorHeaterModeSelect" in entity_types
-        assert "VevorHeaterLanguageSelect" in entity_types
-        assert "VevorHeaterPumpTypeSelect" in entity_types
-        assert "VevorHeaterTankVolumeSelect" in entity_types
-        assert "VevorBacklightSelect" in entity_types
+        assert "VevorHeaterLanguageSelect" not in entity_types
+        assert "VevorHeaterPumpTypeSelect" not in entity_types
+        assert "VevorHeaterTankVolumeSelect" not in entity_types
+        assert "VevorBacklightSelect" not in entity_types
 
 
 # ---------------------------------------------------------------------------

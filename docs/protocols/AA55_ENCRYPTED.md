@@ -26,6 +26,8 @@ header. Commands remain the normal unencrypted eight-byte AA55 packets.
 | 13-14 | Case temperature | Big-endian signed 16-bit value |
 | 19-20 | Device time | Big-endian minutes since midnight |
 | 21-25 | Timer | Big-endian start and duration minutes, then enable flag |
+| 26, 28-30 | Language, tank volume, pump type/RF433, altitude unit | Same settings as encrypted AA66 |
+| 31 | Automatic start/stop | `0` off, `1` on, `255` unsupported |
 | 32-33 | Cabin temperature | Big-endian signed value, divided by 10 |
 | 34 | Heater offset | Signed 8-bit value |
 | 36 | Backlight | Controller brightness value |

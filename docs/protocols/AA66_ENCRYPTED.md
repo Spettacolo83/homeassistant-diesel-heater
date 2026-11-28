@@ -30,7 +30,7 @@ remain the normal unencrypted eight-byte AA55 packets.
 | 28 | Tank volume | Controller value |
 | 29 | Pump type / RF433 | `20` RF433 off, `21` RF433 on, otherwise pump type |
 | 30 | Altitude unit | Controller value |
-| 31 | Automatic start/stop | `1` enabled |
+| 31 | Automatic start/stop | `0` off, `1` on, `255` unsupported |
 | 32-33 | Cabin temperature | Big-endian signed value, divided by 10 |
 | 34 | Heater offset | Signed 8-bit value |
 | 35 | Error code | AA66 encrypted error position |
@@ -43,6 +43,15 @@ Some faulty controllers report the temperature-unit byte incorrectly. The
 integration's Force Celsius / Force Fahrenheit option is deliberately applied
 before parsing byte 9, so the target-temperature conversion uses the selected
 unit at the protocol boundary.
+
+## Optional hardware
+
+The AirHeaterBLE 1.2.0 status reader keeps byte 31 as a number. Its
+heater-settings screen checks for `255` before offering the Auto Start/Stop
+control. The integration preserves this distinction and offers the control for
+controllers reporting `0` or `1`. A supported control is usable in Temperature
+mode. Sunster 2.2.000 checks byte 37 for `1` before displaying CO. A confirmed
+CO probe still reports a valid reading when its concentration is zero.
 
 ## Commands and detection
 
