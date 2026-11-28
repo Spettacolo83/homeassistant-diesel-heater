@@ -7,6 +7,7 @@ import logging
 import random
 import time
 from datetime import datetime, timedelta
+from collections.abc import Callable
 from typing import Any
 
 from bleak import BleakClient
@@ -1582,6 +1583,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         "supply_voltage", "running_state", "running_step", "running_mode",
         "set_level", "set_temp", "altitude", "error_code",
         "hourly_fuel_consumption", "co_ppm", "remain_run_time", "motor_speed", "pump_frequency",
+        "heatgenie_priming_remaining",
         "fire_temperature", "hot_water_temperature", "water_temperature",
         "intake_temperature", "outlet_temperature", "pump_active", "fan_active",
         "glow_plug_active", "cronus_external_temperature", "cronus_coolant_temperature",
@@ -3696,6 +3698,11 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self, command: int, argument: int, timeout: float
     ) -> bool:
         """Write one HeatGenie command and confirm it from an F2 report."""
+        if self.data.get("heatgenie_raw_state") == ProtocolHeatGenie.PRIMING_STATE and (
+            command == 2 or (command == 3 and argument == 1)
+        ):
+            self._logger.warning("Stop HeatGenie priming before requesting heat or changing mode")
+            return False
         packet = self._build_command_packet(command, argument)
         self._notification_data = None
         self._heatgenie_status_event.clear()
@@ -3733,6 +3740,117 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             return False
         finally:
             self._heatgenie_pending_button = None
+
+    @property
+    def supports_fuel_priming(self) -> bool:
+        """Only the HeatGenie APK establishes this BLE maintenance sequence."""
+        return self._protocol_mode == 8 and isinstance(self._protocol, ProtocolHeatGenie)
+
+    @property
+    def fuel_priming_ready(self) -> bool:
+        """Offer priming from reported standby with no burner components active."""
+        return (
+            self.supports_fuel_priming
+            and self.data.get("connected", False)
+            and self.data.get("heatgenie_raw_state") == ProtocolHeatGenie.STANDBY_STATE
+            and self.data.get("error_code") == 0
+            and self.data.get("heatgenie_run_mode") in (0, 1)
+            and self.data.get("pump_active") is False
+            and self.data.get("fan_active") is False
+            and self.data.get("glow_plug_active") is False
+            and not self._burnoff.active
+        )
+
+    @property
+    def fuel_priming_mode(self) -> bool:
+        """Return whether the connected heater reports manual pump mode."""
+        return (
+            self.supports_fuel_priming
+            and self.data.get("connected", False)
+            and self.data.get("heatgenie_raw_state") == ProtocolHeatGenie.PRIMING_STATE
+        )
+
+    async def _confirm_heatgenie_priming(
+        self, client: BleakClient, matches: Callable[[], bool], packet: bytearray | None = None
+    ) -> bool:
+        """Require an F2 report from the same connection after this stage began."""
+        if self._stopping or self._client is not client or not client.is_connected:
+            return False
+        previous = self._heatgenie_last_status_at
+        self._heatgenie_status_event.clear()
+        if packet is not None:
+            await self._write_gatt(packet)
+        deadline = time.monotonic() + 10
+        while not self._stopping and self._client is client and client.is_connected:
+            if self._heatgenie_last_status_at > previous and matches():
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not await self._wait_for_heatgenie_status(remaining):
+                return False
+            self._heatgenie_status_event.clear()
+        return False
+
+    async def async_set_fuel_priming(self, *, start: bool) -> bool:
+        """Follow the app's prepare, start and stop controls under the command lock."""
+        async with self._heatgenie_command_lock:
+            protocol = self._protocol
+            client = self._client
+            if not self.supports_fuel_priming or not isinstance(protocol, ProtocolHeatGenie) or client is None:
+                return False
+
+            def standby() -> bool:
+                return (
+                    self.data.get("heatgenie_raw_state") == protocol.STANDBY_STATE
+                    and self.data.get("pump_active") is False
+                )
+
+            def prepared(*, active: bool) -> bool:
+                remaining = self.data.get("heatgenie_priming_remaining")
+                return (
+                    self.fuel_priming_mode
+                    and self.data.get("pump_active") is active
+                    and self.data.get("error_code") == 0
+                    and self.data.get("fan_active") is False
+                    and self.data.get("glow_plug_active") is False
+                    and not self._burnoff.active
+                    and isinstance(remaining, int)
+                    and 0 < remaining <= protocol.PRIMING_SECONDS
+                    and (active or remaining == protocol.PRIMING_SECONDS)
+                )
+
+            try:
+                # A cached standby report is insufficient permission to inject fuel.
+                if not await self._confirm_heatgenie_priming(client, lambda: True):
+                    return False
+                if start:
+                    if not self.fuel_priming_ready:
+                        return False
+                    if not await self._confirm_heatgenie_priming(
+                        client, lambda: prepared(active=False), protocol.build_fuel_priming_setup()
+                    ):
+                        return False
+                    return await self._confirm_heatgenie_priming(
+                        client, lambda: prepared(active=True), protocol.build_fuel_priming_button(start=True)
+                    )
+
+                if not self.fuel_priming_mode:
+                    return standby()
+                if self.data.get("pump_active") is not False:
+                    if not await self._confirm_heatgenie_priming(
+                        client,
+                        lambda: standby() or (self.fuel_priming_mode and self.data.get("pump_active") is False),
+                        protocol.build_fuel_priming_button(start=False),
+                    ):
+                        return False
+                if standby():
+                    return True
+                # The app's manual-pump mode exit is the normal Off button.
+                return await self._confirm_heatgenie_priming(
+                    client, standby, protocol.build_command(3, 0, self._passkey)
+                )
+            except (BleakError, OSError, TimeoutError) as err:
+                self._logger.warning("HeatGenie fuel priming operation failed: %s", err)
+                return False
 
     async def _read_cbff_metadata_unlocked(self) -> bool:
         """Read language capabilities, as the app does on its attributes page."""
@@ -4256,6 +4374,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
     async def _power_off(self) -> bool:
         """Send the real power-off command and return its result."""
+        if self.fuel_priming_mode:
+            return await self.async_set_fuel_priming(start=False)
         if self.is_dz06_neo:
             self._burnoff.ha_power_off = True
             success = await self._send_dz06_neo_power(False)
