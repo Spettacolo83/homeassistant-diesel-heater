@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
+from bleak.exc import BleakError
 
 # Import stubs first
 from . import conftest  # noqa: F401
@@ -4207,8 +4208,9 @@ class TestEnsureConnected:
         assert coordinator._active_char_uuid == CHARACTERISTIC_UUID
 
     @pytest.mark.asyncio
-    async def test_cbff_reconnect_restarts_authenticated_session(self):
-        """A known CBFF controller sends its handshake after reconnecting."""
+    @pytest.mark.parametrize("v21", [False, True])
+    async def test_cbff_reconnect_only_authenticates_v21(self, v21):
+        """Only a known V2.1 controller sends its handshake after reconnecting."""
         from custom_components.diesel_heater.const import (
             SERVICE_UUID,
             CHARACTERISTIC_UUID,
@@ -4220,6 +4222,7 @@ class TestEnsureConnected:
         coordinator._ble_device.address = "AA:BB:CC:DD:EE:FF"
         coordinator._protocol_mode = 6
         coordinator._protocol = coordinator._protocols[6]
+        coordinator._protocol.set_v21_mode(v21)
         coordinator._send_wake_up_ping = AsyncMock()
         coordinator._queue_v21_handshake = MagicMock()
         coordinator._wait_for_v21_handshake = AsyncMock()
@@ -4245,8 +4248,12 @@ class TestEnsureConnected:
 
         assert coordinator._protocol_mode == 6
         coordinator._send_wake_up_ping.assert_not_awaited()
-        coordinator._queue_v21_handshake.assert_called_once_with(coordinator._protocol)
-        coordinator._wait_for_v21_handshake.assert_awaited_once()
+        if v21:
+            coordinator._queue_v21_handshake.assert_called_once_with(coordinator._protocol)
+            coordinator._wait_for_v21_handshake.assert_awaited_once()
+        else:
+            coordinator._queue_v21_handshake.assert_not_called()
+            coordinator._wait_for_v21_handshake.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_no_services_discovered(self):
@@ -4463,20 +4470,33 @@ class TestCBFFV21Handshake:
     """Tests for the encrypted CBFF/Sunster V2.1 handshake path."""
 
     @pytest.mark.asyncio
-    async def test_decrypted_status_queues_handshake(self):
-        """Encrypted CBFF status starts the handshake before commands are sent."""
+    async def test_decrypted_feaa_status_waits_for_handshake(self):
+        """A cold V2.1 status must not establish availability before auth."""
         coordinator = create_mock_coordinator()
-        coordinator._protocol_mode = 6
         coordinator._send_v21_handshake = AsyncMock()
         protocol = coordinator._protocols[6]
-        protocol.parse = MagicMock(return_value={"_cbff_decrypted": True})
-        protocol.set_v21_mode(False)
+        serial = "AABBCCDDEEFF"
+        protocol.set_device_sn(serial)
+        payload = bytearray(38)
+        payload[3], payload[4], payload[15] = 1, 4, 120
+        raw_status = protocol._build_feaa(0x80, 0, payload)
+        encrypted_status = protocol._encrypt_cbff(raw_status, serial)
 
-        coordinator._parse_response(bytearray([0xCA, 0x88] + [0x00] * 45))
+        coordinator._parse_response(encrypted_status)
         await asyncio.sleep(0)
 
-        assert protocol.v21_mode is True
+        assert protocol.v21_mode
         coordinator._send_v21_handshake.assert_awaited_once()
+        assert not coordinator.data["connected"]
+        assert coordinator._notification_data is None
+
+        ack = protocol._encrypt_cbff(protocol._build_feaa(0x86, 0, b"\x01"), serial)
+        coordinator._parse_response(ack)
+        assert coordinator._v21_handshake_authenticated
+        assert not coordinator.data["connected"]
+        coordinator._parse_response(encrypted_status)
+        assert coordinator.data["connected"]
+        assert coordinator._notification_data == encrypted_status
 
     @pytest.mark.asyncio
     async def test_failed_handshake_can_be_retried(self):
@@ -4488,6 +4508,8 @@ class TestCBFFV21Handshake:
         await coordinator._send_v21_handshake(bytearray([0x01]))
 
         assert coordinator._v21_handshake_sent is False
+        with pytest.raises(BleakError, match="handshake could not be sent"):
+            await coordinator._wait_for_v21_handshake()
 
 
 class TestDetectProtocol:

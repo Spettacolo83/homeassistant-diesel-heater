@@ -5,6 +5,10 @@
 
 ## Transport and detection
 
+If the advertised name contains `BOYGU` after its prefix, select the controller
+from the Bluetooth device list under **Add Integration**. The controller must
+also advertise service `181A`. Automatic name matching requires a fixed prefix.
+
 HeatGenie/Boygu controllers use the Environmental Sensing service
 `0000181a-0000-1000-8000-00805f9b34fb`. The integration requires a
 HeatGenie-recognized advertised identity, one notify or indicate characteristic,

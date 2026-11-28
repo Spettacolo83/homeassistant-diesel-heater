@@ -1,4 +1,4 @@
-"""ABBA transport respects write-only FFF2 without changing other families."""
+"""BLE writes follow the characteristic and active transport protocol."""
 
 import asyncio
 from types import SimpleNamespace
@@ -70,7 +70,6 @@ async def test_write_only_abba_identity_probe_works_before_hcalory_hint_is_resol
         ("AA55", source.CHARACTERISTIC_UUID, "aa550c220100002f"),
         ("AA55 Encrypted", source.CHARACTERISTIC_UUID, "aa550c220100002f"),
         ("AA66", source.CHARACTERISTIC_UUID, "aa550c220100002f"),
-        ("AA66 Encrypted", source.CHARACTERISTIC_UUID, "aa550c220100002f"),
         ("CBFF", source.CHARACTERISTIC_UUID, "feaa030100000000"),
         ("HeatGenie", "heatgenie-write", "aa00610101000000"),
         ("Cronus", "cronus-write", "550100"),
@@ -84,6 +83,9 @@ async def test_write_only_abba_identity_probe_works_before_hcalory_hint_is_resol
 async def test_other_protocol_write_types_are_unchanged(family, uuid, packet):
     h = create_mock_coordinator()
     h._characteristic = SimpleNamespace(uuid=uuid, properties=["write"])
+    aa_mode = {"AA55": 1, "AA55 Encrypted": 2, "AA66": 3}.get(family)
+    if aa_mode is not None:
+        h._protocol_mode = aa_mode
     if family.startswith("Hcalory"):
         h._is_hcalory_device = True
         h._hcalory_write_char = h._characteristic
@@ -101,14 +103,18 @@ async def test_other_protocol_write_types_are_unchanged(family, uuid, packet):
     h._client.write_gatt_char.assert_awaited_once_with(h._characteristic, bytearray.fromhex(packet), response=False)
 
 
+@pytest.mark.parametrize("mode", [4, 5])
 @pytest.mark.asyncio
-async def test_gatt_ack_without_status_does_not_confirm_abba_command():
+async def test_gatt_ack_without_status_does_not_confirm_heater_command(mode):
     h = create_mock_coordinator()
-    h._protocol_mode = 5
-    h._protocol = h._protocols[5]
-    h._is_abba_device = True
-    h._abba_write_char = SimpleNamespace(uuid=source.ABBA_WRITE_UUID, properties=["write"])
-    h._characteristic = SimpleNamespace(uuid=source.ABBA_NOTIFY_UUID, properties=["notify"])
+    h._protocol_mode = mode
+    h._protocol = h._protocols[mode]
+    if mode == 5:
+        h._is_abba_device = True
+        h._abba_write_char = SimpleNamespace(uuid=source.ABBA_WRITE_UUID, properties=["write"])
+        h._characteristic = SimpleNamespace(uuid=source.ABBA_NOTIFY_UUID, properties=["notify"])
+    else:
+        h._characteristic = SimpleNamespace(uuid=source.CHARACTERISTIC_UUID, properties=["read", "write", "notify"])
     h._client = SimpleNamespace(is_connected=True, write_gatt_char=AsyncMock())
     assert not await h._send_command(1, 0, timeout=0)
     assert h._client.write_gatt_char.await_args.kwargs["response"] is True
@@ -138,3 +144,29 @@ async def test_cancelled_acknowledged_write_does_not_retry_or_report_success():
     h._client.write_gatt_char.assert_awaited_once()
     assert h._notification_data is None
     assert not h.data["connected"]
+
+
+@pytest.mark.parametrize(
+    ("mode", "characteristic", "properties", "response"),
+    [
+        (0, "ffe1", ("read", "write", "notify"), True),
+        (4, "ffe1", ("read", "write", "notify"), True),
+        (4, "ffe1", ("write", "write-without-response", "notify"), True),
+        (4, "ffe1", ("write-without-response", "notify"), False),
+        (4, "fff1", ("write", "notify"), False),
+        (1, "ffe1", ("write", "notify"), False),
+        (6, "ffe1", ("write", "notify"), False),
+    ],
+)
+@pytest.mark.asyncio
+async def test_aa66_ffe1_write_with_response(mode, characteristic, properties, response):
+    coordinator = create_mock_coordinator()
+    coordinator._protocol_mode = mode
+    coordinator._client = SimpleNamespace(write_gatt_char=AsyncMock())
+    char = SimpleNamespace(uuid=f"0000{characteristic}-0000-1000-8000-00805f9b34fb", properties=properties)
+    coordinator._characteristic = char
+    status_query = bytearray.fromhex("aa550c220100002f")
+
+    await coordinator._write_gatt(status_query)
+
+    coordinator._client.write_gatt_char.assert_awaited_once_with(char, status_query, response=response)

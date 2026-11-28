@@ -244,6 +244,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._v21_handshake_sent = False  # Track if Sunster V2.1 handshake was sent
         self._v21_handshake_event = asyncio.Event()
         self._v21_handshake_authenticated: bool | None = None
+        self._v21_handshake_task: asyncio.Task[None] | None = None
         self._hcalory_command_lock = asyncio.Lock()
         self._hcalory_fuel_event = asyncio.Event()
         self._hcalory_fuel_waiting = False
@@ -2054,49 +2055,40 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
             hcalory_variant = getattr(self, "_hcalory_variant", None)
 
-            # First, check for Hcalory MVP2 device (service bd39)
+            # Require both BD39 roles before excluding other GATT candidates.
             for service in self._client.services:
-                if service.uuid.lower() == HCALORY_MVP2_SERVICE_UUID.lower():
-                    self._logger.info("🔍 Detected Hcalory MVP2 heater (service bd39)")
-                    self._is_hcalory_device = True
-                    self._hcalory_mvp2_device = True
-                    self._protocol_mode = 7  # Hcalory protocol
-                    self._protocol = self._protocols[7]
-                    # The app selects its command family from the advertisement
-                    # variant, independently of the GATT service it found.
-                    if hasattr(self._protocol, "set_mvp_version"):
-                        self._protocol.set_mvp_version(
-                            hcalory_variant is None
-                            or uses_mvp2_commands(hcalory_variant)
-                        )
-
-                    self._protocol.set_transport(bd39=True)
-
-                    # Optimize update interval for Hcalory (@Xev: 15s → 5s)
-                    # Hcalory needs faster polling for stability (app polls ~2s)
-                    self.update_interval = timedelta(seconds=UPDATE_INTERVAL_HCALORY)
-                    self._logger.info("⏱️ Optimized update interval for Hcalory: %ds", UPDATE_INTERVAL_HCALORY)
-
-                    # Log all characteristics in this service for debugging
-                    char_list = [f"{c.uuid} (props: {c.properties})" for c in service.characteristics]
-                    self._logger.info("📋 Hcalory service characteristics: %s", char_list)
-
-                    # Find notify and write characteristics
-                    for char in service.characteristics:
-                        if char.uuid.lower() == HCALORY_MVP2_NOTIFY_UUID.lower():
-                            self._characteristic = char
-                            self._active_char_uuid = HCALORY_MVP2_NOTIFY_UUID
-                            self._logger.info("✅ Found Hcalory notify characteristic (bdf8): %s", char.uuid)
-                        elif char.uuid.lower() == HCALORY_MVP2_WRITE_UUID.lower():
-                            self._hcalory_write_char = char
-                            self._logger.info("✅ Found Hcalory write characteristic (bdf7): %s", char.uuid)
-
-                    # Warning if write characteristic not found
-                    if not self._hcalory_write_char:
-                        self._logger.warning(
-                            "⚠️ Hcalory device but bdf7 write characteristic not found!"
-                        )
-                    break
+                if service.uuid.lower() != HCALORY_MVP2_SERVICE_UUID:
+                    continue
+                notify = next(
+                    (char for char in service.characteristics
+                     if char.uuid.lower() == HCALORY_MVP2_NOTIFY_UUID), None
+                )
+                write = next(
+                    (char for char in service.characteristics
+                     if char.uuid.lower() == HCALORY_MVP2_WRITE_UUID), None
+                )
+                if not (
+                    notify and write
+                    and ("notify" in notify.properties or "indicate" in notify.properties)
+                    and ("write" in write.properties or "write-without-response" in write.properties)
+                ):
+                    self._logger.warning("Ignoring BD39 service without both Hcalory characteristic roles")
+                    continue
+                self._is_hcalory_device = True
+                self._hcalory_mvp2_device = True
+                self._protocol_mode = 7
+                self._protocol = self._protocols[7]
+                # The advertised variant selects the command family independently of GATT.
+                self._protocol.set_mvp_version(
+                    hcalory_variant is None or uses_mvp2_commands(hcalory_variant)
+                )
+                self._protocol.set_transport(bd39=True)
+                self.update_interval = timedelta(seconds=UPDATE_INTERVAL_HCALORY)
+                self._characteristic = notify
+                self._active_char_uuid = notify.uuid
+                self._hcalory_write_char = write
+                self._logger.info("Detected Hcalory BD39 transport")
+                break
 
             # The Hcalory app also uses FFF0/FFF2/FFF1 for MVP1 and for
             # advertised MVP variants. Do not route a positively identified
@@ -2153,11 +2145,17 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                         # Find both characteristics before assigning direction.
                         fff1_char = None
                         fff2_char = None
+                        ffe1_char = None
+                        ffe0_char = None
                         for char in service.characteristics:
                             if char.uuid.lower() == DZ06_NEO_WRITE_UUID.lower():
                                 fff1_char = char
                             elif char.uuid.lower() == DZ06_NEO_NOTIFY_UUID.lower():
                                 fff2_char = char
+                            elif char.uuid.lower() == CHARACTERISTIC_UUID:
+                                ffe1_char = char
+                            elif char.uuid.lower() == SERVICE_UUID:
+                                ffe0_char = char
 
                         legacy_abba = (
                             fff1_char
@@ -2172,20 +2170,35 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                             and ("notify" in fff2_char.properties or "indicate" in fff2_char.properties)
                         )
 
+                        # AirHeaterPro also accepts FFE1 writes and subscribes
+                        # to the notifying characteristic under the FFF0 service.
+                        hybrid_abba = (
+                            ffe1_char
+                            and ffe0_char
+                            and (
+                                "write" in ffe1_char.properties
+                                or "write-without-response" in ffe1_char.properties
+                            )
+                            and "notify" in ffe0_char.properties
+                        )
+
                         if split_neo:
                             self._is_abba_device = True
                             self._logger.info("Detected DZ06 split FFF0 layout: FFF1=write, FFF2=notify")
                             self._characteristic = fff2_char
                             self._active_char_uuid = fff2_char.uuid
                             self._abba_write_char = fff1_char
-                        elif legacy_abba:
-                            self._logger.info("Detected ABBA/HeaterCC legacy FFF0 layout")
+                        elif legacy_abba or hybrid_abba:
+                            self._logger.info(
+                                "Detected ABBA FFF0 transport (%s)",
+                                "legacy" if legacy_abba else "FFE1 write / FFE0 notify",
+                            )
                             self._is_abba_device = True
                             self._protocol_mode = 5
                             self._protocol = self._protocols[5]
-                            self._characteristic = fff1_char
-                            self._active_char_uuid = fff1_char.uuid
-                            self._abba_write_char = fff2_char
+                            self._characteristic = fff1_char if legacy_abba else ffe0_char
+                            self._active_char_uuid = self._characteristic.uuid
+                            self._abba_write_char = fff2_char if legacy_abba else ffe1_char
                         else:
                             self._logger.info(
                                 "FFF0 layout does not match ABBA/HeaterCC; "
@@ -2342,25 +2355,27 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 self._logger.debug("Cronus ready; polling record cache")
             elif (
                 self._is_abba_device
-                and self._active_char_uuid.lower() == ABBA_NOTIFY_UUID.lower()
-                and self._abba_write_char.uuid.lower() == ABBA_WRITE_UUID.lower()
+                and (
+                    self._active_char_uuid.lower(),
+                    self._abba_write_char.uuid.lower(),
+                ) in (
+                    (ABBA_NOTIFY_UUID, ABBA_WRITE_UUID),
+                    (SERVICE_UUID, CHARACTERISTIC_UUID),
+                )
             ):
                 # Both HeaterCC apps initialize the clock after subscription,
                 # without waiting for the first status report.
                 await self._initialize_abba_session()
             else:
-                # The Sunster app retains the known V2.1 protocol across a
-                # reconnect, then sends a fresh handshake after notifications
-                # are enabled. Unknown controllers still need discovery.
                 await asyncio.sleep(0.3)
                 if self._protocol_mode != 6:
                     await self._send_wake_up_ping()
                     # A shared legacy FFF0 advertisement is not final identity.
-                    # Try the native Hcalory read first; only an unanswered
-                    # candidate needs the alternate HeaterCC startup sequence.
                     if self._legacy_fff0_candidate:
                         await self._initialize_abba_session()
-                else:
+                # The wake-up reply can identify V2.1 on a cold connection.
+                # Legacy CBFF shares mode 6 but does not use this handshake.
+                if isinstance(self._protocol, ProtocolCBFF) and self._protocol.v21_mode:
                     self._queue_v21_handshake(self._protocol)
                     await self._wait_for_v21_handshake()
 
@@ -2655,6 +2670,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
     def _parse_response(self, data: bytearray) -> None:
         """Parse response from heater using protocol handler classes."""
+        # The hybrid transport is selected by its GATT roles. Only ABBA status
+        # can validate it; unrelated replies must not establish another family.
+        if (
+            self._is_abba_device
+            and (self._active_char_uuid or "").lower() == SERVICE_UUID
+            and (len(data) < 21 or data[:4] != b"\xab\xba\x11\xcc")
+        ):
+            return
         if len(data) < 8:
             # AA77 ACK is 10 bytes - check before discarding
             header_short = (_u8_to_number(data[0]) << 8) | _u8_to_number(data[1]) if len(data) >= 2 else 0
@@ -2717,13 +2740,17 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if isinstance(protocol, ProtocolCBFF):
             handshake_result = protocol.v21_handshake_result(parse_data)
             if handshake_result is not None:
+                if not self._v21_handshake_sent:
+                    return
                 self._v21_handshake_authenticated = handshake_result
                 self._v21_handshake_event.set()
-                self._notification_data = data
                 if handshake_result:
                     self._logger.info("Sunster V2.1 handshake authenticated")
                 else:
                     self._logger.warning("Sunster V2.1 handshake rejected by heater")
+                return
+
+            if protocol.v21_mode and not self._v21_handshake_authenticated:
                 return
 
         if isinstance(protocol, ProtocolCBFF):
@@ -2792,12 +2819,17 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
                 "CBFF data decrypted successfully (device_sn=%s)",
                 self.address.replace(":", "").upper(),
             )
-            # Enable V2.1 mode since decryption was needed
-            if protocol.protocol_mode == 6 and hasattr(protocol, 'set_v21_mode'):
-                if not protocol.v21_mode:
-                    self._logger.info("🔐 Enabling Sunster V2.1 encrypted mode")
-                    protocol.set_v21_mode(True)
+            if (
+                isinstance(protocol, ProtocolCBFF)
+                and not protocol.v21_mode
+                and protocol.is_feaa_frame(data)
+            ):
+                protocol.set_v21_mode(True)
+                self._protocol_mode = protocol.protocol_mode
+                self._protocol = protocol
                 self._queue_v21_handshake(protocol)
+                if not self._v21_handshake_authenticated:
+                    return
         elif parsed.pop("_cbff_data_suspect", False):
             proto_ver = parsed.pop("cbff_protocol_version", "?")
             self._logger.warning(
@@ -3003,6 +3035,10 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         """Clean up BLE connection properly."""
         self._legacy_fff0_candidate = False
         try:
+            handshake_task = getattr(self, "_v21_handshake_task", None)
+            if handshake_task is not None and not handshake_task.done():
+                handshake_task.cancel()
+                await asyncio.gather(handshake_task, return_exceptions=True)
             if self._client:
                 try:
                     if self._client.is_connected:
@@ -3031,11 +3067,14 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._characteristic = None
             self._active_char_uuid = None
             self._hcalory_auth_response = None
+            self._heatgenie_last_status_at = 0.0
+            self._heatgenie_status_event.clear()
             # Reset Hcalory MVP2 password state on disconnect
             if self._protocol and hasattr(self._protocol, 'reset_password_state'):
                 self._protocol.reset_password_state()
             # Reset V2.1 handshake state on reconnect.
             self._v21_handshake_sent = False
+            self._v21_handshake_task = None
             self._v21_handshake_event.clear()
             self._v21_handshake_authenticated = None
             self._warm_drive_board_config = None
@@ -3155,7 +3194,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         self._v21_handshake_event.clear()
         self._v21_handshake_authenticated = None
         self._logger.debug("Sending Sunster V2.1 handshake")
-        self.create_background_task(self._send_v21_handshake(handshake_pkt))
+        self._v21_handshake_task = self.create_background_task(
+            self._send_v21_handshake(handshake_pkt)
+        )
 
     async def _send_v21_handshake(self, packet: bytearray) -> None:
         """Send Sunster V2.1 handshake packet asynchronously."""
@@ -3164,16 +3205,19 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             self._logger.debug("Sunster V2.1 handshake sent; awaiting authenticated reply")
         except Exception as err:
             self._v21_handshake_sent = False
+            self._v21_handshake_event.set()
             self._logger.warning("⚠️ V2.1 handshake failed: %s", err)
 
     async def _wait_for_v21_handshake(self) -> None:
         """Wait for the APK-defined authenticated V2.1 handshake reply."""
         if not self._v21_handshake_sent:
-            return
+            raise BleakError("Sunster V2.1 handshake could not be sent")
         try:
             await asyncio.wait_for(self._v21_handshake_event.wait(), timeout=5.0)
         except asyncio.TimeoutError as err:
             raise BleakError("Sunster V2.1 handshake timed out") from err
+        if not self._v21_handshake_sent:
+            raise BleakError("Sunster V2.1 handshake could not be sent")
         if not self._v21_handshake_authenticated:
             raise BleakError("Sunster V2.1 handshake was rejected")
 
@@ -3196,8 +3240,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
     async def _write_gatt(self, packet: bytearray) -> None:
         """Write a packet to the appropriate BLE characteristic.
 
-        Preserve no-response writes except for legacy ABBA FFF2 characteristics
-        that advertise only acknowledged writes. Heater status still arrives
+        Use acknowledged writes for write-only ABBA transports and for
+        compatible AA66 FFE1 characteristics. Heater status still arrives
         separately through notifications.
         """
         if self._stopping:
@@ -3223,15 +3267,33 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             char_uuid = write_char.uuid if write_char else "unknown"
             protocol_name = "Vevor/Sunster"
 
-        # AirHeaterCC writes through the discovered FFF2 characteristic without
-        # forcing WRITE_NO_RESPONSE. Honor write-only ABBA controllers, including
-        # the read-only ABBA probe while FFF0 identity is still undecided.
+        # AirHeaterCC and AirHeaterPro use the discovered characteristic.
+        # Honor acknowledged-only ABBA writers, including the legacy status
+        # probe while FFF0 identity is still undecided.
         response = (
             packet[:2] == bytes((0xBA, 0xAB))
-            and char_uuid.lower() == ABBA_WRITE_UUID.lower()
+            and (
+                char_uuid.lower() == ABBA_WRITE_UUID.lower()
+                or (
+                    self._is_abba_device
+                    and char_uuid.lower() == CHARACTERISTIC_UUID
+                    and (self._active_char_uuid or "").lower() == SERVICE_UUID
+                )
+            )
             and "write" in write_char.properties
             and "write-without-response" not in write_char.properties
         )
+        # AirHeaterBLE's Android Zhimi-BLE plugin maps write type 0 to an
+        # acknowledged GATT write. Include the initial FFE1 status probe
+        # because it is sent before the first AA66 report identifies mode 4.
+        if (
+            self._protocol_mode in (0, 4)
+            and char_uuid.lower() == CHARACTERISTIC_UUID
+            and len(packet) == 8
+            and packet[:2] == b"\xaa\x55"
+            and "write" in write_char.properties
+        ):
+            response = True
         async with asyncio.timeout(20):
             await self._client.write_gatt_char(write_char, packet, response=response)
         self._logger.debug(
@@ -3625,7 +3687,7 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
     async def _await_heatgenie_status(self) -> bool:
         """Return recent HeatGenie status or wait for its next F2 report."""
-        if time.monotonic() - self._heatgenie_last_status_at < 60.0:
+        if self._heatgenie_last_status_at and time.monotonic() - self._heatgenie_last_status_at < 60.0:
             return True
         self._heatgenie_status_event.clear()
         return await self._wait_for_heatgenie_status(10.0)
@@ -3770,6 +3832,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         protocol = self._protocol
         if not isinstance(protocol, ProtocolCBFF):
             return False
+        if protocol.v21_mode and not self._v21_handshake_authenticated:
+            return False
         if protocol._v21_settings is None:
             return False
         if command == 14:
@@ -3797,6 +3861,8 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         if not isinstance(self._protocol, ProtocolCBFF):
             return False
         async with self._feaa_command_lock:
+            if self._protocol.v21_mode and not self._v21_handshake_authenticated:
+                return False
             packet = self._protocol.build_v21_time_sync(now)
             if packet is None:
                 self._logger.warning("Sunster V2.1 time sync skipped: no status settings available")
@@ -3891,6 +3957,17 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
 
         # Retry loop for command sending (@Xev: retry on timeout)
         for attempt in range(1, max_retries + 1):
+            if (
+                isinstance(self._protocol, ProtocolCBFF)
+                and self._protocol.v21_mode
+                and not self._v21_handshake_authenticated
+            ):
+                self._queue_v21_handshake(self._protocol)
+                try:
+                    await self._wait_for_v21_handshake()
+                except BleakError as err:
+                    self._logger.warning("%s", err)
+                    return False
             # Build protocol-aware command packet
             try:
                 packet = self._build_command_packet(command, argument)

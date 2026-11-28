@@ -10,6 +10,8 @@ confirmed HeaterCC hardware captures
 | --- | --- |
 | Service | `0000FFF0-0000-1000-8000-00805F9B34FB` |
 | Legacy notify | `0000FFF1-0000-1000-8000-00805F9B34FB` |
+| Hybrid notify (inside FFF0) | `0000FFE0-0000-1000-8000-00805F9B34FB` |
+| Hybrid write (inside FFF0) | `0000FFE1-0000-1000-8000-00805F9B34FB` |
 | Legacy write | `0000FFF2-0000-1000-8000-00805F9B34FB` |
 | Notification header | `AB BA` |
 | Command header | `BA AB` |
@@ -17,7 +19,7 @@ confirmed HeaterCC hardware captures
 The coordinator verifies characteristic direction. A split FFF0 layout with
 FFF1 write and FFF2 notify is DZ06 Neo, not legacy ABBA.
 
-For legacy ABBA commands on FFF2, a characteristic advertising only `write`
+For ABBA commands on legacy FFF2 or hybrid FFE1, a characteristic advertising only `write`
 uses an acknowledged GATT write. Characteristics supporting
 `write-without-response` retain that write type. The same rule applies to the
 ABBA identification probe before protocol selection. A GATT acknowledgement
@@ -97,9 +99,12 @@ universal six-level ABBA range.
 
 ## Detection
 
-ABBA is selected after the FFF0 service and legacy characteristic layout have
-been established, or when a notification begins `AB BA`. It is not identified
-by the AA-family FFE0/FFE1 transport.
+The FFF0 service supports the legacy FFF1/FFF2 pair and the hybrid
+FFE0-notify/FFE1-write pair. AirHeaterPro 1.1.4 enumerates FFF0, selects FFE1 as
+a writer and subscribes to characteristics advertising notify. It uses the
+same ABBA clock and status commands on the selected transport. Home Assistant
+requires a parsed ABBA status before setup completes. The separate AA-family
+layout with an FFE0 service and a combined FFE1 characteristic is unchanged.
 
 ## Target units and toggle controls
 

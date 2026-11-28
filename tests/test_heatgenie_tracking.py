@@ -1,5 +1,8 @@
 """Passive HeatGenie reports must not postpone periodic accounting (#160)."""
-from unittest.mock import MagicMock
+import time
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from tests.test_audit_repairs import heatgenie_status
 from tests.test_coordinator import create_mock_coordinator
@@ -47,3 +50,18 @@ def test_button_ack_is_not_a_new_status_update():
     coordinator._parse_response(ack)
     coordinator.async_update_listeners.assert_not_called()
     assert coordinator.last_update_success is False
+
+
+
+@pytest.mark.asyncio
+async def test_heatgenie_cleanup_requires_new_session_status():
+    coordinator = create_mock_coordinator()
+    coordinator._heatgenie_last_status_at = time.monotonic()
+    coordinator._heatgenie_status_event.set()
+    coordinator._wait_for_heatgenie_status = AsyncMock(return_value=False)
+
+    await coordinator._cleanup_connection()
+
+    assert not coordinator._heatgenie_status_event.is_set()
+    assert not await coordinator._await_heatgenie_status()
+    coordinator._wait_for_heatgenie_status.assert_awaited_once_with(10.0)
