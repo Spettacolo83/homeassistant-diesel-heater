@@ -335,7 +335,10 @@ async def test_unsupported_heatgenie_probe_has_no_entity():
 
     coordinator = create_mock_coordinator()
     coordinator._protocol_mode = 8
-    coordinator.data.update(intake_temperature=None, outlet_temperature=0)
+    coordinator.data.update(
+        intake_temperature=None, outlet_temperature=0,
+        supports_intake_temperature=False, supports_outlet_temperature=True,
+    )
     entry = SimpleNamespace(runtime_data=coordinator, data={})
     collected = []
     await async_setup_entry(coordinator.hass, entry, collected.extend)

@@ -824,8 +824,8 @@ class TestAsyncSetupEntry:
     """Tests for async_setup_entry with different protocol modes."""
 
     @pytest.mark.asyncio
-    async def test_setup_entry_protocol_mode_0_creates_all_entities(self):
-        """Test protocol mode 0 (unknown) creates all entities as fallback."""
+    async def test_setup_entry_protocol_mode_0_does_not_create_optional_entities(self):
+        """Test protocol mode 0 (unknown) omits optional entities as fallback."""
         coordinator = create_mock_coordinator()
         coordinator.protocol_mode = 0
 
@@ -839,7 +839,7 @@ class TestAsyncSetupEntry:
         async_add_entities.assert_called_once()
         entities = async_add_entities.call_args[0][0]
         # Mode 0: power + burnoff + auto_offset + auto_start_stop + temp_unit + altitude_unit + high_altitude = 7
-        assert len(entities) == 6
+        assert len(entities) == 2
 
     @pytest.mark.asyncio
     async def test_setup_entry_protocol_mode_1_creates_core_only(self):
@@ -865,6 +865,8 @@ class TestAsyncSetupEntry:
         coordinator = create_mock_coordinator()
         coordinator.protocol_mode = 2
 
+        coordinator.data.update(supports_timer=True)
+
         entry = MagicMock()
         entry.runtime_data = coordinator
         async_add_entities = MagicMock()
@@ -882,6 +884,8 @@ class TestAsyncSetupEntry:
         """Test protocol mode 4 (AA66Encrypted) creates unit switches."""
         coordinator = create_mock_coordinator()
         coordinator.protocol_mode = 4
+
+        coordinator.data.update(supports_auto_start_stop=True, supports_temp_unit=True, supports_altitude_unit=True, supports_timer=True)
 
         entry = MagicMock()
         entry.runtime_data = coordinator
@@ -919,6 +923,8 @@ class TestAsyncSetupEntry:
         coordinator = create_mock_coordinator()
         coordinator.protocol_mode = 6
 
+        coordinator.data.update(supports_auto_start_stop=True)
+
         entry = MagicMock()
         entry.runtime_data = coordinator
         async_add_entities = MagicMock()
@@ -950,10 +956,10 @@ class TestAsyncSetupEntry:
         assert "VevorHeaterPowerSwitch" in entity_types
         assert "VevorBurnoffSwitch" in entity_types
         assert "VevorAutoOffsetSwitch" not in entity_types
-        assert "VevorAutoStartStopSwitch" in entity_types
-        assert "VevorTempUnitSwitch" in entity_types
-        assert "VevorAltitudeUnitSwitch" in entity_types
-        assert "VevorHighAltitudeSwitch" in entity_types
+        assert "VevorAutoStartStopSwitch" not in entity_types
+        assert "VevorTempUnitSwitch" not in entity_types
+        assert "VevorAltitudeUnitSwitch" not in entity_types
+        assert "VevorHighAltitudeSwitch" not in entity_types
 
 
 # ---------------------------------------------------------------------------

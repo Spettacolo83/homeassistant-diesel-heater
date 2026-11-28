@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import VevorHeaterConfigEntry
+from .capabilities import controller_capabilities
 from .const import (
     BACKLIGHT_OPTIONS,
     CBFF_LANGUAGE_OPTIONS,
@@ -41,42 +42,30 @@ async def async_setup_entry(
     """Set up Vevor Heater select from config entry.
 
     Entities are created conditionally based on the detected BLE protocol.
-    Mode 0 (unknown) creates all entities as safe fallback.
     """
     coordinator = entry.runtime_data
-    mode = coordinator.protocol_mode
+    capabilities = controller_capabilities(coordinator)
 
-    if mode == 9:
+    if capabilities["cronus"]:
         # ThermoConnect makes the four-mode control editable only for air.
         # Water mode is exposed as read-only telemetry instead.
         entities: list[SelectEntity] = (
             [CronusModeSelect(coordinator)]
-            if coordinator.data.get("cronus_controller_type") == "air"
+            if capabilities["cronus_air"]
             else []
         )
     else:
         entities = [VevorHeaterModeSelect(coordinator)]
 
-    # Warm Drive has its own app-defined tank/pump configuration fields.
-    if coordinator.is_warm_drive_controller is True:
-        entities.extend([
-            VevorHeaterPumpTypeSelect(coordinator),
-            VevorHeaterTankVolumeSelect(coordinator),
-        ])
-    elif mode in (0, 4, 6) and coordinator.is_dz06_neo is not True:
-        entities.extend([
-            VevorHeaterLanguageSelect(coordinator),
-            VevorHeaterPumpTypeSelect(coordinator),
-            VevorHeaterTankVolumeSelect(coordinator),
-        ])
-
-    # Backlight select (encrypted + CBFF protocols)
-    if mode in (0, 2, 4, 6) and coordinator.is_dz06_neo is not True:
+    if capabilities["language"]:
+        entities.append(VevorHeaterLanguageSelect(coordinator))
+    if capabilities["pump_type"]:
+        entities.append(VevorHeaterPumpTypeSelect(coordinator))
+    if capabilities["tank_volume"]:
+        entities.append(VevorHeaterTankVolumeSelect(coordinator))
+    if capabilities["backlight"]:
         entities.append(VevorBacklightSelect(coordinator))
-
-    # High Altitude Mode (Hcalory MVP2 only - 3 modes: Disabled, Mode 1, Mode 2)
-    # @Xev: Hcalory needs selector instead of binary switch (issue #34)
-    if mode == 7:
+    if capabilities["hcalory_altitude"]:
         entities.append(VevorHighAltitudeModeSelect(coordinator))
 
     async_add_entities(entities)

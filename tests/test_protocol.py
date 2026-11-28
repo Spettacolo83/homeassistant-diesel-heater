@@ -586,6 +586,13 @@ class TestProtocolAA55Encrypted:
         data[19:26] = b"\x02\x3a\x01\x95\x00\x5a\x01"
 
         assert self.proto.parse(data) == {
+            "supports_co_sensor": True,
+            "supports_backlight": True,
+            "supports_timer": True,
+            "auto_start_stop": False, "supports_auto_start_stop": True,
+            "altitude_unit": 0, "supports_altitude_unit": True, "language": 0,
+            "supports_language": True, "tank_volume": 0, "supports_tank_volume": True,
+            "pump_type": 0, "supports_pump_type": True, "rf433_enabled": None,
             "running_state": 2, "error_code": 7, "running_step": 3,
             "altitude": 123.4, "running_mode": 2, "set_level": 7,
             "set_temp": 26, "supply_voltage": 24.0,
@@ -837,6 +844,15 @@ class TestProtocolAA66Encrypted:
         data[19:26] = b"\x02\x3a\x01\x95\x00\x5a\x01"
 
         assert self.proto.parse(data) == {
+            "supports_co_sensor": True,
+            "supports_auto_start_stop": True,
+            "supports_pump_type": False,
+            "supports_backlight": True,
+            "supports_timer": True,
+            "supports_temp_unit": True,
+            "supports_language": True,
+            "supports_tank_volume": False,
+            "supports_altitude_unit": True,
             "error_code_raw": 7, "error_family": "XMZ",
             "running_state": 2, "error_code": 7, "running_step": 3,
             "altitude": 123.4, "running_mode": 2, "set_level": 7,
@@ -1541,6 +1557,14 @@ class TestProtocolCBFF:
         )
 
         assert self.proto.parse(data) == {
+            "supports_co_sensor": True,
+            "supports_auto_start_stop": True,
+            "supports_pump_type": False,
+            "supports_backlight": True,
+            "supports_language": True,
+            "supports_tank_volume": True,
+            "supports_startup_temp_diff": True,
+            "supports_shutdown_temp_diff": True,
             "error_display_raw": 195, "error_detail_raw": 0, "error_family": "DD2",
             "connected": True, "cbff_protocol_version": 1,
             "cbff_mainboard_type": 0,
@@ -1566,6 +1590,14 @@ class TestProtocolCBFF:
         )
 
         assert self.proto.parse(data) == {
+            "supports_co_sensor": True,
+            "supports_auto_start_stop": True,
+            "supports_pump_type": False,
+            "supports_backlight": True,
+            "supports_language": True,
+            "supports_tank_volume": False,
+            "supports_startup_temp_diff": True,
+            "supports_shutdown_temp_diff": True,
             "error_display_raw": 0, "error_detail_raw": 0, "error_family": "XMZ",
             "connected": True, "cbff_protocol_version": 0,
             "cbff_mainboard_type": 1,

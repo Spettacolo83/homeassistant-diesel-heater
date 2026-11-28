@@ -9,6 +9,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.const import EntityCategory, UnitOfTemperature, UnitOfTime, UnitOfVolume
 
 from . import VevorHeaterConfigEntry
+from .capabilities import controller_capabilities
 from .const import (
     ABBA_MAX_LEVEL,
     DOMAIN,
@@ -39,39 +40,28 @@ async def async_setup_entry(
     """Set up Vevor Heater number entities.
 
     Entities are created conditionally based on the detected BLE protocol.
-    Mode 0 (unknown) creates all entities as safe fallback.
     """
     coordinator = entry.runtime_data
-    mode = coordinator.protocol_mode
+    capabilities = controller_capabilities(coordinator)
 
-    if mode == 9:
-        # ThermoConnect exposes level and setpoint only for air controllers.
-        entities: list[NumberEntity] = []
-        if coordinator.data.get("cronus_controller_type") == "air":
-            entities.extend([
-                VevorHeaterLevelNumber(coordinator),
-                VevorHeaterTemperatureNumber(coordinator),
-            ])
-        if coordinator.has_cronus_fuel_estimate:
-            entities.extend([
-                VevorTankCapacityNumber(coordinator),
-                VevorCurrentFuelLevelNumber(coordinator),
-            ])
-    else:
-        entities = [
-            VevorHeaterTemperatureNumber(coordinator),
+    entities: list[NumberEntity] = []
+    if capabilities["level_number"]:
+        entities.append(VevorHeaterLevelNumber(coordinator))
+    if capabilities["target_temperature"]:
+        entities.append(VevorHeaterTemperatureNumber(coordinator))
+    if capabilities["fuel"]:
+        entities.extend([
             VevorTankCapacityNumber(coordinator),
             VevorCurrentFuelLevelNumber(coordinator),
+        ])
+    if capabilities["burnoff"]:
+        entities.extend([
             VevorBurnoffDurationNumber(coordinator),
             VevorBurnoffAfterCyclesNumber(coordinator),
             VevorBurnoffAfterHoursNumber(coordinator),
-        ]
-        if not coordinator.is_dz06_neo:
-            entities.insert(0, VevorHeaterLevelNumber(coordinator))
-
-        # Offset number (encrypted + CBFF protocols only)
-        if mode in (0, 2, 4, 6) and coordinator.is_dz06_neo is not True:
-            entities.append(VevorHeaterOffsetNumber(coordinator))
+        ])
+    if capabilities["heater_offset"]:
+        entities.append(VevorHeaterOffsetNumber(coordinator))
 
     async_add_entities(entities)
 

@@ -2774,12 +2774,20 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
             return
 
         if protocol.protocol_mode == 7:
+            variant = getattr(self, "_hcalory_variant", None)
+            co_ppm = parsed.pop("hcalory_co_ppm_raw", None)
+            # Hcalory 3.3.1 h8/a.q exposes the DPID03 CO word only on these
+            # variants and treats FFFF as missing hardware.
+            if variant is not None and isinstance(co_ppm, int):
+                supports_co = variant in (HcaloryVariant.MVP2_2, HcaloryVariant.MVP2_3) and co_ppm != 0xFFFF
+                parsed["supports_co_sensor"] = supports_co
+                parsed["co_ppm"] = co_ppm if supports_co else None
             discovery = bluetooth.async_last_service_info(
                 self.hass, self.address, connectable=True
             )
             if discovery:
                 self._hcalory_error_extended = uses_extended_error_codes(
-                    getattr(self, "_hcalory_variant", None), discovery.manufacturer_data
+                    variant, discovery.manufacturer_data
                 )
             parsed["hcalory_error_extended"] = (
                 getattr(self, "_hcalory_error_extended", False)
@@ -4707,6 +4715,9 @@ class VevorHeaterCoordinator(DataUpdateCoordinator):
         when the room temperature reaches 2°C above the target, and restart
         when it drops 2°C below the target.
         """
+        if self.data.get("supports_auto_start_stop") is False:
+            self._logger.warning("Auto Start/Stop is not supported by this controller")
+            return
         self._logger.info("Setting Auto Start/Stop to %s", "enabled" if enabled else "disabled")
         if self.is_warm_drive_controller:
             if self.data.get("running_mode") != RUNNING_MODE_TEMPERATURE:

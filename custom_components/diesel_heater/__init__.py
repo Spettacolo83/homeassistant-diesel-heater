@@ -25,6 +25,7 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
+from .capabilities import async_remove_unsupported_entities
 from .const import DOMAIN, OLD_DOMAIN
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -406,6 +407,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: DieselHeaterConfigEntry)
     entry.runtime_data = coordinator
     try:
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        async_remove_unsupported_entities(hass, entry, coordinator)
     except (Exception, asyncio.CancelledError):
         try:
             await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

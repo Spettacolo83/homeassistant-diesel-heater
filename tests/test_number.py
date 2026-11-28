@@ -292,8 +292,8 @@ class TestAsyncSetupEntry:
         # Verify async_add_entities was called
         async_add_entities.assert_called_once()
         call_args = async_add_entities.call_args[0][0]
-        # Mode 0 creates all entities (7 core + offset = 8)
-        assert len(call_args) == 8
+        # Mode 0 does not add a controller offset setting
+        assert len(call_args) == 7
 
     @pytest.mark.asyncio
     async def test_async_setup_entry_protocol_mode_2(self):

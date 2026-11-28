@@ -63,6 +63,7 @@ fields:
 
 | Offset | Field | Interpretation |
 | --- | --- | --- |
+| 12-13 | Current CO | Big-endian ppm when the app identifies an MVP2_2 or MVP2_3 with a probe |
 | 18 | Altitude mode | Controller value |
 | 20 | State and step | High nibble is state; low nibble is operating step |
 | 21 | Mode | `0` off, `1` temperature, `2` level, `3` ventilation |

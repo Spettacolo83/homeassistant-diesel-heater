@@ -390,6 +390,43 @@ class ProtocolAA66(VevorCommandMixin, HeaterProtocol):
         return parsed
 
 
+def _parse_aa_encrypted_settings(data: bytearray, parsed: dict[str, Any]) -> None:
+    """Parse the settings shared by AirHeaterBLE's two encrypted families."""
+    # Byte 31: Automatic Start/Stop flag
+    auto_start_stop = _u8_to_number(data[31])
+    parsed["auto_start_stop"] = auto_start_stop == 1 if auto_start_stop in (0, 1) else None
+    parsed["supports_auto_start_stop"] = (
+        False if auto_start_stop == 255 else True if auto_start_stop in (0, 1) else None
+    )
+
+    # Configuration settings (bytes 26, 28, 29, 30)
+    if len(data) > 26:
+        parsed["language"] = _u8_to_number(data[26])
+        parsed["supports_language"] = data[26] != 255
+
+    if len(data) > 28:
+        parsed["tank_volume"] = _u8_to_number(data[28])
+        parsed["supports_tank_volume"] = data[28] <= 10
+
+    # Byte 29: Pump type / RF433 status (20=off, 21=on)
+    if len(data) > 29:
+        pump_byte = _u8_to_number(data[29])
+        parsed["supports_pump_type"] = pump_byte <= 10
+        if pump_byte == 20:
+            parsed["rf433_enabled"] = False
+            parsed["pump_type"] = None
+        elif pump_byte == 21:
+            parsed["rf433_enabled"] = True
+            parsed["pump_type"] = None
+        else:
+            parsed["pump_type"] = pump_byte
+            parsed["rf433_enabled"] = None
+
+    if len(data) > 30:
+        parsed["altitude_unit"] = _u8_to_number(data[30])
+        parsed["supports_altitude_unit"] = data[30] in (0, 1)
+
+
 class ProtocolAA55Encrypted(VevorCommandMixin, HeaterProtocol):
     """AA55 encrypted protocol (mode=2, 48 bytes decrypted).
 
@@ -416,6 +453,8 @@ class ProtocolAA55Encrypted(VevorCommandMixin, HeaterProtocol):
         parsed["case_temperature"] = _unsign_to_sign(256 * data[13] + data[14])
         parsed["cab_temperature"] = _unsign_to_sign(256 * data[32] + data[33]) / 10
 
+        _parse_aa_encrypted_settings(data, parsed)
+
         # Byte 34: Temperature offset (signed)
         if len(data) > 34:
             raw = data[34]
@@ -424,10 +463,12 @@ class ProtocolAA55Encrypted(VevorCommandMixin, HeaterProtocol):
         # Byte 36: Backlight brightness
         if len(data) > 36:
             parsed["backlight"] = _u8_to_number(data[36])
+            parsed["supports_backlight"] = data[36] != 255
 
         # Byte 37: CO sensor present, Bytes 38-39: CO PPM (big endian)
         if len(data) > 39:
-            if _u8_to_number(data[37]) == 1:
+            parsed["supports_co_sensor"] = _u8_to_number(data[37]) == 1
+            if parsed["supports_co_sensor"]:
                 parsed["co_ppm"] = float(
                     (_u8_to_number(data[38]) << 8) | _u8_to_number(data[39])
                 )
@@ -462,7 +503,10 @@ class ProtocolAA55Encrypted(VevorCommandMixin, HeaterProtocol):
         if len(data) > 25:
             timer_start = (data[21] << 8) | data[22]
             timer_duration = (data[23] << 8) | data[24]
-            timer_enabled = bool(data[25])
+            timer_enabled = data[25] == 1
+            # The enable switch and time fields have independent sentinels.
+            # In particular, 0xFFFF duration must not hide a valid enable switch.
+            parsed["supports_timer"] = True if data[25] in (0, 1) else False if data[25] == 255 else None
 
             parsed["timer_start_minutes"] = timer_start
             parsed["timer_duration_minutes"] = timer_duration
@@ -510,6 +554,7 @@ class ProtocolAA66Encrypted(VevorCommandMixin, HeaterProtocol):
 
         # Byte 27: Temperature unit (0=Celsius, 1=Fahrenheit)
         temp_unit_byte = _u8_to_number(data[27])
+        parsed["supports_temp_unit"] = temp_unit_byte in (0, 1)
         temp_unit = self._temperature_unit_override
         if temp_unit is None:
             temp_unit = temp_unit_byte
@@ -523,31 +568,7 @@ class ProtocolAA66Encrypted(VevorCommandMixin, HeaterProtocol):
         else:
             parsed["set_temp"] = max(MIN_TEMP_CELSIUS, min(MAX_TEMP_CELSIUS, raw_set_temp))
 
-        # Byte 31: Automatic Start/Stop flag
-        parsed["auto_start_stop"] = (_u8_to_number(data[31]) == 1)
-
-        # Configuration settings (bytes 26, 28, 29, 30)
-        if len(data) > 26:
-            parsed["language"] = _u8_to_number(data[26])
-
-        if len(data) > 28:
-            parsed["tank_volume"] = _u8_to_number(data[28])
-
-        # Byte 29: Pump type / RF433 status (20=off, 21=on)
-        if len(data) > 29:
-            pump_byte = _u8_to_number(data[29])
-            if pump_byte == 20:
-                parsed["rf433_enabled"] = False
-                parsed["pump_type"] = None
-            elif pump_byte == 21:
-                parsed["rf433_enabled"] = True
-                parsed["pump_type"] = None
-            else:
-                parsed["pump_type"] = pump_byte
-                parsed["rf433_enabled"] = None
-
-        if len(data) > 30:
-            parsed["altitude_unit"] = _u8_to_number(data[30])
+        _parse_aa_encrypted_settings(data, parsed)
 
         parsed["supply_voltage"] = (256 * data[11] + data[12]) / 10
         parsed["case_temperature"] = _unsign_to_sign(256 * data[13] + data[14])
@@ -561,10 +582,12 @@ class ProtocolAA66Encrypted(VevorCommandMixin, HeaterProtocol):
         # Byte 36: Backlight brightness
         if len(data) > 36:
             parsed["backlight"] = _u8_to_number(data[36])
+            parsed["supports_backlight"] = data[36] != 255
 
         # Byte 37: CO sensor present, Bytes 38-39: CO PPM (big endian)
         if len(data) > 39:
-            if _u8_to_number(data[37]) == 1:
+            parsed["supports_co_sensor"] = _u8_to_number(data[37]) == 1
+            if parsed["supports_co_sensor"]:
                 parsed["co_ppm"] = float(
                     (_u8_to_number(data[38]) << 8) | _u8_to_number(data[39])
                 )
@@ -599,7 +622,10 @@ class ProtocolAA66Encrypted(VevorCommandMixin, HeaterProtocol):
         if len(data) > 25:
             timer_start = (data[21] << 8) | data[22]
             timer_duration = (data[23] << 8) | data[24]
-            timer_enabled = bool(data[25])
+            timer_enabled = data[25] == 1
+            # The enable switch and time fields have independent sentinels.
+            # In particular, 0xFFFF duration must not hide a valid enable switch.
+            parsed["supports_timer"] = True if data[25] in (0, 1) else False if data[25] == 255 else None
 
             parsed["timer_start_minutes"] = timer_start
             parsed["timer_duration_minutes"] = timer_duration
@@ -962,11 +988,13 @@ class ProtocolHeatGenie(HeaterProtocol):
         parsed["intake_temperature"] = (
             intake_temperature / 10 if intake_temperature != self._UNSUPPORTED_TEMPERATURE else None
         )
+        parsed["supports_intake_temperature"] = parsed["intake_temperature"] is not None
 
         outlet_temperature = int.from_bytes(registers[18:20], "little", signed=True)
         parsed["outlet_temperature"] = (
             outlet_temperature / 10 if outlet_temperature != self._UNSUPPORTED_TEMPERATURE else None
         )
+        parsed["supports_outlet_temperature"] = parsed["outlet_temperature"] is not None
 
         return parsed
 
@@ -1582,7 +1610,9 @@ class ProtocolCBFF(HeaterProtocol):
         keys = (
             "language", "heater_offset", "tank_volume", "pump_type", "rf433_enabled",
             "backlight", "startup_temp_diff", "shutdown_temp_diff", "wifi_enabled",
-            "auto_start_stop", "temp_unit", "altitude_unit",
+            "auto_start_stop", "temp_unit", "altitude_unit", "supports_auto_start_stop",
+            "supports_language", "supports_tank_volume", "supports_pump_type", "supports_backlight",
+            "supports_startup_temp_diff", "supports_shutdown_temp_diff",
         )
         return {key: parsed[key] for key in keys}
 
@@ -1799,6 +1829,7 @@ class ProtocolCBFF(HeaterProtocol):
         # Bytes 27-28: CO sensor (uint16 LE, /10)
         co_ppm = (data[27] | (data[28] << 8)) / 10.0
         parsed["co_ppm"] = co_ppm if co_ppm < 6553 else None
+        parsed["supports_co_sensor"] = co_ppm < 6553
 
         # Byte 34: temp_comp (int8)
         temp_comp = data[34]
@@ -1806,16 +1837,19 @@ class ProtocolCBFF(HeaterProtocol):
 
         # Byte 35: language
         lang = _u8_to_number(data[35])
+        parsed["supports_language"] = lang != 255
         if lang != 255:
             parsed["language"] = lang
 
         # Byte 36: tank volume index
         tank = _u8_to_number(data[36])
+        parsed["supports_tank_volume"] = tank != 255
         if tank != 255:
             parsed["tank_volume"] = tank
 
         # Byte 37: pump_model / RF433
         pump = _u8_to_number(data[37])
+        parsed["supports_pump_type"] = pump not in (20, 21, 255)
         if pump != 255:
             if pump == 20:
                 parsed["rf433_enabled"] = False
@@ -1842,16 +1876,19 @@ class ProtocolCBFF(HeaterProtocol):
 
         # Byte 38: back_light (255=not available)
         backlight = _u8_to_number(data[38])
+        parsed["supports_backlight"] = backlight != 255
         if backlight != 255:
             parsed["backlight"] = backlight
 
         # Byte 39: startup_temp_difference (255=not available)
         startup_diff = _u8_to_number(data[39])
+        parsed["supports_startup_temp_diff"] = startup_diff != 255
         if startup_diff != 255:
             parsed["startup_temp_diff"] = startup_diff
 
         # Byte 40: shutdown_temp_difference (255=not available)
         shutdown_diff = _u8_to_number(data[40])
+        parsed["supports_shutdown_temp_diff"] = shutdown_diff != 255
         if shutdown_diff != 255:
             parsed["shutdown_temp_diff"] = shutdown_diff
 
@@ -1862,8 +1899,11 @@ class ProtocolCBFF(HeaterProtocol):
 
         # Byte 42: auto start/stop (255=not supported)
         auto_start_stop = _u8_to_number(data[42])
-        if auto_start_stop != 255:
-            parsed["auto_start_stop"] = (auto_start_stop == 1)
+        parsed["supports_auto_start_stop"] = (
+            False if auto_start_stop == 255 else True if auto_start_stop in (0, 1) else None
+        )
+        if auto_start_stop in (0, 1):
+            parsed["auto_start_stop"] = auto_start_stop == 1
 
         # Byte 43: heater_mode
         parsed["heater_mode"] = _u8_to_number(data[43])
@@ -1986,6 +2026,9 @@ class ProtocolHcalory(HeaterProtocol):
             return None
 
         parsed: dict[str, Any] = {"connected": True}
+        # Hcalory 3.3.1 q2/h.D reads this word; the app checks the model
+        # before interpreting it as a CO reading.
+        parsed["hcalory_co_ppm_raw"] = int.from_bytes(data[12:14], "big")
 
         try:
             # Import MVP2 constants

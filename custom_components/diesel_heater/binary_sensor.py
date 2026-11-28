@@ -13,6 +13,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import VevorHeaterConfigEntry
+from .capabilities import controller_capabilities
 from .const import DOMAIN, ERROR_NONE, RUNNING_MODE_TEMPERATURE, RUNNING_STATE_ON
 from .coordinator import VevorHeaterCoordinator
 
@@ -25,10 +26,9 @@ async def async_setup_entry(
     """Set up Vevor Heater binary sensors.
 
     Entities are created conditionally based on the detected BLE protocol.
-    Mode 0 (unknown) creates all entities as safe fallback.
     """
     coordinator = entry.runtime_data
-    mode = coordinator.protocol_mode
+    capabilities = controller_capabilities(coordinator)
 
     # Core binary sensors (all protocols)
     entities: list[BinarySensorEntity] = [
@@ -36,25 +36,25 @@ async def async_setup_entry(
         VevorHeaterConnectedSensor(coordinator),
     ]
 
-    if mode != 9:
+    if capabilities["non_cronus"]:
         entities.extend([
             VevorHeaterProblemSensor(coordinator),
             VevorBurnoffActiveSensor(coordinator),
             VevorBurnoffPendingSensor(coordinator),
         ])
 
-    if mode == 9:
+    if capabilities["cronus"]:
         entities.extend([
             VevorCronusContinuousRunSensor(coordinator),
             VevorCronusInterlockSensor(coordinator),
         ])
 
     # Auto Start/Stop binary sensor (AA66Encrypted, ABBA, CBFF)
-    if mode in (0, 4, 5, 6):
+    if capabilities["auto_start_stop_sensor"]:
         entities.append(VevorAutoStartStopSensor(coordinator))
 
     # HeatGenie reports individual component bits in its register status byte.
-    if mode == 8:
+    if capabilities["heatgenie"]:
         entities.extend(
             [
                 VevorComponentActiveSensor(coordinator, "pump_active", "Fuel Pump"),
@@ -318,7 +318,10 @@ class VevorAutoStartStopSensor(
         """
         if not self.coordinator.data.get("connected", False):
             return False
-        return self.coordinator.data.get("running_mode") == RUNNING_MODE_TEMPERATURE
+        return (
+            self.coordinator.data.get("running_mode") == RUNNING_MODE_TEMPERATURE
+            and self.coordinator.data.get("auto_start_stop") is not None
+        )
 
     @property
     def is_on(self) -> bool | None:
