@@ -6,6 +6,7 @@ PARALLEL_UPDATES = 1
 from homeassistant.components.button import ButtonEntity
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -33,6 +34,12 @@ async def async_setup_entry(
     ]
     if coordinator.supports_time_sync:
         entities.insert(0, VevorTimeSyncButton(coordinator))
+
+    if coordinator.supports_fuel_priming is True:
+        entities.extend([
+            VevorFuelPrimingButton(coordinator, start=True),
+            VevorFuelPrimingButton(coordinator, start=False),
+        ])
 
     async_add_entities(entities)
 
@@ -165,3 +172,29 @@ class VevorRunBurnoffButton(CoordinatorEntity[VevorHeaterCoordinator], ButtonEnt
     async def async_press(self) -> None:
         """Handle the button press."""
         await self.coordinator.async_run_burnoff()
+
+
+class VevorFuelPrimingButton(CoordinatorEntity[VevorHeaterCoordinator], ButtonEntity):
+    """Operate the controller's built-in timed maintenance cycle."""
+
+    _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_icon = "mdi:fuel"
+
+    def __init__(self, coordinator: VevorHeaterCoordinator, *, start: bool) -> None:
+        """Initialize the press action for this heater."""
+        super().__init__(coordinator)
+        self._start = start
+        self._attr_name = "Prime Fuel Pump" if start else "Stop Fuel Priming"
+        self._attr_unique_id = f"{coordinator.address}_{'start' if start else 'stop'}_fuel_priming"
+        self._attr_device_info = {"identifiers": {(DOMAIN, coordinator.address)}}
+
+    @property
+    def available(self) -> bool:
+        """Only offer actions in the controller's relevant reported state."""
+        return self.coordinator.fuel_priming_ready if self._start else self.coordinator.fuel_priming_mode
+
+    async def async_press(self) -> None:
+        """Request the selected action and surface missing confirmation."""
+        if not await self.coordinator.async_set_fuel_priming(start=self._start):
+            raise HomeAssistantError("The heater did not confirm the requested fuel priming action")

@@ -797,12 +797,18 @@ class ProtocolHeatGenie(HeaterProtocol):
     _COMMAND_ACK = 0x41
     _STATUS_TYPE = 0xF2
     _COMMAND_BUTTON = 0x61
+    _COMMAND_MANUAL_PUMP = 0x62
     _COMMAND_AUTO_UPDATE = 0x65
     _COMMAND_SHORT_PARAMETER = 0x66
     _BUTTON_ON = 1
     _BUTTON_OFF = 2
     _BUTTON_SWITCH_TEMP_TO_CELSIUS = 8
     _BUTTON_SWITCH_TEMP_TO_FAHRENHEIT = 10
+    _BUTTON_PUMP_ON = 11
+    _BUTTON_PUMP_OFF = 12
+    PRIMING_SECONDS = 20
+    STANDBY_STATE = 5
+    PRIMING_STATE = 7
     _REGISTER_AREA = 2
     _SHORT_RUN_MODE = 0
     _SHORT_TARGET_TEMP = 1
@@ -862,6 +868,14 @@ class ProtocolHeatGenie(HeaterProtocol):
     def _button_frame(self, button: int) -> bytearray:
         """Build a button frame with the app's per-command acknowledgement nonce."""
         return self._frame(self._COMMAND_BUTTON, button, randrange(255), 0)
+
+    def build_fuel_priming_setup(self) -> bytearray:
+        """Enter manual pump mode with the app's default controller-side cutoff."""
+        return self._frame(self._COMMAND_MANUAL_PUMP, self.PRIMING_SECONDS, randrange(255), 0)
+
+    def build_fuel_priming_button(self, *, start: bool) -> bytearray:
+        """Start or stop the timed pumping phase after entering manual pump mode."""
+        return self._button_frame(self._BUTTON_PUMP_ON if start else self._BUTTON_PUMP_OFF)
 
     def build_command(self, command: int, argument: int, passkey: int) -> bytearray:
         """Translate standard integration commands to verified app frames."""
@@ -941,6 +955,9 @@ class ProtocolHeatGenie(HeaterProtocol):
             "running_state": int(state in (1, 2, 3)),
             "running_step": running_step,
             "heatgenie_raw_state": state,
+            "heatgenie_priming_remaining": (
+                int.from_bytes(registers[12:14], "little") if state == self.PRIMING_STATE else None
+            ),
             "running_mode": running_mode,
             "heatgenie_last_button": registers[34],
             "heatgenie_last_button_nonce": registers[35],

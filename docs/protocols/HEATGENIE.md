@@ -25,6 +25,7 @@ integration reads:
 | 4-5 | Altitude | Little-endian unsigned value |
 | 6-7 | Cabin temperature | Little-endian signed value, divided by 10 |
 | 8-9 | Case temperature | Little-endian signed value, divided by 10 |
+| 12-13 | Priming time remaining | Little-endian seconds in manual pump mode |
 | 16-17 | Intake temperature | Little-endian signed value, divided by 10 when supported |
 | 18-19 | Outlet temperature | Little-endian signed value, divided by 10 when supported |
 | 20-21 | Error flags | Lowest set bit is the current error |
@@ -50,6 +51,20 @@ it does not change the measured wire values into Fahrenheit. HA keeps measured
 values and its target in Celsius and converts only the outgoing target when
 that display bit is set.
 
+
+## Fuel priming
+
+The integration exposes Start Fuel Priming and Stop Fuel Priming on HeatGenie.
+Start requires fresh standby telemetry with no reported faults, no active burner
+components, and no active burn-off. The controller must report manual pump mode
+and the requested 20-second duration before Home Assistant sends the start
+button. Stop confirms that the pump has stopped before exiting manual pump
+mode. Supervise fuel priming at the heater.
+
+APK evidence: HeatGenie 1.1.1 `app-service.js` sets the manual pump duration with
+opcode `0x62`, uses button opcode `0x61` with actions 11 and 12 for pump start
+and stop, and uses the regular Off button to exit manual pump mode. The status
+decoder reports mode 7 and the remaining duration from registers 12–13.
 
 ## Error codes
 
